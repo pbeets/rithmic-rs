@@ -17,7 +17,7 @@ use crate::{
         request_tick_bar_replay::{BarSubType, BarType, Direction, TimeOrder},
     },
 };
-
+use crate::rti::{RequestDepthByOrderSnapshot, RequestDepthByOrderUpdates};
 use super::rithmic_command_types::RithmicBracketOrder;
 
 pub const TRADE_ROUTE_LIVE: &str = "globex";
@@ -145,6 +145,44 @@ impl RithmicSenderApi {
         req.exchange = Some(exchange.into());
         req.request = Some(request_type.into());
         req.update_bits = Some(bits);
+
+        self.request_to_buf(req, id)
+    }
+
+    pub fn request_depth_by_order_snapshot(
+        &mut self,
+        symbol: &str,
+        exchange: &str,
+    ) -> (Vec<u8>, String) {
+        let id = self.get_next_message_id();
+
+        let req = RequestDepthByOrderSnapshot {
+            template_id: 115,
+            user_msg: vec![id.clone()],
+            symbol: Some(symbol.into()),
+            exchange: Some(exchange.into()),
+            depth_price: None,
+        };
+
+        self.request_to_buf(req, id)
+    }
+
+    pub fn request_depth_by_order_update(
+        &mut self,
+        symbol: &str,
+        exchange: &str,
+        request_type: Request,
+    ) -> (Vec<u8>, String) {
+        let id = self.get_next_message_id();
+
+        let req = RequestDepthByOrderUpdates {
+            template_id: 117,
+            user_msg: vec![id.clone()],
+            request: Some(request_type.into()),
+            symbol: Some(symbol.into()),
+            exchange: Some(exchange.into()),
+            depth_price: None,
+        };
 
         self.request_to_buf(req, id)
     }

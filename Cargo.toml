@@ -21,7 +21,6 @@ tokio = { version = "1.45.0", features = ["rt-multi-thread", "macros", "net", "t
 tokio-tungstenite = { version = "0.26.2", features = ["native-tls"] }
 tracing = "0.1.41"
 tracing-subscriber = "0.3.19"
-url = "2.5.4"
 
 [build-dependencies]
 prost-build = "0.13.5"

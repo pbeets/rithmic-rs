@@ -1,23 +1,11 @@
-use super::{
-    AccountPnLPositionUpdate, BestBidOffer, BracketUpdates, ExchangeOrderNotification,
-    ForcedLogout, InstrumentPnLPositionUpdate, LastTrade, Reject, ResponseAccountList,
-    ResponseAccountRmsInfo, ResponseBracketOrder, ResponseCancelAllOrders, ResponseCancelOrder,
-    ResponseExitPosition, ResponseHeartbeat, ResponseLogin, ResponseLogout,
-    ResponseMarketDataUpdate, ResponseModifyOrder, ResponseNewOrder, ResponsePnLPositionSnapshot,
-    ResponsePnLPositionUpdates, ResponseProductRmsInfo, ResponseRithmicSystemInfo,
-    ResponseSearchSymbols, ResponseShowBracketStops, ResponseShowBrackets,
-    ResponseShowOrderHistory, ResponseShowOrderHistoryDates, ResponseShowOrderHistoryDetail,
-    ResponseShowOrderHistorySummary, ResponseShowOrders, ResponseSubscribeForOrderUpdates,
-    ResponseSubscribeToBracketUpdates, ResponseTickBarReplay, ResponseTimeBarReplay,
-    ResponseTradeRoutes, ResponseUpdateStopBracketLevel, ResponseUpdateTargetBracketLevel,
-    RithmicOrderNotification, TickBar, TimeBar,
-};
+use super::{AccountPnLPositionUpdate, BestBidOffer, BracketUpdates, DepthByOrder, ExchangeOrderNotification, ForcedLogout, InstrumentPnLPositionUpdate, LastTrade, OrderBook, Reject, ResponseAccountList, ResponseAccountRmsInfo, ResponseBracketOrder, ResponseCancelAllOrders, ResponseCancelOrder, ResponseDepthByOrderSnapshot, ResponseDepthByOrderUpdates, ResponseExitPosition, ResponseHeartbeat, ResponseLogin, ResponseLogout, ResponseMarketDataUpdate, ResponseModifyOrder, ResponseNewOrder, ResponsePnLPositionSnapshot, ResponsePnLPositionUpdates, ResponseProductRmsInfo, ResponseRithmicSystemInfo, ResponseSearchSymbols, ResponseShowBracketStops, ResponseShowBrackets, ResponseShowOrderHistory, ResponseShowOrderHistoryDates, ResponseShowOrderHistoryDetail, ResponseShowOrderHistorySummary, ResponseShowOrders, ResponseSubscribeForOrderUpdates, ResponseSubscribeToBracketUpdates, ResponseTickBarReplay, ResponseTimeBarReplay, ResponseTradeRoutes, ResponseUpdateStopBracketLevel, ResponseUpdateTargetBracketLevel, RithmicOrderNotification, TickBar, TimeBar};
 
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone)]
 pub enum RithmicMessage {
     AccountPnLPositionUpdate(AccountPnLPositionUpdate),
     BestBidOffer(BestBidOffer),
+    OrderBook(OrderBook),
     BracketUpdates(BracketUpdates),
     ExchangeOrderNotification(ExchangeOrderNotification),
     ForcedLogout(ForcedLogout),
@@ -55,7 +43,10 @@ pub enum RithmicMessage {
     ResponseTradeRoutes(ResponseTradeRoutes),
     ResponseUpdateStopBracketLevel(ResponseUpdateStopBracketLevel),
     ResponseUpdateTargetBracketLevel(ResponseUpdateTargetBracketLevel),
+    ResponseDepthByOrderUpdates(ResponseDepthByOrderUpdates),
+    ResponseDepthByOrderSnapshot(ResponseDepthByOrderSnapshot),
     RithmicOrderNotification(RithmicOrderNotification),
+    DepthByOrder(DepthByOrder),
     TickBar(TickBar),
     TimeBar(TimeBar),
 }

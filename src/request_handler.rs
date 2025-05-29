@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-
 use tokio::sync::oneshot;
 use tracing::{event, Level};
 
@@ -17,6 +16,7 @@ pub struct RithmicRequestHandler {
     response_vec_map: HashMap<String, Vec<RithmicResponse>>,
 }
 
+
 impl RithmicRequestHandler {
     pub fn new() -> Self {
         Self {
@@ -33,40 +33,43 @@ impl RithmicRequestHandler {
     pub fn handle_response(&mut self, response: RithmicResponse) {
         match response.message {
             RithmicMessage::ResponseHeartbeat(_) => {}
+            RithmicMessage::ResponseDepthByOrderSnapshot(_) => {}
             _ => {
+                // Case 1: Single-message response
                 if !response.multi_response {
                     if let Some(responder) = self.handle_map.remove(&response.request_id) {
-                        responder.send(Ok(vec![response])).unwrap();
+                        let _ = responder.send(Ok(vec![response]));
                     } else {
                         event!(Level::ERROR, "No responder found for response: {:#?}", response);
                     }
-                } else {
-                    // If response has more, we store it in a vector and wait for more messages
-                    if response.has_more {
-                        self.response_vec_map
-                            .entry(response.request_id.clone())
-                            .or_default()
-                            .push(response);
-                    } else if let Some(responder) = self.handle_map.remove(&response.request_id) {
-                        let response_vec = match self.response_vec_map.remove(&response.request_id)
-                        {
-                            Some(mut vec) => {
-                                vec.push(response);
-                                vec
-                            }
-                            None => {
-                                vec![response]
-                            }
-                        };
-                        responder.send(Ok(response_vec)).unwrap();
+                    return;
+                }
+
+                // Case 2: Multi-message response (grouped)
+                let responses = self
+                    .response_vec_map
+                    .entry(response.request_id.clone())
+                    .or_default();
+
+                responses.push(response.clone());
+
+                // Only proceed if this was the last message in the group
+                if !response.has_more {
+                    // Final group of messages
+                    if let Some(responder) = self.handle_map.remove(&response.request_id) {
+                        let grouped_responses = self.response_vec_map.remove(&response.request_id)
+                            .unwrap_or_else(|| vec![response]);
+
+                        if let Err(e) = responder.send(Ok(grouped_responses)) {
+                            event!(Level::ERROR, "Failed to send multi-response: {:?}", e);
+                        }
                     } else {
-                        event!(Level::ERROR, "No responder found for response: {:#?}", response);
+                        event!(Level::ERROR, "No responder found for final multi-response: {:#?}", response);
                     }
                 }
             }
         }
-    }
-}
+    }}
 
 impl Default for RithmicRequestHandler {
     fn default() -> Self {

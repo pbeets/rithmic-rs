@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use std::collections::HashMap;
 use tracing::{Level, event};
 
 use crate::{
@@ -25,11 +26,14 @@ use tokio_tungstenite::{
     tungstenite::{Error, Message},
 };
 
+use crate::rti::messages::RithmicMessage;
 use tokio::{
     net::TcpStream,
     sync::{broadcast, mpsc, oneshot},
     time::Interval,
 };
+
+type SnapshotKey = (String, String); // (symbol, exchange)
 
 pub enum TickerPlantCommand {
     Close,
@@ -49,6 +53,17 @@ pub enum TickerPlantCommand {
         exchange: String,
         fields: Vec<UpdateBits>,
         request_type: Request,
+        response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, String>>,
+    },
+    SubscribeOrderBook {
+        symbol: String,
+        exchange: String,
+        request_type: Request,
+        response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, String>>,
+    },
+    RequestDepthByOrderSnapshot {
+        symbol: String,
+        exchange: String,
         response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, String>>,
     },
 }
@@ -157,6 +172,12 @@ impl RithmicStream for RithmicTickerPlant {
 }
 
 #[derive(Debug)]
+pub struct SnapshotTracker {
+    pub responses: Vec<RithmicResponse>,
+    pub responder: oneshot::Sender<Result<Vec<RithmicResponse>, String>>,
+}
+
+#[derive(Debug)]
 pub struct TickerPlant {
     config: connection_info::RithmicConnectionInfo,
     interval: Interval,
@@ -172,6 +193,8 @@ pub struct TickerPlant {
 
     rithmic_sender_api: RithmicSenderApi,
     subscription_sender: broadcast::Sender<RithmicResponse>,
+    snapshot_requests: HashMap<SnapshotKey, SnapshotTracker>,
+    symbol_exchange_by_id: HashMap<String, (String, String)>,
 }
 
 impl TickerPlant {
@@ -206,6 +229,8 @@ impl TickerPlant {
             rithmic_sender_api,
             rithmic_sender,
             subscription_sender,
+            snapshot_requests: HashMap::new(),
+            symbol_exchange_by_id: HashMap::new(),
         })
     }
 }
@@ -239,48 +264,6 @@ impl PlantActor for TickerPlant {
                 else => { break }
             }
         }
-    }
-
-    async fn handle_rithmic_message(
-        &mut self,
-        message: Result<Message, Error>,
-    ) -> Result<bool, ()> {
-        let mut stop = false;
-
-        match message {
-            Ok(Message::Close(frame)) => {
-                event!(
-                    Level::INFO,
-                    "ticker_plant received close frame: {:?}",
-                    frame
-                );
-
-                stop = true;
-            }
-            Ok(Message::Binary(data)) => {
-                let response = self.rithmic_receiver_api.buf_to_message(data).unwrap();
-
-                if response.is_update {
-                    self.subscription_sender.send(response).unwrap();
-                } else {
-                    self.request_handler.handle_response(response);
-                }
-            }
-            Err(Error::ConnectionClosed) => {
-                event!(Level::INFO, "ticker_plant connection closed");
-
-                stop = true;
-            }
-            _ => {
-                event!(
-                    Level::WARN,
-                    "ticker_plant received unknown message {:?}",
-                    message
-                );
-            }
-        }
-
-        Ok(stop)
     }
 
     async fn handle_command(&mut self, command: TickerPlantCommand) {
@@ -373,13 +356,156 @@ impl PlantActor for TickerPlant {
                     .await
                     .unwrap();
             }
+            TickerPlantCommand::SubscribeOrderBook {
+                symbol,
+                exchange,
+                request_type,
+                response_sender,
+            } => {
+                let (sub_buf, id) = self.rithmic_sender_api.request_depth_by_order_update(
+                    &symbol,
+                    &exchange,
+                    request_type,
+                );
+
+                self.request_handler.register_request(RithmicRequest {
+                    request_id: id,
+                    responder: response_sender,
+                });
+
+                self.rithmic_sender
+                    .send(Message::Binary(sub_buf.into()))
+                    .await
+                    .unwrap();
+            }
+            TickerPlantCommand::RequestDepthByOrderSnapshot {
+                symbol,
+                exchange,
+                response_sender,
+            } => {
+                let (sub_buf, id) = self
+                    .rithmic_sender_api
+                    .request_depth_by_order_snapshot(&symbol, &exchange);
+
+                let key = (symbol.clone(), exchange.clone());
+
+                self.snapshot_requests.insert(
+                    key.clone(),
+                    SnapshotTracker {
+                        responses: Vec::new(),
+                        responder: response_sender,
+                    },
+                );
+
+                self.rithmic_sender
+                    .send(Message::Binary(sub_buf.into()))
+                    .await
+                    .unwrap();
+            }
         }
+    }
+
+    async fn handle_rithmic_message(
+        &mut self,
+        message: Result<Message, Error>,
+    ) -> Result<bool, ()> {
+        let mut stop = false;
+
+        match message {
+            Ok(Message::Close(frame)) => {
+                event!(
+                    Level::INFO,
+                    "ticker_plant received close frame: {:?}",
+                    frame
+                );
+
+                stop = true;
+            }
+            Ok(Message::Binary(data)) => {
+                let response = self.rithmic_receiver_api.buf_to_message(data).unwrap();
+
+                match &response.message {
+                    RithmicMessage::ResponseDepthByOrderSnapshot(snap) => {
+                        // Step 2: Cache symbol+exchange by user_msg[0] if available
+                        if let Some(id) = snap.user_msg.get(0).cloned() {
+                            if let (Some(ref symbol), Some(ref exchange)) =
+                                (snap.symbol.as_ref(), snap.exchange.as_ref())
+                            {
+                                self.symbol_exchange_by_id
+                                    .insert(id.clone(), (symbol.to_string(), exchange.clone().to_string()));
+                            }
+                        }
+
+                        // Step 3: Recover symbol/exchange even if missing
+                        let (symbol, exchange) = match (snap.symbol.clone(), snap.exchange.clone())
+                        {
+                            (Some(s), Some(e)) => (s, e),
+                            _ => {
+                                let fallback = snap
+                                    .user_msg
+                                    .get(0)
+                                    .and_then(|id| self.symbol_exchange_by_id.get(id));
+                                if let Some((s, e)) = fallback {
+                                    (s.clone(), e.clone())
+                                } else {
+                                    tracing::warn!(
+                                        "Snapshot response missing symbol/exchange and cannot recover. user_msg={:?}",
+                                        snap.user_msg
+                                    );
+                                    return Ok(false);
+                                }
+                            }
+                        };
+
+                        let key = (symbol.clone(), exchange.clone());
+
+                        if let Some(tracker) = self.snapshot_requests.get_mut(&key) {
+                            tracker.responses.push(response.clone());
+
+                            if !response.has_more {
+                                self.symbol_exchange_by_id
+                                    .remove(snap.user_msg.get(0).unwrap_or(&"".into()));
+                                let tracker = self.snapshot_requests.remove(&key).unwrap();
+                                let _ = tracker.responder.send(Ok(tracker.responses));
+                            }
+                        } else {
+                            tracing::warn!(
+                                "Unexpected snapshot response for untracked ({}, {}) user_msg={:?}",
+                                symbol,
+                                exchange,
+                                snap.user_msg
+                            );
+                        }
+                    }
+                    _ => {
+                        if response.is_update {
+                            self.subscription_sender.send(response).unwrap();
+                        } else {
+                            self.request_handler.handle_response(response);
+                        }
+                    }
+                }
+            }
+            Err(Error::ConnectionClosed) => {
+                event!(Level::INFO, "ticker_plant connection closed");
+
+                stop = true;
+            }
+            _ => {
+                event!(
+                    Level::WARN,
+                    "ticker_plant received unknown message {:?}",
+                    message
+                );
+            }
+        }
+
+        Ok(stop)
     }
 }
 
 pub struct RithmicTickerPlantHandle {
     sender: mpsc::Sender<TickerPlantCommand>,
-
     subscription_sender: broadcast::Sender<RithmicResponse>,
     /// Receiver for subscription updates
     pub subscription_receiver: broadcast::Receiver<RithmicResponse>,
@@ -460,6 +586,7 @@ impl RithmicTickerPlantHandle {
     /// # Arguments
     /// * `symbol` - The trading symbol (e.g., "ESM1")
     /// * `exchange` - The exchange code (e.g., "CME")
+    /// * `fields` - The fields to subscribe to (e.g., last trades, best bid/offer) ex: vec![UpdateBits::LastTrade, UpdateBits::Bbo],
     ///
     /// # Returns
     /// The subscription response or an error message
@@ -477,6 +604,45 @@ impl RithmicTickerPlantHandle {
         let _ = self.sender.send(command).await;
 
         Ok(rx.await.unwrap().unwrap().remove(0))
+    }
+
+    pub async fn subscribe_order_book(
+        &self,
+        symbol: &str,
+        exchange: &str,
+    ) -> Result<RithmicResponse, String> {
+        let (tx, rx) = oneshot::channel::<Result<Vec<RithmicResponse>, String>>();
+
+        let command = TickerPlantCommand::SubscribeOrderBook {
+            symbol: symbol.to_string(),
+            exchange: exchange.to_string(),
+            request_type: Request::Subscribe,
+            response_sender: tx,
+        };
+
+        let _ = self.sender.send(command).await;
+
+        Ok(rx.await.unwrap()?.remove(0))
+    }
+
+    pub async fn request_depth_by_order_snapshot(
+        &self,
+        symbol: &str,
+        exchange: &str,
+    ) -> Result<Vec<RithmicResponse>, String> {
+        let (tx, rx) = oneshot::channel::<Result<Vec<RithmicResponse>, String>>();
+
+        let command = TickerPlantCommand::RequestDepthByOrderSnapshot {
+            symbol: symbol.to_string(),
+            exchange: exchange.to_string(),
+            response_sender: tx,
+        };
+
+        let _ = self.sender.send(command).await;
+
+        let responses = rx.await.unwrap()?;
+
+        Ok(responses)
     }
 }
 

@@ -15,4 +15,5 @@ Thumbs.db
 .env
 
 rapi/
+.idea
 src/raw-proto/
