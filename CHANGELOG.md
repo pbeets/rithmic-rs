@@ -7,7 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
+## [0.6.1] - 2025-11-24
+
+> **⚠️ Breaking Change:** Environment variable names have changed. See migration guide below.
+
+### Breaking Changes
 
 #### Environment Variable Structure
 - **Environment-specific configuration variables** for better multi-environment support
@@ -33,7 +37,7 @@ IB_ID=ib123
 RITHMIC_DEMO_USER=user
 RITHMIC_DEMO_PW=pass
 
-# New (current)
+# New (0.6.1)
 RITHMIC_DEMO_ACCOUNT_ID=account123
 RITHMIC_DEMO_FCM_ID=fcm123
 RITHMIC_DEMO_IB_ID=ib123
@@ -44,6 +48,10 @@ RITHMIC_DEMO_ALT_URL=<provided_by_rithmic>
 ```
 
 See `examples/.env.blank` for complete template with all required variables.
+
+### Fixed
+- Fixed rustfmt compliance issues with long error messages
+- Fixed clippy warning: use `.first()` instead of `.get(0)` for idiomatic array access
 
 ## [0.6.0] - 2025-11-23
 

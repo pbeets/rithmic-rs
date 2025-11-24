@@ -1,6 +1,6 @@
 [package]
 name = "rithmic-rs"
-version = "0.6.0"
+version = "0.6.1"
 description = "Rust client for the Rithmic R | Protocol API to build algo trading systems"
 license = "MIT OR Apache-2.0"
 edition = "2024"
