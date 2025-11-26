@@ -2,9 +2,10 @@
 
 Unofficial rust client for connecting to Rithmic's R | Protocol API.
 
-[Documentation](https://docs.rs/rithmic-rs/latest/rithmic_rs/) | [Rithmic APIs](https://www.rithmic.com/apis)
+[![Crates.io](https://img.shields.io/crates/v/rithmic-rs.svg)](https://crates.io/crates/rithmic-rs)
+[![Documentation](https://docs.rs/rithmic-rs/badge.svg)](https://docs.rs/rithmic-rs)
 
-_rithmic protocol version: 0.84.0.0_
+[Documentation](https://docs.rs/rithmic-rs/latest/rithmic_rs/) | [Rithmic APIs](https://www.rithmic.com/apis)
 
 Not all functionality has been implemented, but this is currently being used to trade live capital through Rithmic.
 
@@ -22,24 +23,10 @@ $ cargo add rithmic-rs
 
 Or manually add it to your `Cargo.toml` file.
 
-
 ```
 [dependencies]
-rithmic-rs = "0.6.0"
+rithmic-rs = "0.6.1"
 ```
-
-## Breaking Changes
-
-### Version 0.6.0 (Latest)
-- Removed deprecated `connection_info` module (use `RithmicConfig` instead)
-- Removed `return_heartbeat_response()` method (connection health now automatic)
-- Updated to `dotenvy` crate (from deprecated `dotenv`)
-- Plant constructors use `connect()` with explicit connection strategies
-- Connection health events delivered through subscription channel
-
-**📖 See [MIGRATION_0.6.0.md](MIGRATION_0.6.0.md) for migration guide from 0.4.x or 0.5.x.**
-
-Also see [CHANGELOG.md](CHANGELOG.md) for complete list of changes.
 
 ## Usage
 
@@ -174,52 +161,6 @@ async fn stream_live_ticks() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-### Connection Health Monitoring
-
-Connection health is monitored automatically via WebSocket ping/pong. Monitor the subscription channel for health events:
-
-```rust
-loop {
-    match handle.subscription_receiver.recv().await {
-        Ok(update) => {
-            // Check for errors on all messages
-            if let Some(error) = &update.error {
-                eprintln!("Error: {}", error);
-            }
-
-            // Handle connection health issues
-            match update.message {
-                RithmicMessage::HeartbeatTimeout => {
-                    eprintln!("Connection timeout - reconnection needed");
-                    break;
-                }
-                RithmicMessage::ForcedLogout(_) => {
-                    eprintln!("Forced logout - reconnection needed");
-                    break;
-                }
-                RithmicMessage::ConnectionError => {
-                    eprintln!("Connection error - reconnection needed");
-                    break;
-                }
-                _ => {}
-            }
-
-            // Process market data
-            // ...
-        }
-        Err(e) => {
-            eprintln!("Channel closed: {}", e);
-            break;
-        }
-    }
-}
-```
-
-**Connection Health Events:**
-- `HeartbeatTimeout`: Server heartbeat error or WebSocket ping timeout
-- `ForcedLogout`: Server-initiated disconnection
-- `ConnectionError`: WebSocket connection failure
-
 ## Examples
 
 The repository includes several examples to help you get started. Examples use environment variables for configuration - set the required variables (listed above) in your environment or use a `.env` file.
@@ -244,19 +185,19 @@ cargo run --example load_historical_ticks
 cargo run --example load_historical_bars
 ```
 
+## Upgrading
+
+See [CHANGELOG.md](CHANGELOG.md) for version history and [MIGRATION_0.6.0.md](MIGRATION_0.6.0.md) for migration guides.
+
 ## Contribution
 
 Contributions encouraged and welcomed!
 
 Unless you explicitly state otherwise, any contribution intentionally submitted
 for inclusion in the work by you, as defined in the Apache-2.0 license, shall be
-dual licensed as above, without any additional terms or conditions.
+dual licensed as below, without any additional terms or conditions.
 
 ## License
 
 Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or
 [MIT license](LICENSE-MIT) at your option.
-
-Unless you explicitly state otherwise, any contribution intentionally submitted
-for inclusion in the work by you, as defined in the Apache-2.0 license, shall
-be dual licensed as above, without any additional terms or conditions.
