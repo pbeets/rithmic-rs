@@ -60,14 +60,29 @@ mod tests {
 
     #[test]
     fn test_rithmic_to_unix_nanos_precise() {
-        assert_eq!(rithmic_to_unix_nanos_precise(1, 0, None), 1_000_000_000);
+        // None should match rithmic_to_unix_nanos
         assert_eq!(
-            rithmic_to_unix_nanos_precise(1, 0, Some(123)),
-            1_000_000_123
+            rithmic_to_unix_nanos_precise(1_704_067_200, 500_000, None),
+            rithmic_to_unix_nanos(1_704_067_200, 500_000)
         );
+
+        // Doc example: 2024-01-01 00:00:00.500000123 UTC
         assert_eq!(
-            rithmic_to_unix_nanos_precise(1, 500000, Some(456)),
-            1_500_000_456
+            rithmic_to_unix_nanos_precise(1_704_067_200, 500_000, Some(123)),
+            1_704_067_200_500_000_123
+        );
+
+        // Realistic trading timestamp with full precision
+        // 2024-06-15 14:30:45.123456789 UTC
+        assert_eq!(
+            rithmic_to_unix_nanos_precise(1_718_461_845, 123_456, Some(789)),
+            1_718_461_845_123_456_789
+        );
+
+        // Edge case: max usecs (999999) with nsecs
+        assert_eq!(
+            rithmic_to_unix_nanos_precise(1_704_067_200, 999_999, Some(999)),
+            1_704_067_200_999_999_999
         );
     }
 }

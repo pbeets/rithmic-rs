@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-01-23
+
+### Added
+
+#### New Utility Module (`util`)
+- **`InstrumentInfo`**: Parsed instrument reference data from Rithmic
+  - Converts `ResponseReferenceData` to a structured type via `TryFrom`
+  - `price_precision()`: Calculate decimal places based on tick size
+  - `size_precision()`: Returns 0 for futures (whole contracts)
+  - Fields include: symbol, exchange, name, tick_size, point_value, is_tradable, and more
+- **`OrderStatus`**: Order status enum with helper methods
+  - Parses case-insensitively with common variations ("filled" → Complete, "canceled" → Cancelled)
+  - `is_terminal()`: Returns true for Complete, Cancelled, Rejected
+  - `is_active()`: Returns true for Open, Pending, Partial
+  - Implements `FromStr`, `Display`, `Default` (Unknown)
+- **`rithmic_to_unix_nanos(ssboe, usecs)`**: Convert Rithmic timestamps to Unix nanoseconds
+- **`rithmic_to_unix_nanos_precise(ssboe, usecs, nsecs)`**: Convert with optional nanosecond precision
+
+#### RithmicResponse Helper Methods
+- **`is_error()`**: Returns true if response has an error or connection issue
+- **`is_connection_issue()`**: Returns true for ConnectionError, HeartbeatTimeout, ForcedLogout
+- **`is_market_data()`**: Returns true for BestBidOffer, LastTrade, DepthByOrder, OrderBook, etc.
+
+#### Optional Serde Support
+- Added `serde` feature flag for serialization/deserialization support
+- `RithmicEnv` derives `Serialize`/`Deserialize` when enabled with lowercase rename
+- Enable with: `rithmic-rs = { version = "0.7.1", features = ["serde"] }`
+
+#### New Example
+- **`bracket_order.rs`**: Demonstrates placing bracket orders with typed enums
+
+#### CI/CD
+- Added GitHub Actions CI workflow for automated testing
+
+### Fixed
+
+#### Error Handling Improvements
+- Replaced `.unwrap()` panics with proper error handling in all plant handles
+  - `RithmicTickerPlantHandle`: `subscribe`, `unsubscribe`, `get_front_month_contract`, and other methods now handle channel send failures gracefully
+  - `RithmicOrderPlantHandle`: `place_bracket_order`, `modify_order`, `cancel_order`, and other methods now handle channel send failures gracefully
+  - `RithmicHistoryPlantHandle`: `load_time_bars`, `load_ticks`, and other methods now handle channel send failures gracefully
+  - `RithmicPnlPlantHandle`: `subscribe_pnl_updates`, `pnl_position_snapshots`, and other methods now handle channel send failures gracefully
+
+#### Code Quality
+- Addressed clippy lints in util module
+- Cleaned up util module documentation
+
 ## [0.7.0] - 2026-01-08
 
 ### Breaking Changes
@@ -524,6 +571,7 @@ Previous stable release. See git history for earlier changes.
 
 ## Version History Summary
 
+- **0.7.1** (2026-01-23): New utility module (InstrumentInfo, OrderStatus, timestamp helpers), RithmicResponse helper methods, optional serde support, improved error handling
 - **0.7.0** (2026-01-08): Breaking changes - Order types now use enums instead of raw integers, cleaner public API exports
 - **0.6.2** (2025-12-20): Expanded plant handle APIs, additional message types, OCO order support, and new sender methods
 - **0.6.1** (2025-11-24): Environment-specific configuration variables
@@ -534,7 +582,8 @@ Previous stable release. See git history for earlier changes.
 - **0.5.0** (2025-11-16): Major stability and API improvements - Connection strategies, unified config, panic fixes, connection health monitoring
 - **0.4.2** (2025-11-15): Previous stable release
 
-[Unreleased]: https://github.com/pbeets/rithmic-rs/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/pbeets/rithmic-rs/compare/v0.7.1...HEAD
+[0.7.1]: https://github.com/pbeets/rithmic-rs/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/pbeets/rithmic-rs/compare/v0.6.2...v0.7.0
 [0.6.2]: https://github.com/pbeets/rithmic-rs/compare/v0.6.1...v0.6.2
 [0.6.1]: https://github.com/pbeets/rithmic-rs/compare/v0.6.0...v0.6.1

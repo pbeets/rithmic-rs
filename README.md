@@ -15,7 +15,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-rithmic-rs = "0.7.0"
+rithmic-rs = "0.7.1"
 ```
 
 Set your environment variables:
