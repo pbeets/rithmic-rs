@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### Visibility Changes
 - **`connection_handle`** on all plant structs is now `pub(crate)` (was `pub`)
+  - Use the new **`await_shutdown()`** method instead to wait for the plant to stop
 
 #### Error Type Changes
 - **`connect()`** on all plants now returns `Result<Plant, RithmicError>` instead of `Result<Plant, Box<dyn std::error::Error>>`
@@ -26,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`await_shutdown()`** method on all plant structs to wait for clean shutdown
 - **`RithmicConfigBuilder`** re-exported from crate root
 - **`InstrumentInfoError`** re-exported from crate root
 - **`#[non_exhaustive]`** on `RithmicResponse`, `RithmicMessage`, `RithmicError`, `RithmicOrder`, `TrailingStop`, `ConnectStrategy`, `OrderStatus`, `ConfigError`, and `RithmicEnv` for forward compatibility

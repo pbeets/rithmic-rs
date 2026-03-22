@@ -57,11 +57,11 @@ impl PingManager {
     /// Returns `true` and clears pending state if timeout exceeded.
     /// Call when the instant from `next_timeout_at()` is reached.
     pub fn check_timeout(&mut self) -> bool {
-        if let Some(sent_at) = self.pending
-            && sent_at.elapsed() > self.timeout
-        {
-            self.pending = None;
-            return true;
+        if let Some(sent_at) = self.pending {
+            if sent_at.elapsed() > self.timeout {
+                self.pending = None;
+                return true;
+            }
         }
         false
     }
