@@ -226,6 +226,7 @@ pub(crate) enum TickerPlantCommand {
 ///
 #[derive(Debug)]
 pub struct RithmicTickerPlant {
+    #[allow(dead_code)]
     pub(crate) connection_handle: tokio::task::JoinHandle<()>,
     sender: mpsc::Sender<TickerPlantCommand>,
     subscription_sender: broadcast::Sender<RithmicResponse>,
@@ -280,14 +281,6 @@ impl RithmicTickerPlant {
 }
 
 impl RithmicTickerPlant {
-    /// Wait for the plant's background task to finish.
-    ///
-    /// Call this after all handles have been dropped or after calling
-    /// [`RithmicTickerPlantHandle::disconnect`] to ensure the plant shuts down cleanly.
-    pub async fn await_shutdown(self) -> Result<(), tokio::task::JoinError> {
-        self.connection_handle.await
-    }
-
     /// Get a handle to interact with the ticker plant.
     ///
     /// The handle provides methods to subscribe to market data and receive updates.
@@ -982,7 +975,7 @@ impl PlantActor for TickerPlant {
     }
 }
 
-/// Handle for interacting with a connected ticker plant.
+#[allow(missing_docs)]
 pub struct RithmicTickerPlantHandle {
     sender: mpsc::Sender<TickerPlantCommand>,
     subscription_sender: broadcast::Sender<RithmicResponse>,

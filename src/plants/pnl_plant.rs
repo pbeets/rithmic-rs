@@ -122,6 +122,7 @@ pub(crate) enum PnlPlantCommand {
 /// ```
 #[derive(Debug)]
 pub struct RithmicPnlPlant {
+    #[allow(dead_code)]
     pub(crate) connection_handle: tokio::task::JoinHandle<()>,
     sender: mpsc::Sender<PnlPlantCommand>,
     subscription_sender: broadcast::Sender<RithmicResponse>,
@@ -161,14 +162,6 @@ impl RithmicPnlPlant {
 }
 
 impl RithmicPnlPlant {
-    /// Wait for the plant's background task to finish.
-    ///
-    /// Call this after all handles have been dropped or after calling
-    /// [`RithmicPnlPlantHandle::disconnect`] to ensure the plant shuts down cleanly.
-    pub async fn await_shutdown(self) -> Result<(), tokio::task::JoinError> {
-        self.connection_handle.await
-    }
-
     /// Get a handle to interact with the PnL plant.
     ///
     /// The handle provides methods to subscribe to PnL updates and retrieve position snapshots.
@@ -605,7 +598,7 @@ impl PlantActor for PnlPlant {
     }
 }
 
-/// Handle for interacting with a connected PnL plant.
+#[allow(missing_docs)]
 pub struct RithmicPnlPlantHandle {
     sender: mpsc::Sender<PnlPlantCommand>,
     /// Receiver for PnL and position updates.

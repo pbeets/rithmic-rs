@@ -87,14 +87,14 @@ impl From<OrderSide> for request_oco_order::TransactionType {
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[non_exhaustive]
 pub enum OrderType {
-    /// Market order -- executes immediately at the best available price.
+    /// Market order — executes immediately at the best available price.
     Market,
-    /// Limit order -- executes at the specified price or better.
+    /// Limit order — executes at the specified price or better.
     #[default]
     Limit,
-    /// Stop market order -- becomes a market order when the stop price is reached.
+    /// Stop market order — becomes a market order when the stop price is reached.
     StopMarket,
-    /// Stop limit order -- becomes a limit order when the stop price is reached.
+    /// Stop limit order — becomes a limit order when the stop price is reached.
     StopLimit,
 }
 
@@ -189,9 +189,9 @@ pub enum TimeInForce {
     Day,
     /// Good till cancelled.
     Gtc,
-    /// Immediate or cancel -- fill what you can, cancel the rest.
+    /// Immediate or cancel — fill what you can, cancel the rest.
     Ioc,
-    /// Fill or kill -- fill the entire order or cancel it.
+    /// Fill or kill — fill the entire order or cancel it.
     Fok,
 }
 

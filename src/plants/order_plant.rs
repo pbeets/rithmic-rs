@@ -296,6 +296,7 @@ pub(crate) enum OrderPlantCommand {
 /// ```
 #[derive(Debug)]
 pub struct RithmicOrderPlant {
+    #[allow(dead_code)]
     pub(crate) connection_handle: JoinHandle<()>,
     sender: mpsc::Sender<OrderPlantCommand>,
     subscription_sender: broadcast::Sender<RithmicResponse>,
@@ -337,14 +338,6 @@ impl RithmicOrderPlant {
 }
 
 impl RithmicOrderPlant {
-    /// Wait for the plant's background task to finish.
-    ///
-    /// Call this after all handles have been dropped or after calling
-    /// [`RithmicOrderPlantHandle::disconnect`] to ensure the plant shuts down cleanly.
-    pub async fn await_shutdown(self) -> Result<(), tokio::task::JoinError> {
-        self.connection_handle.await
-    }
-
     /// Get a handle to interact with the order plant.
     ///
     /// The handle provides methods to place orders, subscribe to updates, and manage positions.
@@ -1312,7 +1305,7 @@ impl PlantActor for OrderPlant {
     }
 }
 
-/// Handle for interacting with a connected order plant.
+#[allow(missing_docs)]
 pub struct RithmicOrderPlantHandle {
     sender: mpsc::Sender<OrderPlantCommand>,
     /// Receiver for order updates and responses.

@@ -22,6 +22,7 @@ use crate::rti::{
 /// }).await?;
 /// ```
 #[derive(Debug, Clone, Default)]
+#[allow(missing_docs)]
 pub struct LoginConfig {
     /// Only applicable to the ticker plant.
     pub aggregated_quotes: Option<bool>,

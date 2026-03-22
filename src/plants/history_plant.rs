@@ -159,6 +159,7 @@ pub(crate) enum HistoryPlantCommand {
 /// ```
 #[derive(Debug)]
 pub struct RithmicHistoryPlant {
+    #[allow(dead_code)]
     pub(crate) connection_handle: JoinHandle<()>,
     sender: mpsc::Sender<HistoryPlantCommand>,
     subscription_sender: broadcast::Sender<RithmicResponse>,
@@ -198,14 +199,6 @@ impl RithmicHistoryPlant {
 }
 
 impl RithmicHistoryPlant {
-    /// Wait for the plant's background task to finish.
-    ///
-    /// Call this after all handles have been dropped or after calling
-    /// [`RithmicHistoryPlantHandle::disconnect`] to ensure the plant shuts down cleanly.
-    pub async fn await_shutdown(self) -> Result<(), tokio::task::JoinError> {
-        self.connection_handle.await
-    }
-
     /// Get a handle to interact with the history plant.
     ///
     /// The handle provides methods to load historical ticks, time bars, and subscribe to bar updates.
@@ -754,7 +747,7 @@ impl PlantActor for HistoryPlant {
     }
 }
 
-/// Handle for interacting with a connected history plant.
+#[allow(missing_docs)]
 pub struct RithmicHistoryPlantHandle {
     sender: mpsc::Sender<HistoryPlantCommand>,
     subscription_sender: broadcast::Sender<RithmicResponse>,
