@@ -116,6 +116,14 @@ pub struct RithmicConfig {
     pub password: String,
     pub system_name: String,
     pub env: RithmicEnv,
+
+    /// Application name sent to Rithmic during login.
+    /// This is the name registered with Rithmic for your application.
+    pub app_name: String,
+
+    /// Application version sent to Rithmic during login.
+    /// Defaults to the rithmic-rs crate version if not set.
+    pub app_version: String,
 }
 
 impl RithmicConfig {
@@ -152,6 +160,10 @@ impl RithmicConfig {
     /// - `RITHMIC_TEST_PW`: Test password
     /// - `RITHMIC_TEST_URL`: Test WebSocket URL
     /// - `RITHMIC_TEST_ALT_URL`: Test alternative/beta WebSocket URL
+    ///
+    /// Shared (all environments):
+    /// - `RITHMIC_APP_NAME` (required): Application name registered with Rithmic
+    /// - `RITHMIC_APP_VERSION` (optional): Application version, defaults to crate version
     ///
     /// # Example
     /// ```no_run
@@ -219,6 +231,12 @@ impl RithmicConfig {
             ),
         };
 
+        let app_name = env::var("RITHMIC_APP_NAME")
+            .map_err(|_| ConfigError::MissingEnvVar("RITHMIC_APP_NAME".to_string()))?;
+
+        let app_version =
+            env::var("RITHMIC_APP_VERSION").unwrap_or_else(|_| env!("CARGO_PKG_VERSION").to_string());
+
         Ok(Self {
             account_id,
             fcm_id,
@@ -229,6 +247,8 @@ impl RithmicConfig {
             password,
             system_name,
             env,
+            app_name,
+            app_version,
         })
     }
 
@@ -266,6 +286,8 @@ pub struct RithmicConfigBuilder {
     user: Option<String>,
     password: Option<String>,
     system_name: Option<String>,
+    app_name: Option<String>,
+    app_version: Option<String>,
 }
 
 impl RithmicConfigBuilder {
@@ -333,6 +355,20 @@ impl RithmicConfigBuilder {
         self
     }
 
+    /// Set the application name sent to Rithmic during login.
+    /// This is the name registered with Rithmic for your application.
+    pub fn app_name(mut self, app_name: impl Into<String>) -> Self {
+        self.app_name = Some(app_name.into());
+        self
+    }
+
+    /// Set the application version sent to Rithmic during login.
+    /// Defaults to the rithmic-rs crate version if not set.
+    pub fn app_version(mut self, app_version: impl Into<String>) -> Self {
+        self.app_version = Some(app_version.into());
+        self
+    }
+
     /// Build the configuration.
     ///
     /// Returns an error if any required fields are missing.
@@ -365,6 +401,12 @@ impl RithmicConfigBuilder {
             system_name: self
                 .system_name
                 .ok_or_else(|| ConfigError::MissingField("system_name".to_string()))?,
+            app_name: self
+                .app_name
+                .ok_or_else(|| ConfigError::MissingField("app_name".to_string()))?,
+            app_version: self
+                .app_version
+                .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string()),
         })
     }
 }
@@ -388,6 +430,7 @@ mod tests {
                 "RITHMIC_DEMO_ALT_URL",
                 "wss://test-demo-alt.example.com:443",
             );
+            env::set_var("RITHMIC_APP_NAME", "test_app");
         }
     }
 
@@ -403,6 +446,7 @@ mod tests {
                 "RITHMIC_LIVE_ALT_URL",
                 "wss://test-live-alt.example.com:443",
             );
+            env::set_var("RITHMIC_APP_NAME", "test_app");
         }
     }
 
@@ -429,6 +473,8 @@ mod tests {
             env::remove_var("RITHMIC_TEST_PW");
             env::remove_var("RITHMIC_TEST_URL");
             env::remove_var("RITHMIC_TEST_ALT_URL");
+            env::remove_var("RITHMIC_APP_NAME");
+            env::remove_var("RITHMIC_APP_VERSION");
         }
     }
 
@@ -607,6 +653,7 @@ mod tests {
             .password("my_password")
             .url("wss://test.example.com:443")
             .beta_url("wss://test-alt.example.com:443")
+            .app_name("test_app")
             .build()
             .unwrap();
 
@@ -633,6 +680,7 @@ mod tests {
             .url("wss://custom.example.com:443")
             .beta_url("wss://custom-beta.example.com:443")
             .system_name("Custom System")
+            .app_name("test_app")
             .build()
             .unwrap();
 
@@ -688,6 +736,7 @@ mod tests {
             .password("test")
             .url("wss://test.example.com:443")
             .beta_url("wss://test-alt.example.com:443")
+            .app_name("test_app")
             .build()
             .unwrap();
 
@@ -706,6 +755,7 @@ mod tests {
             .password("test")
             .url("wss://test.example.com:443")
             .beta_url("wss://test-alt.example.com:443")
+            .app_name("test_app")
             .build()
             .unwrap();
 
@@ -724,6 +774,7 @@ mod tests {
             .password("test")
             .url("wss://test.example.com:443")
             .beta_url("wss://test-alt.example.com:443")
+            .app_name("test_app")
             .build()
             .unwrap();
 
@@ -742,6 +793,7 @@ mod tests {
             .password(String::from("my_password"))
             .url(String::from("wss://test.example.com:443"))
             .beta_url(String::from("wss://test-alt.example.com:443"))
+            .app_name("test_app")
             .build()
             .unwrap();
 
