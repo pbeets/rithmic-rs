@@ -24,7 +24,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Track subscriptions to restore after reconnect
     let mut subscriptions: HashSet<(String, String)> = HashSet::new();
-    // Set SYMBOL env var to current front-month contract (e.g., "ESM6" for June 2026)
     let symbol = env::var("SYMBOL").unwrap_or_else(|_| "ESM6".to_string());
     let exchange = env::var("EXCHANGE").unwrap_or_else(|_| "CME".to_string());
     subscriptions.insert((symbol, exchange));
