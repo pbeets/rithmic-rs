@@ -27,7 +27,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenvy::dotenv().ok();
     tracing_subscriber::fmt().init();
 
-    let symbol = env::var("SYMBOL").unwrap_or_else(|_| "ESH6".to_string());
+    // Set SYMBOL env var to current front-month contract (e.g., "ESM6" for June 2026)
+    let symbol = env::var("SYMBOL").unwrap_or_else(|_| "ESM6".to_string());
     let exchange = env::var("EXCHANGE").unwrap_or_else(|_| "CME".to_string());
     let start_time: i32 = env::var("START_TIME")
         .ok()

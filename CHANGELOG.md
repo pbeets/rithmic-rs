@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0]
+
+### Breaking Changes
+
+#### API Renames
+- **`RithmicBracketOrder::qty`** renamed to **`quantity`** for clarity and consistency
+
+#### Visibility Changes
+- **`connection_handle`** on all plant structs is now `pub(crate)` (was `pub`)
+  - Use the new **`await_shutdown()`** method instead to wait for the plant to stop
+
+#### Error Type Changes
+- **`connect()`** on all plants now returns `Result<Plant, RithmicError>` instead of `Result<Plant, Box<dyn std::error::Error>>`
+  - New **`RithmicError::ConnectionFailed`** variant for connection errors
+
+#### Removed
+- **`place_new_order()`** removed from `RithmicOrderPlantHandle` — use `place_order(RithmicOrder)` instead
+
+### Added
+
+- **`await_shutdown()`** method on all plant structs to wait for clean shutdown
+- **`RithmicConfigBuilder`** re-exported from crate root
+- **`InstrumentInfoError`** re-exported from crate root
+- **`#[non_exhaustive]`** on `RithmicResponse`, `RithmicMessage`, `RithmicError`, `RithmicOrder`, `TrailingStop`, `ConnectStrategy`, `OrderStatus`, `ConfigError`, and `RithmicEnv` for forward compatibility
+- **`Debug`** impl on all plant structs and plant handle structs
+- **`RithmicConfig`** `Debug` output now redacts the `password` field
+
+### Changed
+
+- Set MSRV (minimum supported Rust version) to **1.85**
+- Relaxed `futures-util` version constraint from `0.3.32` to `0.3`
+- Replaced `serial_test` + unsafe `env::set_var` in tests with `temp-env` crate
+- Added `#![warn(missing_docs)]` to enforce documentation coverage
+- Feature flags section added to crate-level documentation
+
 ## [0.7.2] - 2026-02-07
 
 ### Added
@@ -34,10 +69,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`OrderStatus::Expired`**: New variant added to the `OrderStatus` enum
 - `OrderStatus` now supports optional serde serialization/deserialization
 
-### Deprecated
-- **`place_new_order()`**: Use `place_order(RithmicOrder)` instead
-  - The new API supports trigger prices and trailing stops
-  - Marked with `#[deprecated(since = "0.7.2")]`
+### Removed
+- **`place_new_order()`**: Replaced by `place_order(RithmicOrder)` which supports trigger prices and trailing stops
 
 ## [0.7.1] - 2026-01-23
 
@@ -603,6 +636,7 @@ Previous stable release. See git history for earlier changes.
 
 ## Version History Summary
 
+- **1.0.0**: Breaking changes - renamed fields, unified error types, removed deprecated APIs, added non_exhaustive annotations, MSRV 1.85
 - **0.7.2** (2026-02-07): New RithmicOrder API with trigger prices and trailing stops, ticker plant unsubscribe methods, serde-compatible order types
 - **0.7.1** (2026-01-23): New utility module (InstrumentInfo, OrderStatus, timestamp helpers), RithmicResponse helper methods, optional serde support, improved error handling
 - **0.7.0** (2026-01-08): Breaking changes - Order types now use enums instead of raw integers, cleaner public API exports
@@ -615,7 +649,8 @@ Previous stable release. See git history for earlier changes.
 - **0.5.0** (2025-11-16): Major stability and API improvements - Connection strategies, unified config, panic fixes, connection health monitoring
 - **0.4.2** (2025-11-15): Previous stable release
 
-[Unreleased]: https://github.com/pbeets/rithmic-rs/compare/v0.7.2...HEAD
+[Unreleased]: https://github.com/pbeets/rithmic-rs/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/pbeets/rithmic-rs/compare/v0.7.2...v1.0.0
 [0.7.2]: https://github.com/pbeets/rithmic-rs/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/pbeets/rithmic-rs/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/pbeets/rithmic-rs/compare/v0.6.2...v0.7.0

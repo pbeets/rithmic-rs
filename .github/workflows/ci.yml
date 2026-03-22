@@ -38,19 +38,18 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      # Run single-threaded to avoid env var race conditions in config tests
-      - run: cargo test -- --test-threads=1
+      - run: cargo test
 
   msrv:
-    name: MSRV (1.92)
+    name: MSRV (1.85)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: "1.92"
+          toolchain: "1.85"
       - uses: Swatinem/rust-cache@v2
-      - run: cargo build --all-targets
+      - run: cargo test --all-targets
 
   docs:
     name: Docs

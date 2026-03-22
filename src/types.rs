@@ -15,8 +15,10 @@ use crate::rti::{
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[non_exhaustive]
 pub enum OrderSide {
+    /// Buy side.
     #[default]
     Buy,
+    /// Sell side.
     Sell,
 }
 
@@ -29,6 +31,7 @@ impl fmt::Display for OrderSide {
     }
 }
 
+/// Error returned when parsing an invalid [`OrderSide`] string.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParseOrderSideError(String);
 
@@ -79,14 +82,19 @@ impl From<OrderSide> for request_oco_order::TransactionType {
     }
 }
 
+/// Order price type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[non_exhaustive]
 pub enum OrderType {
+    /// Market order -- executes immediately at the best available price.
     Market,
+    /// Limit order -- executes at the specified price or better.
     #[default]
     Limit,
+    /// Stop market order -- becomes a market order when the stop price is reached.
     StopMarket,
+    /// Stop limit order -- becomes a limit order when the stop price is reached.
     StopLimit,
 }
 
@@ -101,6 +109,7 @@ impl fmt::Display for OrderType {
     }
 }
 
+/// Error returned when parsing an invalid [`OrderType`] string.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParseOrderTypeError(String);
 
@@ -170,14 +179,19 @@ impl From<OrderType> for request_oco_order::PriceType {
     }
 }
 
+/// How long an order remains active before expiring.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[non_exhaustive]
 pub enum TimeInForce {
+    /// Good for the current trading day only.
     #[default]
     Day,
+    /// Good till cancelled.
     Gtc,
+    /// Immediate or cancel -- fill what you can, cancel the rest.
     Ioc,
+    /// Fill or kill -- fill the entire order or cancel it.
     Fok,
 }
 
@@ -192,6 +206,7 @@ impl fmt::Display for TimeInForce {
     }
 }
 
+/// Error returned when parsing an invalid [`TimeInForce`] string.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParseTimeInForceError(String);
 

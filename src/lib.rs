@@ -1,3 +1,5 @@
+#![warn(missing_docs)]
+
 //! # rithmic-rs
 //!
 //! `rithmic-rs` is a Rust client library for the Rithmic R | Protocol API.
@@ -29,7 +31,7 @@
 //!
 //!     // Login and subscribe to market data
 //!     handle.login().await?;
-//!     handle.subscribe("ESH6", "CME").await?;
+//!     handle.subscribe("ESM6", "CME").await?;
 //!
 //!     // Process real-time updates
 //!     loop {
@@ -102,7 +104,7 @@
 //! ```ignore
 //! use rithmic_rs::RithmicError;
 //!
-//! match handle.subscribe("ESH6", "CME").await {
+//! match handle.subscribe("ESM6", "CME").await {
 //!     Ok(resp) => { /* success */ }
 //!     Err(RithmicError::ConnectionClosed | RithmicError::SendFailed) => {
 //!         handle.abort();
@@ -115,6 +117,15 @@
 //!
 //! `RithmicError` implements [`std::error::Error`], so `?` works in functions
 //! returning `Box<dyn Error>`.
+//!
+//! ## Feature Flags
+//!
+//! | Flag | Default | Description |
+//! |------|---------|-------------|
+//! | `serde` | off | Adds `Serialize`/`Deserialize` derives on trading types (`RithmicEnv`, `OrderSide`, `OrderType`, `TimeInForce`, `OrderStatus`, `RithmicOrder`, `TrailingStop`) |
+//!
+//! **TLS backend:** The crate uses `native-tls` (via `tokio-tungstenite`) for all
+//! WebSocket connections. There is currently no `rustls` option.
 //!
 //! ## Module Organization
 //!
@@ -165,9 +176,10 @@ mod request_handler;
 /// The main type you'll interact with is [`rti::messages::RithmicMessage`], an enum
 /// covering all message types including market data, order notifications, and
 /// connection health events.
+#[allow(missing_docs)]
 pub mod rti;
 
-/// High-level trading types with serde support.
+/// High-level trading types with optional serde support.
 pub mod types;
 
 /// Utility types for working with Rithmic data.
@@ -183,7 +195,7 @@ pub use plants::pnl_plant::{RithmicPnlPlant, RithmicPnlPlantHandle};
 pub use plants::ticker_plant::{RithmicTickerPlant, RithmicTickerPlantHandle};
 
 // Re-export modern configuration types for convenience
-pub use config::{ConfigError, RithmicConfig, RithmicEnv};
+pub use config::{ConfigError, RithmicConfig, RithmicConfigBuilder, RithmicEnv};
 
 // Re-export error types
 pub use error::RithmicError;
@@ -200,7 +212,10 @@ pub use api::{
 };
 
 // Re-export utility types for convenience
-pub use util::{InstrumentInfo, OrderStatus, rithmic_to_unix_nanos, rithmic_to_unix_nanos_precise};
+pub use util::{
+    InstrumentInfo, InstrumentInfoError, OrderStatus, rithmic_to_unix_nanos,
+    rithmic_to_unix_nanos_precise,
+};
 
 // Re-export high-level trading types
 pub use types::{

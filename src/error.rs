@@ -16,6 +16,8 @@ use std::fmt;
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum RithmicError {
+    /// WebSocket connection could not be established.
+    ConnectionFailed(String),
     /// The plant's WebSocket connection is gone; pending requests will never complete.
     ConnectionClosed,
     /// WebSocket send failed after the request was registered.
@@ -29,6 +31,7 @@ pub enum RithmicError {
 impl fmt::Display for RithmicError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
+            RithmicError::ConnectionFailed(msg) => write!(f, "connection failed: {msg}"),
             RithmicError::ConnectionClosed => write!(f, "connection closed"),
             RithmicError::SendFailed => write!(f, "WebSocket send failed"),
             RithmicError::EmptyResponse => write!(f, "empty response"),

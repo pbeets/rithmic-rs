@@ -7,12 +7,19 @@ use std::convert::Infallible;
 use std::fmt;
 use std::str::FromStr;
 
+/// Status string for open orders.
 pub const OPEN: &str = "open";
+/// Status string for completed/filled orders.
 pub const COMPLETE: &str = "complete";
+/// Status string for cancelled orders.
 pub const CANCELLED: &str = "cancelled";
+/// Status string for pending orders.
 pub const PENDING: &str = "pending";
+/// Status string for rejected orders.
 pub const REJECTED: &str = "rejected";
+/// Status string for partially filled orders.
 pub const PARTIAL: &str = "partial";
+/// Status string for expired orders.
 pub const EXPIRED: &str = "expired";
 
 /// Order status with helpers for checking terminal/active states.
@@ -32,13 +39,21 @@ pub const EXPIRED: &str = "expired";
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[non_exhaustive]
 pub enum OrderStatus {
+    /// Order is open and working in the market.
     Open,
+    /// Order has been completely filled.
     Complete,
+    /// Order has been cancelled.
     Cancelled,
+    /// Order is pending acknowledgement.
     Pending,
+    /// Order was rejected by the exchange or risk system.
     Rejected,
+    /// Order has been partially filled.
     Partial,
+    /// Order has expired.
     Expired,
+    /// Unknown or unrecognized status.
     #[default]
     Unknown,
 }

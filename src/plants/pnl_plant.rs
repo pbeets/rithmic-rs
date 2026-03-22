@@ -120,8 +120,9 @@ pub(crate) enum PnlPlantCommand {
 ///     Ok(())
 /// }
 /// ```
+#[derive(Debug)]
 pub struct RithmicPnlPlant {
-    pub connection_handle: tokio::task::JoinHandle<()>,
+    pub(crate) connection_handle: tokio::task::JoinHandle<()>,
     sender: mpsc::Sender<PnlPlantCommand>,
     subscription_sender: broadcast::Sender<RithmicResponse>,
 }
@@ -141,7 +142,7 @@ impl RithmicPnlPlant {
     pub async fn connect(
         config: &RithmicConfig,
         strategy: ConnectStrategy,
-    ) -> Result<RithmicPnlPlant, Box<dyn std::error::Error>> {
+    ) -> Result<RithmicPnlPlant, RithmicError> {
         let (req_tx, req_rx) = mpsc::channel::<PnlPlantCommand>(64);
         let (sub_tx, _sub_rx) = broadcast::channel(10_000);
 
@@ -160,6 +161,14 @@ impl RithmicPnlPlant {
 }
 
 impl RithmicPnlPlant {
+    /// Wait for the plant's background task to finish.
+    ///
+    /// Call this after all handles have been dropped or after calling
+    /// [`RithmicPnlPlantHandle::disconnect`] to ensure the plant shuts down cleanly.
+    pub async fn await_shutdown(self) -> Result<(), tokio::task::JoinError> {
+        self.connection_handle.await
+    }
+
     /// Get a handle to interact with the PnL plant.
     ///
     /// The handle provides methods to subscribe to PnL updates and retrieve position snapshots.
@@ -197,8 +206,10 @@ impl PnlPlant {
         subscription_sender: broadcast::Sender<RithmicResponse>,
         config: &RithmicConfig,
         strategy: ConnectStrategy,
-    ) -> Result<PnlPlant, Box<dyn std::error::Error>> {
-        let ws_stream = connect_with_strategy(&config.url, &config.beta_url, strategy).await?;
+    ) -> Result<PnlPlant, RithmicError> {
+        let ws_stream = connect_with_strategy(&config.url, &config.beta_url, strategy)
+            .await
+            .map_err(|e| RithmicError::ConnectionFailed(e.to_string()))?;
 
         let (rithmic_sender, rithmic_reader) = ws_stream.split();
 
@@ -594,9 +605,19 @@ impl PlantActor for PnlPlant {
     }
 }
 
+/// Handle for interacting with a connected PnL plant.
 pub struct RithmicPnlPlantHandle {
     sender: mpsc::Sender<PnlPlantCommand>,
+    /// Receiver for PnL and position updates.
     pub subscription_receiver: broadcast::Receiver<RithmicResponse>,
+}
+
+impl std::fmt::Debug for RithmicPnlPlantHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RithmicPnlPlantHandle")
+            .field("sender", &self.sender)
+            .finish_non_exhaustive()
+    }
 }
 
 impl RithmicPnlPlantHandle {

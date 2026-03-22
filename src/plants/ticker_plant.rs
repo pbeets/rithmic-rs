@@ -224,8 +224,9 @@ pub(crate) enum TickerPlantCommand {
 /// }
 /// ```
 ///
+#[derive(Debug)]
 pub struct RithmicTickerPlant {
-    pub connection_handle: tokio::task::JoinHandle<()>,
+    pub(crate) connection_handle: tokio::task::JoinHandle<()>,
     sender: mpsc::Sender<TickerPlantCommand>,
     subscription_sender: broadcast::Sender<RithmicResponse>,
 }
@@ -260,7 +261,7 @@ impl RithmicTickerPlant {
     pub async fn connect(
         config: &RithmicConfig,
         strategy: ConnectStrategy,
-    ) -> Result<RithmicTickerPlant, Box<dyn std::error::Error>> {
+    ) -> Result<RithmicTickerPlant, RithmicError> {
         let (req_tx, req_rx) = mpsc::channel::<TickerPlantCommand>(64);
         let (sub_tx, _sub_rx) = broadcast::channel(10_000);
 
@@ -279,6 +280,14 @@ impl RithmicTickerPlant {
 }
 
 impl RithmicTickerPlant {
+    /// Wait for the plant's background task to finish.
+    ///
+    /// Call this after all handles have been dropped or after calling
+    /// [`RithmicTickerPlantHandle::disconnect`] to ensure the plant shuts down cleanly.
+    pub async fn await_shutdown(self) -> Result<(), tokio::task::JoinError> {
+        self.connection_handle.await
+    }
+
     /// Get a handle to interact with the ticker plant.
     ///
     /// The handle provides methods to subscribe to market data and receive updates.
@@ -318,8 +327,10 @@ impl TickerPlant {
         subscription_sender: broadcast::Sender<RithmicResponse>,
         config: &RithmicConfig,
         strategy: ConnectStrategy,
-    ) -> Result<TickerPlant, Box<dyn std::error::Error>> {
-        let ws_stream = connect_with_strategy(&config.url, &config.beta_url, strategy).await?;
+    ) -> Result<TickerPlant, RithmicError> {
+        let ws_stream = connect_with_strategy(&config.url, &config.beta_url, strategy)
+            .await
+            .map_err(|e| RithmicError::ConnectionFailed(e.to_string()))?;
 
         let (rithmic_sender, rithmic_reader) = ws_stream.split();
 
@@ -971,12 +982,22 @@ impl PlantActor for TickerPlant {
     }
 }
 
+/// Handle for interacting with a connected ticker plant.
 pub struct RithmicTickerPlantHandle {
     sender: mpsc::Sender<TickerPlantCommand>,
     subscription_sender: broadcast::Sender<RithmicResponse>,
 
     /// Receiver for subscription updates
     pub subscription_receiver: broadcast::Receiver<RithmicResponse>,
+}
+
+impl std::fmt::Debug for RithmicTickerPlantHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RithmicTickerPlantHandle")
+            .field("sender", &self.sender)
+            .field("subscription_sender", &self.subscription_sender)
+            .finish_non_exhaustive()
+    }
 }
 
 impl RithmicTickerPlantHandle {

@@ -87,8 +87,10 @@ impl InstrumentInfo {
     }
 }
 
+/// Error returned when constructing an [`InstrumentInfo`] from reference data.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InstrumentInfoError {
+    /// Human-readable description of what went wrong.
     pub message: String,
 }
 

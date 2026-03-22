@@ -114,8 +114,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         price: Some(5000.00), // Entry limit price
         profit_ticks: 20,     // Take profit 20 ticks above entry
         stop_ticks: 10,       // Stop loss 10 ticks below entry
-        qty: 1,
-        symbol: "ESH6".to_string(), // E-mini S&P 500 March 2026
+        quantity: 1,
+        symbol: "ESM6".to_string(), // Update to current front-month ES contract
     };
 
     info!("Placing bracket order: {:?}", bracket_order);

@@ -25,8 +25,11 @@ use crate::rti::{
 pub struct LoginConfig {
     /// Only applicable to the ticker plant.
     pub aggregated_quotes: Option<bool>,
+    /// MAC addresses to include in the login request.
     pub mac_addr: Option<Vec<String>>,
+    /// Operating system version string.
     pub os_version: Option<String>,
+    /// Operating system platform string.
     pub os_platform: Option<String>,
 }
 
@@ -101,7 +104,7 @@ pub struct RithmicOcoOrderLeg {
 ///     symbol: "ESH6".to_string(),
 ///     exchange: "CME".to_string(),
 ///     action: BracketTransactionType::Buy,
-///     qty: 1,
+///     quantity: 1,
 ///     price_type: BracketPriceType::Limit,
 ///     price: Some(5000.0),
 ///     duration: BracketDuration::Day,
@@ -127,7 +130,7 @@ pub struct RithmicBracketOrder {
     /// Profit target distance in ticks from entry
     pub profit_ticks: i32,
     /// Number of contracts
-    pub qty: i32,
+    pub quantity: i32,
     /// Stop loss distance in ticks from entry
     pub stop_ticks: i32,
     /// Trading symbol (e.g., "ESH6")

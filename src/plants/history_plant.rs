@@ -157,8 +157,9 @@ pub(crate) enum HistoryPlantCommand {
 ///     Ok(())
 /// }
 /// ```
+#[derive(Debug)]
 pub struct RithmicHistoryPlant {
-    pub connection_handle: JoinHandle<()>,
+    pub(crate) connection_handle: JoinHandle<()>,
     sender: mpsc::Sender<HistoryPlantCommand>,
     subscription_sender: broadcast::Sender<RithmicResponse>,
 }
@@ -178,7 +179,7 @@ impl RithmicHistoryPlant {
     pub async fn connect(
         config: &RithmicConfig,
         strategy: ConnectStrategy,
-    ) -> Result<RithmicHistoryPlant, Box<dyn std::error::Error>> {
+    ) -> Result<RithmicHistoryPlant, RithmicError> {
         let (req_tx, req_rx) = mpsc::channel::<HistoryPlantCommand>(32);
         let (sub_tx, _sub_rx) = broadcast::channel::<RithmicResponse>(20_000);
 
@@ -197,6 +198,14 @@ impl RithmicHistoryPlant {
 }
 
 impl RithmicHistoryPlant {
+    /// Wait for the plant's background task to finish.
+    ///
+    /// Call this after all handles have been dropped or after calling
+    /// [`RithmicHistoryPlantHandle::disconnect`] to ensure the plant shuts down cleanly.
+    pub async fn await_shutdown(self) -> Result<(), tokio::task::JoinError> {
+        self.connection_handle.await
+    }
+
     /// Get a handle to interact with the history plant.
     ///
     /// The handle provides methods to load historical ticks, time bars, and subscribe to bar updates.
@@ -236,8 +245,10 @@ impl HistoryPlant {
         subscription_sender: broadcast::Sender<RithmicResponse>,
         config: &RithmicConfig,
         strategy: ConnectStrategy,
-    ) -> Result<HistoryPlant, Box<dyn std::error::Error>> {
-        let ws_stream = connect_with_strategy(&config.url, &config.beta_url, strategy).await?;
+    ) -> Result<HistoryPlant, RithmicError> {
+        let ws_stream = connect_with_strategy(&config.url, &config.beta_url, strategy)
+            .await
+            .map_err(|e| RithmicError::ConnectionFailed(e.to_string()))?;
 
         let (rithmic_sender, rithmic_reader) = ws_stream.split();
 
@@ -743,11 +754,22 @@ impl PlantActor for HistoryPlant {
     }
 }
 
+/// Handle for interacting with a connected history plant.
 pub struct RithmicHistoryPlantHandle {
     sender: mpsc::Sender<HistoryPlantCommand>,
     subscription_sender: broadcast::Sender<RithmicResponse>,
 
+    /// Receiver for history data responses.
     pub subscription_receiver: broadcast::Receiver<RithmicResponse>,
+}
+
+impl std::fmt::Debug for RithmicHistoryPlantHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RithmicHistoryPlantHandle")
+            .field("sender", &self.sender)
+            .field("subscription_sender", &self.subscription_sender)
+            .finish_non_exhaustive()
+    }
 }
 
 impl RithmicHistoryPlantHandle {

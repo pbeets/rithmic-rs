@@ -244,7 +244,7 @@ pub(crate) enum OrderPlantCommand {
 ///         price_type: BracketPriceType::Limit,
 ///         price: Some(4500.00),
 ///         profit_ticks: 8,
-///         qty: 1,
+///         quantity: 1,
 ///         stop_ticks: 4,
 ///         symbol: "ESH6".to_string(),
 ///     };
@@ -294,8 +294,9 @@ pub(crate) enum OrderPlantCommand {
 ///     Ok(())
 /// }
 /// ```
+#[derive(Debug)]
 pub struct RithmicOrderPlant {
-    pub connection_handle: JoinHandle<()>,
+    pub(crate) connection_handle: JoinHandle<()>,
     sender: mpsc::Sender<OrderPlantCommand>,
     subscription_sender: broadcast::Sender<RithmicResponse>,
 }
@@ -317,7 +318,7 @@ impl RithmicOrderPlant {
     pub async fn connect(
         config: &RithmicConfig,
         strategy: ConnectStrategy,
-    ) -> Result<RithmicOrderPlant, Box<dyn std::error::Error>> {
+    ) -> Result<RithmicOrderPlant, RithmicError> {
         let (req_tx, req_rx) = mpsc::channel::<OrderPlantCommand>(64);
         let (sub_tx, _sub_rx) = broadcast::channel(10_000);
 
@@ -336,6 +337,14 @@ impl RithmicOrderPlant {
 }
 
 impl RithmicOrderPlant {
+    /// Wait for the plant's background task to finish.
+    ///
+    /// Call this after all handles have been dropped or after calling
+    /// [`RithmicOrderPlantHandle::disconnect`] to ensure the plant shuts down cleanly.
+    pub async fn await_shutdown(self) -> Result<(), tokio::task::JoinError> {
+        self.connection_handle.await
+    }
+
     /// Get a handle to interact with the order plant.
     ///
     /// The handle provides methods to place orders, subscribe to updates, and manage positions.
@@ -372,8 +381,10 @@ impl OrderPlant {
         subscription_sender: broadcast::Sender<RithmicResponse>,
         config: &RithmicConfig,
         strategy: ConnectStrategy,
-    ) -> Result<OrderPlant, Box<dyn std::error::Error>> {
-        let ws_stream = connect_with_strategy(&config.url, &config.beta_url, strategy).await?;
+    ) -> Result<OrderPlant, RithmicError> {
+        let ws_stream = connect_with_strategy(&config.url, &config.beta_url, strategy)
+            .await
+            .map_err(|e| RithmicError::ConnectionFailed(e.to_string()))?;
 
         let (rithmic_sender, rithmic_reader) = ws_stream.split();
 
@@ -1301,9 +1312,19 @@ impl PlantActor for OrderPlant {
     }
 }
 
+/// Handle for interacting with a connected order plant.
 pub struct RithmicOrderPlantHandle {
     sender: mpsc::Sender<OrderPlantCommand>,
+    /// Receiver for order updates and responses.
     pub subscription_receiver: broadcast::Receiver<RithmicResponse>,
+}
+
+impl std::fmt::Debug for RithmicOrderPlantHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RithmicOrderPlantHandle")
+            .field("sender", &self.sender)
+            .finish_non_exhaustive()
+    }
 }
 
 impl RithmicOrderPlantHandle {

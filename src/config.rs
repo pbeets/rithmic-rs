@@ -33,9 +33,12 @@ use std::{env, fmt, str::FromStr};
 #[cfg_attr(feature = "serde", serde(rename_all = "lowercase"))]
 #[non_exhaustive]
 pub enum RithmicEnv {
+    /// Rithmic Paper Trading (demo/development) environment.
     #[default]
     Demo,
+    /// Rithmic 01 (live/production) environment.
     Live,
+    /// Rithmic Test environment.
     Test,
 }
 
@@ -66,9 +69,18 @@ impl FromStr for RithmicEnv {
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum ConfigError {
+    /// The environment string could not be parsed.
     InvalidEnvironment(String),
-    InvalidValue { var: String, reason: String },
+    /// A configuration value was present but invalid.
+    InvalidValue {
+        /// The variable or field name.
+        var: String,
+        /// Why the value was rejected.
+        reason: String,
+    },
+    /// A required environment variable was not set.
     MissingEnvVar(String),
+    /// A required builder field was not provided.
     MissingField(String),
 }
 
@@ -100,24 +112,48 @@ impl std::error::Error for ConfigError {}
 /// # Fields
 /// - Account-related: `account_id`, `fcm_id`, `ib_id`
 /// - Connection-related: `url`, `beta_url`, `user`, `password`, `system_name`, `env`
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct RithmicConfig {
-    // Account fields
+    /// Trading account identifier.
     pub account_id: String,
+    /// Futures Commission Merchant identifier.
     pub fcm_id: String,
+    /// Introducing Broker identifier.
     pub ib_id: String,
-
-    // Connection fields
+    /// Primary WebSocket URL.
     pub url: String,
+    /// Alternative/beta WebSocket URL used by [`ConnectStrategy::AlternateWithRetry`](crate::ConnectStrategy::AlternateWithRetry).
     pub beta_url: String,
+    /// Login username.
     pub user: String,
+    /// Login password.
     pub password: String,
+    /// Rithmic system name (e.g. "Rithmic Paper Trading").
     pub system_name: String,
+    /// Target trading environment.
     pub env: RithmicEnv,
-
-    // App fields
+    /// Application name registered with Rithmic.
     pub app_name: String,
+    /// Application version string.
     pub app_version: String,
+}
+
+impl fmt::Debug for RithmicConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RithmicConfig")
+            .field("account_id", &self.account_id)
+            .field("fcm_id", &self.fcm_id)
+            .field("ib_id", &self.ib_id)
+            .field("url", &self.url)
+            .field("beta_url", &self.beta_url)
+            .field("user", &self.user)
+            .field("password", &"[REDACTED]")
+            .field("system_name", &self.system_name)
+            .field("env", &self.env)
+            .field("app_name", &self.app_name)
+            .field("app_version", &self.app_version)
+            .finish()
+    }
 }
 
 impl RithmicConfig {
@@ -351,11 +387,13 @@ impl RithmicConfigBuilder {
         self
     }
 
+    /// Set the application name registered with Rithmic.
     pub fn app_name(mut self, app_name: impl Into<String>) -> Self {
         self.app_name = Some(app_name.into());
         self
     }
 
+    /// Set the application version string.
     pub fn app_version(mut self, app_version: impl Into<String>) -> Self {
         self.app_version = Some(app_version.into());
         self
@@ -406,70 +444,39 @@ impl RithmicConfigBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serial_test::serial;
-    use std::env;
 
-    // Helper to set up test environment variables
-    fn setup_demo_env_vars() {
-        unsafe {
-            env::set_var("RITHMIC_DEMO_ACCOUNT_ID", "test_account");
-            env::set_var("RITHMIC_DEMO_FCM_ID", "test_fcm");
-            env::set_var("RITHMIC_DEMO_IB_ID", "test_ib");
-            env::set_var("RITHMIC_DEMO_USER", "demo_user");
-            env::set_var("RITHMIC_DEMO_PW", "demo_password");
-            env::set_var("RITHMIC_DEMO_URL", "wss://test-demo.example.com:443");
-            env::set_var(
+    fn demo_env_vars() -> Vec<(&'static str, Option<&'static str>)> {
+        vec![
+            ("RITHMIC_DEMO_ACCOUNT_ID", Some("test_account")),
+            ("RITHMIC_DEMO_FCM_ID", Some("test_fcm")),
+            ("RITHMIC_DEMO_IB_ID", Some("test_ib")),
+            ("RITHMIC_DEMO_USER", Some("demo_user")),
+            ("RITHMIC_DEMO_PW", Some("demo_password")),
+            ("RITHMIC_DEMO_URL", Some("wss://test-demo.example.com:443")),
+            (
                 "RITHMIC_DEMO_ALT_URL",
-                "wss://test-demo-alt.example.com:443",
-            );
-            env::set_var("RITHMIC_APP_NAME", "test_app");
-            env::set_var("RITHMIC_APP_VERSION", "1");
-        }
+                Some("wss://test-demo-alt.example.com:443"),
+            ),
+            ("RITHMIC_APP_NAME", Some("test_app")),
+            ("RITHMIC_APP_VERSION", Some("1")),
+        ]
     }
 
-    fn setup_live_env_vars() {
-        unsafe {
-            env::set_var("RITHMIC_LIVE_ACCOUNT_ID", "test_account");
-            env::set_var("RITHMIC_LIVE_FCM_ID", "test_fcm");
-            env::set_var("RITHMIC_LIVE_IB_ID", "test_ib");
-            env::set_var("RITHMIC_LIVE_USER", "live_user");
-            env::set_var("RITHMIC_LIVE_PW", "live_password");
-            env::set_var("RITHMIC_LIVE_URL", "wss://test-live.example.com:443");
-            env::set_var(
+    fn live_env_vars() -> Vec<(&'static str, Option<&'static str>)> {
+        vec![
+            ("RITHMIC_LIVE_ACCOUNT_ID", Some("test_account")),
+            ("RITHMIC_LIVE_FCM_ID", Some("test_fcm")),
+            ("RITHMIC_LIVE_IB_ID", Some("test_ib")),
+            ("RITHMIC_LIVE_USER", Some("live_user")),
+            ("RITHMIC_LIVE_PW", Some("live_password")),
+            ("RITHMIC_LIVE_URL", Some("wss://test-live.example.com:443")),
+            (
                 "RITHMIC_LIVE_ALT_URL",
-                "wss://test-live-alt.example.com:443",
-            );
-            env::set_var("RITHMIC_APP_NAME", "test_app");
-            env::set_var("RITHMIC_APP_VERSION", "1");
-        }
-    }
-
-    fn cleanup_env_vars() {
-        unsafe {
-            env::remove_var("RITHMIC_DEMO_ACCOUNT_ID");
-            env::remove_var("RITHMIC_DEMO_FCM_ID");
-            env::remove_var("RITHMIC_DEMO_IB_ID");
-            env::remove_var("RITHMIC_DEMO_USER");
-            env::remove_var("RITHMIC_DEMO_PW");
-            env::remove_var("RITHMIC_DEMO_URL");
-            env::remove_var("RITHMIC_DEMO_ALT_URL");
-            env::remove_var("RITHMIC_LIVE_ACCOUNT_ID");
-            env::remove_var("RITHMIC_LIVE_FCM_ID");
-            env::remove_var("RITHMIC_LIVE_IB_ID");
-            env::remove_var("RITHMIC_LIVE_USER");
-            env::remove_var("RITHMIC_LIVE_PW");
-            env::remove_var("RITHMIC_LIVE_URL");
-            env::remove_var("RITHMIC_LIVE_ALT_URL");
-            env::remove_var("RITHMIC_TEST_ACCOUNT_ID");
-            env::remove_var("RITHMIC_TEST_FCM_ID");
-            env::remove_var("RITHMIC_TEST_IB_ID");
-            env::remove_var("RITHMIC_TEST_USER");
-            env::remove_var("RITHMIC_TEST_PW");
-            env::remove_var("RITHMIC_TEST_URL");
-            env::remove_var("RITHMIC_TEST_ALT_URL");
-            env::remove_var("RITHMIC_APP_NAME");
-            env::remove_var("RITHMIC_APP_VERSION");
-        }
+                Some("wss://test-live-alt.example.com:443"),
+            ),
+            ("RITHMIC_APP_NAME", Some("test_app")),
+            ("RITHMIC_APP_VERSION", Some("1")),
+        ]
     }
 
     #[test]
@@ -522,119 +529,114 @@ mod tests {
     }
 
     #[test]
-    #[serial]
     fn test_from_env_demo_success() {
-        setup_demo_env_vars();
+        temp_env::with_vars(demo_env_vars(), || {
+            let config = RithmicConfig::from_env(RithmicEnv::Demo).unwrap();
 
-        let config = RithmicConfig::from_env(RithmicEnv::Demo).unwrap();
-
-        assert_eq!(config.account_id, "test_account");
-        assert_eq!(config.fcm_id, "test_fcm");
-        assert_eq!(config.ib_id, "test_ib");
-        assert_eq!(config.user, "demo_user");
-        assert_eq!(config.password, "demo_password");
-        assert_eq!(config.url, "wss://test-demo.example.com:443");
-        assert_eq!(config.beta_url, "wss://test-demo-alt.example.com:443");
-        assert_eq!(config.system_name, "Rithmic Paper Trading");
-        assert_eq!(config.env, RithmicEnv::Demo);
-
-        cleanup_env_vars();
+            assert_eq!(config.account_id, "test_account");
+            assert_eq!(config.fcm_id, "test_fcm");
+            assert_eq!(config.ib_id, "test_ib");
+            assert_eq!(config.user, "demo_user");
+            assert_eq!(config.password, "demo_password");
+            assert_eq!(config.url, "wss://test-demo.example.com:443");
+            assert_eq!(config.beta_url, "wss://test-demo-alt.example.com:443");
+            assert_eq!(config.system_name, "Rithmic Paper Trading");
+            assert_eq!(config.env, RithmicEnv::Demo);
+        });
     }
 
     #[test]
-    #[serial]
     fn test_from_env_live_success() {
-        setup_live_env_vars();
+        temp_env::with_vars(live_env_vars(), || {
+            let config = RithmicConfig::from_env(RithmicEnv::Live).unwrap();
 
-        let config = RithmicConfig::from_env(RithmicEnv::Live).unwrap();
-
-        assert_eq!(config.account_id, "test_account");
-        assert_eq!(config.user, "live_user");
-        assert_eq!(config.password, "live_password");
-        assert_eq!(config.system_name, "Rithmic 01");
-        assert_eq!(config.env, RithmicEnv::Live);
-
-        cleanup_env_vars();
+            assert_eq!(config.account_id, "test_account");
+            assert_eq!(config.user, "live_user");
+            assert_eq!(config.password, "live_password");
+            assert_eq!(config.system_name, "Rithmic 01");
+            assert_eq!(config.env, RithmicEnv::Live);
+        });
     }
 
     #[test]
-    #[serial]
     fn test_from_env_missing_account_id() {
-        cleanup_env_vars();
-        unsafe {
-            env::set_var("RITHMIC_DEMO_FCM_ID", "test_fcm");
-            env::set_var("RITHMIC_DEMO_IB_ID", "test_ib");
-            env::set_var("RITHMIC_DEMO_USER", "demo_user");
-            env::set_var("RITHMIC_DEMO_PW", "demo_password");
-            env::set_var("RITHMIC_DEMO_URL", "wss://test-demo.example.com:443");
-            env::set_var(
-                "RITHMIC_DEMO_ALT_URL",
-                "wss://test-demo-alt.example.com:443",
-            );
-        }
+        temp_env::with_vars(
+            vec![
+                ("RITHMIC_DEMO_ACCOUNT_ID", None::<&str>),
+                ("RITHMIC_DEMO_FCM_ID", Some("test_fcm")),
+                ("RITHMIC_DEMO_IB_ID", Some("test_ib")),
+                ("RITHMIC_DEMO_USER", Some("demo_user")),
+                ("RITHMIC_DEMO_PW", Some("demo_password")),
+                ("RITHMIC_DEMO_URL", Some("wss://test-demo.example.com:443")),
+                (
+                    "RITHMIC_DEMO_ALT_URL",
+                    Some("wss://test-demo-alt.example.com:443"),
+                ),
+            ],
+            || {
+                let result = RithmicConfig::from_env(RithmicEnv::Demo);
+                assert!(result.is_err());
 
-        let result = RithmicConfig::from_env(RithmicEnv::Demo);
-        assert!(result.is_err());
-
-        if let Err(ConfigError::MissingEnvVar(var)) = result {
-            assert_eq!(var, "RITHMIC_DEMO_ACCOUNT_ID");
-        } else {
-            panic!("Expected MissingEnvVar error");
-        }
-
-        cleanup_env_vars();
+                if let Err(ConfigError::MissingEnvVar(var)) = result {
+                    assert_eq!(var, "RITHMIC_DEMO_ACCOUNT_ID");
+                } else {
+                    panic!("Expected MissingEnvVar error");
+                }
+            },
+        );
     }
 
     #[test]
-    #[serial]
     fn test_from_env_missing_credentials() {
-        cleanup_env_vars();
-        unsafe {
-            env::set_var("RITHMIC_DEMO_ACCOUNT_ID", "test_account");
-            env::set_var("RITHMIC_DEMO_FCM_ID", "test_fcm");
-            env::set_var("RITHMIC_DEMO_IB_ID", "test_ib");
-            env::set_var("RITHMIC_DEMO_URL", "wss://test-demo.example.com:443");
-            env::set_var(
-                "RITHMIC_DEMO_ALT_URL",
-                "wss://test-demo-alt.example.com:443",
-            );
-        }
+        temp_env::with_vars(
+            vec![
+                ("RITHMIC_DEMO_ACCOUNT_ID", Some("test_account")),
+                ("RITHMIC_DEMO_FCM_ID", Some("test_fcm")),
+                ("RITHMIC_DEMO_IB_ID", Some("test_ib")),
+                ("RITHMIC_DEMO_USER", None::<&str>),
+                ("RITHMIC_DEMO_PW", None),
+                ("RITHMIC_DEMO_URL", Some("wss://test-demo.example.com:443")),
+                (
+                    "RITHMIC_DEMO_ALT_URL",
+                    Some("wss://test-demo-alt.example.com:443"),
+                ),
+            ],
+            || {
+                let result = RithmicConfig::from_env(RithmicEnv::Demo);
+                assert!(result.is_err());
 
-        let result = RithmicConfig::from_env(RithmicEnv::Demo);
-        assert!(result.is_err());
-
-        if let Err(ConfigError::MissingEnvVar(var)) = result {
-            assert_eq!(var, "RITHMIC_DEMO_USER");
-        } else {
-            panic!("Expected MissingEnvVar error");
-        }
-
-        cleanup_env_vars();
+                if let Err(ConfigError::MissingEnvVar(var)) = result {
+                    assert_eq!(var, "RITHMIC_DEMO_USER");
+                } else {
+                    panic!("Expected MissingEnvVar error");
+                }
+            },
+        );
     }
 
     #[test]
-    #[serial]
     fn test_from_env_missing_url() {
-        cleanup_env_vars();
-        unsafe {
-            env::set_var("RITHMIC_DEMO_ACCOUNT_ID", "test_account");
-            env::set_var("RITHMIC_DEMO_FCM_ID", "test_fcm");
-            env::set_var("RITHMIC_DEMO_IB_ID", "test_ib");
-            env::set_var("RITHMIC_DEMO_USER", "demo_user");
-            env::set_var("RITHMIC_DEMO_PW", "demo_password");
-            // Deliberately not setting URL variables
-        }
+        temp_env::with_vars(
+            vec![
+                ("RITHMIC_DEMO_ACCOUNT_ID", Some("test_account")),
+                ("RITHMIC_DEMO_FCM_ID", Some("test_fcm")),
+                ("RITHMIC_DEMO_IB_ID", Some("test_ib")),
+                ("RITHMIC_DEMO_USER", Some("demo_user")),
+                ("RITHMIC_DEMO_PW", Some("demo_password")),
+                ("RITHMIC_DEMO_URL", None::<&str>),
+                ("RITHMIC_DEMO_ALT_URL", None),
+            ],
+            || {
+                let result = RithmicConfig::from_env(RithmicEnv::Demo);
+                assert!(result.is_err());
 
-        let result = RithmicConfig::from_env(RithmicEnv::Demo);
-        assert!(result.is_err());
-
-        if let Err(ConfigError::MissingEnvVar(var)) = result {
-            assert_eq!(var, "RITHMIC_DEMO_URL");
-        } else {
-            panic!("Expected MissingEnvVar error");
-        }
-
-        cleanup_env_vars();
+                if let Err(ConfigError::MissingEnvVar(var)) = result {
+                    assert_eq!(var, "RITHMIC_DEMO_URL");
+                } else {
+                    panic!("Expected MissingEnvVar error");
+                }
+            },
+        );
     }
 
     #[test]
@@ -798,5 +800,34 @@ mod tests {
             .unwrap();
 
         assert_eq!(config.account_id, "my_account");
+    }
+
+    #[test]
+    fn test_debug_redacts_password() {
+        let config = RithmicConfig::builder(RithmicEnv::Demo)
+            .account_id("my_account")
+            .fcm_id("my_fcm")
+            .ib_id("my_ib")
+            .user("my_user")
+            .password("super_secret_password")
+            .url("wss://test.example.com:443")
+            .beta_url("wss://test-alt.example.com:443")
+            .app_name("test_app")
+            .app_version("1")
+            .build()
+            .unwrap();
+
+        let debug_output = format!("{:?}", config);
+        assert!(
+            !debug_output.contains("super_secret_password"),
+            "Debug output should not contain the actual password"
+        );
+        assert!(
+            debug_output.contains("[REDACTED]"),
+            "Debug output should contain [REDACTED] for the password"
+        );
+        // Other fields should still be visible
+        assert!(debug_output.contains("my_account"));
+        assert!(debug_output.contains("my_user"));
     }
 }

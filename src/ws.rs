@@ -146,9 +146,7 @@ async fn connect_with_retry(
     let mut attempt: u64 = 1;
 
     loop {
-        let selected_url = if attempt == 1 {
-            primary_url
-        } else if attempt.is_multiple_of(2) {
+        let selected_url = if attempt % 2 == 0 {
             secondary_url
         } else {
             primary_url

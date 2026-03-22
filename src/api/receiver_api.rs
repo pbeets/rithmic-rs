@@ -97,13 +97,21 @@ use crate::rti::{
 /// # }
 /// ```
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct RithmicResponse {
+    /// Unique identifier correlating this response to the original request.
     pub request_id: String,
+    /// The decoded protocol message payload.
     pub message: RithmicMessage,
+    /// Whether this is a streaming update rather than a one-shot response.
     pub is_update: bool,
+    /// Whether more responses for this request are expected.
     pub has_more: bool,
+    /// Whether this request can produce multiple responses.
     pub multi_response: bool,
+    /// Server-side error message, if any.
     pub error: Option<String>,
+    /// The plant or service that produced this response.
     pub source: String,
 }
 

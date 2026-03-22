@@ -47,7 +47,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut handle = plant.get_handle();
 
     handle.login().await?;
-    handle.subscribe("ESH6", "CME").await?;
+    handle.subscribe("ESM6", "CME").await?; // Update to current front-month ES contract
 
     while let Ok(update) = handle.subscription_receiver.recv().await {
         println!("{:?}", update.message);
@@ -72,10 +72,10 @@ This library uses the actor pattern where each Rithmic service runs independentl
 
 ```rust
 // Subscribe to real-time quotes
-handle.subscribe("ESH6", "CME").await?;
+handle.subscribe("ESM6", "CME").await?;
 
 // Unsubscribe when done
-handle.unsubscribe("ESH6", "CME").await?;
+handle.unsubscribe("ESM6", "CME").await?;
 
 // Symbol discovery
 let symbols = handle.search_symbols("ES", Some("CME"), None, None, None).await?;
@@ -89,7 +89,7 @@ use rithmic_rs::{RithmicOrder, NewOrderTransactionType, NewOrderPriceType};
 
 // Place orders using the RithmicOrder API
 let order = RithmicOrder {
-    symbol: "ESH6".to_string(),
+    symbol: "ESM6".to_string(),
     exchange: "CME".to_string(),
     quantity: 1,
     price: 5000.0,
@@ -105,15 +105,15 @@ handle.place_bracket_order(...).await?;
 
 // Manage positions
 handle.cancel_order(order_id).await?;
-handle.exit_position("ESH6", "CME").await?;
+handle.exit_position("ESM6", "CME").await?;
 ```
 
 ### History Plant
 
 ```rust
 // Load historical data (bar_type, period, start_time, end_time as i32 unix seconds)
-let bars = handle.load_time_bars("ESH6", "CME", BarType::MinuteBar, 5, start, end).await?;
-let ticks = handle.load_ticks("ESH6", "CME", start, end).await?;
+let bars = handle.load_time_bars("ESM6", "CME", BarType::MinuteBar, 5, start, end).await?;
+let ticks = handle.load_ticks("ESM6", "CME", start, end).await?;
 ```
 
 ### PnL Plant
@@ -131,7 +131,7 @@ All plant handle methods return `Result<_, RithmicError>` with typed variants yo
 ```rust
 use rithmic_rs::RithmicError;
 
-match handle.subscribe("ESH6", "CME").await {
+match handle.subscribe("ESM6", "CME").await {
     Ok(resp) => { /* success */ }
     Err(RithmicError::ConnectionClosed | RithmicError::SendFailed) => {
         handle.abort();
