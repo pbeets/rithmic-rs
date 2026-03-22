@@ -30,7 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`await_shutdown()`** method on all plant structs to wait for clean shutdown
 - **`RithmicConfigBuilder`** re-exported from crate root
 - **`InstrumentInfoError`** re-exported from crate root
-- **`#[non_exhaustive]`** on `RithmicResponse`, `RithmicMessage`, `RithmicError`, `RithmicOrder`, `TrailingStop`, `ConnectStrategy`, `OrderStatus`, `ConfigError`, and `RithmicEnv` for forward compatibility
+- **`#[non_exhaustive]`** on `RithmicResponse`, `RithmicMessage`, `RithmicError`, `RithmicOrder`, `TrailingStop`, `ConnectStrategy`, `OrderStatus`, and `ConfigError` for forward compatibility
 - **`Debug`** impl on all plant structs and plant handle structs
 - **`RithmicConfig`** `Debug` output now redacts the `password` field
 

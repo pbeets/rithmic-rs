@@ -31,7 +31,6 @@ use std::{env, fmt, str::FromStr};
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "lowercase"))]
-#[non_exhaustive]
 pub enum RithmicEnv {
     /// Rithmic Paper Trading (demo/development) environment.
     #[default]
