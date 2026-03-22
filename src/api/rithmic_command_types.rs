@@ -25,11 +25,8 @@ use crate::rti::{
 pub struct LoginConfig {
     /// Only applicable to the ticker plant.
     pub aggregated_quotes: Option<bool>,
-    /// MAC addresses to include in the login request.
     pub mac_addr: Option<Vec<String>>,
-    /// Operating system version string.
     pub os_version: Option<String>,
-    /// Operating system platform string.
     pub os_platform: Option<String>,
 }
 
