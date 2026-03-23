@@ -15,7 +15,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-rithmic-rs = "0.7.2"
+rithmic-rs = "1.0.0"
 ```
 
 Set your environment variables:
@@ -158,7 +158,7 @@ If you need to handle disconnections and automatically reconnect, you must imple
 
 ## Upgrading
 
-See [CHANGELOG.md](CHANGELOG.md) for version history and [MIGRATION_0.6.0.md](MIGRATION_0.6.0.md) for migration guides.
+See [CHANGELOG.md](CHANGELOG.md) for version history.
 
 ## Contribution
 

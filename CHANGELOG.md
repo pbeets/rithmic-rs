@@ -11,6 +11,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking Changes
 
+#### Typed Error Handling
+- **`RithmicError`** enum replaces `String` errors across the entire API
+  - `ConnectionFailed` — WebSocket connection could not be established
+  - `ConnectionClosed` — plant's WebSocket connection is gone
+  - `SendFailed` — WebSocket send failed after the request was registered
+  - `EmptyResponse` — server returned empty response where at least one was expected
+  - `ServerError(String)` — protocol-level rejection from Rithmic
+- **`connect()`** on all plants now returns `Result<Plant, RithmicError>` instead of `Result<Plant, Box<dyn std::error::Error>>`
+- All plant handle methods now return `Result<_, RithmicError>` instead of `Result<_, String>`
+
 #### API Renames
 - **`RithmicBracketOrder::qty`** renamed to **`quantity`** for clarity and consistency
 
@@ -18,15 +28,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`connection_handle`** on all plant structs is now `pub(crate)` (was `pub`)
   - Use the new **`await_shutdown()`** method instead to wait for the plant to stop
 
-#### Error Type Changes
-- **`connect()`** on all plants now returns `Result<Plant, RithmicError>` instead of `Result<Plant, Box<dyn std::error::Error>>`
-  - New **`RithmicError::ConnectionFailed`** variant for connection errors
+#### Dependency Changes
+- **Prost** upgraded from `0.13` to `0.14` — if you depend on generated protobuf types, this is a breaking change
+- **`async-trait`** removed — all async traits now use native Rust async trait support (requires Rust 1.85+)
 
 #### Removed
 - **`place_new_order()`** removed from `RithmicOrderPlantHandle` — use `place_order(RithmicOrder)` instead
+- Protobuf codegen removed from build script — moved to standalone example binary
 
 ### Added
 
+- **`LoginConfig`** struct for advanced login options (`aggregated_quotes`, `mac_addr`, `os_version`, `os_platform`)
+- **`login_with_config(LoginConfig)`** method on all plant handles for customized login
 - **`await_shutdown()`** method on all plant structs to wait for clean shutdown
 - **`RithmicConfigBuilder`** re-exported from crate root
 - **`InstrumentInfoError`** re-exported from crate root
@@ -98,7 +111,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 #### Optional Serde Support
 - Added `serde` feature flag for serialization/deserialization support
 - `RithmicEnv` derives `Serialize`/`Deserialize` when enabled with lowercase rename
-- Enable with: `rithmic-rs = { version = "0.7.2", features = ["serde"] }`
+- Enable with: `rithmic-rs = { version = "1.0", features = ["serde"] }`
 
 #### New Example
 - **`bracket_order.rs`**: Demonstrates placing bracket orders with typed enums
@@ -295,8 +308,6 @@ See `examples/.env.blank` for complete template with all required variables.
 
 ## [0.6.0] - 2025-11-23
 
-> **📖 Migration Guide:** See [MIGRATION_0.6.0.md](MIGRATION_0.6.0.md) for migration instructions from 0.4.x or 0.5.x.
-
 ### Breaking Changes
 
 - **Removed `connection_info` module** - deprecated types removed (use `RithmicConfig` instead)
@@ -317,7 +328,6 @@ See `examples/.env.blank` for complete template with all required variables.
 
 ### Documentation
 
-- Consolidated migration guides into single MIGRATION_0.6.0.md
 - Removed dotenv/`.env` references from library docs (examples still show usage)
 - Updated README with clearer examples and breaking changes summary
 
@@ -499,8 +509,6 @@ See `examples/.env.blank` for complete template with all required variables.
 
 ## [0.5.0]
 
-> **📖 Migration Guide:** See [MIGRATION_0.6.0.md](MIGRATION_0.6.0.md) for migration instructions.
-
 ### Breaking Changes
 
 #### Connection API Changes
@@ -611,23 +619,6 @@ Migration helpers provided via trait implementations maintain backward compatibi
 - Simplified routing logic using `is_update` flag instead of message type checks
 - Improved type safety by replacing panics with proper error types
 
-### Migration Guide
-
-For detailed migration instructions with code examples, see **[MIGRATION_0.6.0.md](MIGRATION_0.6.0.md)**.
-
-Quick summary:
-- Replace `Plant::new()` → `Plant::connect(&config, strategy)`
-- Replace `AccountInfo` → `RithmicConfig::from_env()` or builder pattern
-- Choose `ConnectStrategy` (Simple/Retry/AlternateWithRetry)
-- Add error handling for heartbeats and forced logouts in subscription channel
-
-### Future Plans
-
-- Remove `dotenv` dependency - move to optional feature (planned for 0.6.0)
-  - Configuration will work without .env files by default
-  - `from_dotenv()` will require opt-in feature flag
-  - Reduces mandatory dependencies for library users
-
 ## [0.4.2] - 2025-11-15
 
 Previous stable release. See git history for earlier changes.
@@ -636,7 +627,7 @@ Previous stable release. See git history for earlier changes.
 
 ## Version History Summary
 
-- **1.0.0**: Breaking changes - renamed fields, unified error types, removed deprecated APIs, added non_exhaustive annotations, MSRV 1.85
+- **1.0.0**: Breaking changes - typed `RithmicError` enum, prost 0.14, async-trait removed, `LoginConfig` for advanced login, `await_shutdown()`, non_exhaustive annotations, MSRV 1.85
 - **0.7.2** (2026-02-07): New RithmicOrder API with trigger prices and trailing stops, ticker plant unsubscribe methods, serde-compatible order types
 - **0.7.1** (2026-01-23): New utility module (InstrumentInfo, OrderStatus, timestamp helpers), RithmicResponse helper methods, optional serde support, improved error handling
 - **0.7.0** (2026-01-08): Breaking changes - Order types now use enums instead of raw integers, cleaner public API exports
