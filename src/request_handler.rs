@@ -119,3 +119,262 @@ impl Default for RithmicRequestHandler {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::rti::{ResponseHeartbeat, ResponseLogin, ResponseReferenceData};
+
+    fn make_response(id: &str, message: RithmicMessage) -> RithmicResponse {
+        RithmicResponse {
+            request_id: id.to_string(),
+            message,
+            is_update: false,
+            has_more: false,
+            multi_response: false,
+            error: None,
+            source: "test".to_string(),
+        }
+    }
+
+    fn login_message() -> RithmicMessage {
+        RithmicMessage::ResponseLogin(ResponseLogin::default())
+    }
+
+    fn heartbeat_message() -> RithmicMessage {
+        RithmicMessage::ResponseHeartbeat(ResponseHeartbeat::default())
+    }
+
+    fn ref_data_message() -> RithmicMessage {
+        RithmicMessage::ResponseReferenceData(ResponseReferenceData::default())
+    }
+
+    // =========================================================================
+    // Single response
+    // =========================================================================
+
+    #[test]
+    fn single_response_delivered_to_responder() {
+        let mut handler = RithmicRequestHandler::new();
+        let (tx, mut rx) = oneshot::channel();
+
+        handler.register_request(RithmicRequest {
+            request_id: "1".to_string(),
+            responder: tx,
+        });
+
+        handler.handle_response(make_response("1", login_message()));
+
+        let result = rx.try_recv().unwrap().unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].request_id, "1");
+    }
+
+    #[test]
+    fn single_response_removes_request_from_handler() {
+        let mut handler = RithmicRequestHandler::new();
+        let (tx, mut rx) = oneshot::channel();
+
+        handler.register_request(RithmicRequest {
+            request_id: "1".to_string(),
+            responder: tx,
+        });
+
+        handler.handle_response(make_response("1", login_message()));
+        let _ = rx.try_recv().unwrap();
+
+        // A second response for the same ID should not panic (just logs error)
+        handler.handle_response(make_response("1", login_message()));
+    }
+
+    // =========================================================================
+    // Multi-part responses
+    // =========================================================================
+
+    #[test]
+    fn multi_response_collects_all_parts() {
+        let mut handler = RithmicRequestHandler::new();
+        let (tx, mut rx) = oneshot::channel();
+
+        handler.register_request(RithmicRequest {
+            request_id: "2".to_string(),
+            responder: tx,
+        });
+
+        // Two intermediate responses with has_more = true
+        for _ in 0..2 {
+            let mut resp = make_response("2", ref_data_message());
+            resp.multi_response = true;
+            resp.has_more = true;
+            handler.handle_response(resp);
+        }
+
+        // Final response with has_more = false
+        let mut final_resp = make_response("2", ref_data_message());
+        final_resp.multi_response = true;
+        final_resp.has_more = false;
+        handler.handle_response(final_resp);
+
+        let result = rx.try_recv().unwrap().unwrap();
+        assert_eq!(result.len(), 3);
+    }
+
+    #[test]
+    fn multi_response_single_message_no_has_more() {
+        let mut handler = RithmicRequestHandler::new();
+        let (tx, mut rx) = oneshot::channel();
+
+        handler.register_request(RithmicRequest {
+            request_id: "3".to_string(),
+            responder: tx,
+        });
+
+        // multi_response = true but has_more = false (single-item multi-response)
+        let mut resp = make_response("3", ref_data_message());
+        resp.multi_response = true;
+        resp.has_more = false;
+        handler.handle_response(resp);
+
+        let result = rx.try_recv().unwrap().unwrap();
+        assert_eq!(result.len(), 1);
+    }
+
+    // =========================================================================
+    // Heartbeat responses
+    // =========================================================================
+
+    #[test]
+    fn heartbeat_delivered_when_responder_registered() {
+        let mut handler = RithmicRequestHandler::new();
+        let (tx, mut rx) = oneshot::channel();
+
+        handler.register_request(RithmicRequest {
+            request_id: "hb".to_string(),
+            responder: tx,
+        });
+
+        handler.handle_response(make_response("hb", heartbeat_message()));
+
+        let result = rx.try_recv().unwrap().unwrap();
+        assert_eq!(result.len(), 1);
+    }
+
+    #[test]
+    fn heartbeat_without_responder_does_not_panic() {
+        let mut handler = RithmicRequestHandler::new();
+        // No responder registered — should silently ignore
+        handler.handle_response(make_response("hb", heartbeat_message()));
+    }
+
+    // =========================================================================
+    // fail_request
+    // =========================================================================
+
+    #[test]
+    fn fail_request_sends_error_and_returns_true() {
+        let mut handler = RithmicRequestHandler::new();
+        let (tx, mut rx) = oneshot::channel();
+
+        handler.register_request(RithmicRequest {
+            request_id: "fail".to_string(),
+            responder: tx,
+        });
+
+        assert!(handler.fail_request("fail", RithmicError::SendFailed));
+
+        let result = rx.try_recv().unwrap();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn fail_request_returns_false_for_unknown_id() {
+        let mut handler = RithmicRequestHandler::new();
+        assert!(!handler.fail_request("unknown", RithmicError::SendFailed));
+    }
+
+    // =========================================================================
+    // drain_and_drop
+    // =========================================================================
+
+    #[test]
+    fn drain_and_drop_sends_connection_closed_to_all_pending() {
+        let mut handler = RithmicRequestHandler::new();
+        let (tx1, rx1) = oneshot::channel();
+        let (tx2, rx2) = oneshot::channel();
+
+        handler.register_request(RithmicRequest {
+            request_id: "a".to_string(),
+            responder: tx1,
+        });
+
+        handler.register_request(RithmicRequest {
+            request_id: "b".to_string(),
+            responder: tx2,
+        });
+
+        handler.drain_and_drop();
+
+        for mut rx in [rx1, rx2] {
+            let err = rx.try_recv().unwrap().unwrap_err();
+            assert!(matches!(err, RithmicError::ConnectionClosed));
+        }
+    }
+
+    #[test]
+    fn drain_and_drop_clears_partial_multi_responses() {
+        let mut handler = RithmicRequestHandler::new();
+        let (tx, _rx) = oneshot::channel();
+
+        handler.register_request(RithmicRequest {
+            request_id: "m".to_string(),
+            responder: tx,
+        });
+
+        // Accumulate a partial multi-response
+        let mut resp = make_response("m", ref_data_message());
+        resp.multi_response = true;
+        resp.has_more = true;
+        handler.handle_response(resp);
+
+        handler.drain_and_drop();
+
+        // After drain, a new request with the same ID should work cleanly
+        let (tx2, mut rx2) = oneshot::channel();
+
+        handler.register_request(RithmicRequest {
+            request_id: "m".to_string(),
+            responder: tx2,
+        });
+
+        handler.handle_response(make_response("m", login_message()));
+
+        let result = rx2.try_recv().unwrap().unwrap();
+        assert_eq!(result.len(), 1);
+    }
+
+    // =========================================================================
+    // Edge cases
+    // =========================================================================
+
+    #[test]
+    fn response_for_unregistered_id_does_not_panic() {
+        let mut handler = RithmicRequestHandler::new();
+
+        handler.handle_response(make_response("ghost", login_message()));
+    }
+
+    #[test]
+    fn dropped_receiver_does_not_panic() {
+        let mut handler = RithmicRequestHandler::new();
+        let (tx, rx) = oneshot::channel();
+
+        handler.register_request(RithmicRequest {
+            request_id: "drop".to_string(),
+            responder: tx,
+        });
+
+        drop(rx);
+        // Sending to a dropped receiver should not panic (just logs error)
+        handler.handle_response(make_response("drop", login_message()));
+    }
+}

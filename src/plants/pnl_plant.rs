@@ -602,10 +602,14 @@ impl PlantActor for PnlPlant {
     }
 }
 
-#[allow(missing_docs)]
+/// Handle for sending commands to a [`RithmicPnlPlant`] and receiving P&L updates.
+///
+/// Obtained from [`RithmicPnlPlant::connect()`]. Use the methods on this handle to
+/// log in and subscribe to real-time P&L and position updates. Updates arrive on
+/// [`subscription_receiver`](Self::subscription_receiver).
 pub struct RithmicPnlPlantHandle {
     sender: mpsc::Sender<PnlPlantCommand>,
-    /// Receiver for PnL and position updates.
+    /// Receiver for real-time P&L and position updates.
     pub subscription_receiver: broadcast::Receiver<RithmicResponse>,
 }
 

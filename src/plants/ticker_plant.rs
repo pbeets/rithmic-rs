@@ -979,12 +979,16 @@ impl PlantActor for TickerPlant {
     }
 }
 
-#[allow(missing_docs)]
+/// Handle for sending commands to a [`RithmicTickerPlant`] and receiving market data updates.
+///
+/// Obtained from [`RithmicTickerPlant::connect()`]. Use the methods on this handle to
+/// log in, subscribe to symbols, and request reference data. Real-time updates arrive
+/// on [`subscription_receiver`](Self::subscription_receiver).
 pub struct RithmicTickerPlantHandle {
     sender: mpsc::Sender<TickerPlantCommand>,
     subscription_sender: broadcast::Sender<RithmicResponse>,
 
-    /// Receiver for subscription updates
+    /// Receiver for real-time subscription updates (market data, depth, etc.).
     pub subscription_receiver: broadcast::Receiver<RithmicResponse>,
 }
 

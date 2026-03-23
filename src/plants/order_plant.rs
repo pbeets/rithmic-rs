@@ -1309,10 +1309,14 @@ impl PlantActor for OrderPlant {
     }
 }
 
-#[allow(missing_docs)]
+/// Handle for sending commands to a [`RithmicOrderPlant`] and receiving order updates.
+///
+/// Obtained from [`RithmicOrderPlant::connect()`]. Use the methods on this handle to
+/// log in, place/modify/cancel orders, and query account information. Real-time order
+/// updates arrive on [`subscription_receiver`](Self::subscription_receiver).
 pub struct RithmicOrderPlantHandle {
     sender: mpsc::Sender<OrderPlantCommand>,
-    /// Receiver for order updates and responses.
+    /// Receiver for real-time order updates and responses.
     pub subscription_receiver: broadcast::Receiver<RithmicResponse>,
 }
 

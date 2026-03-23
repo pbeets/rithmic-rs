@@ -78,7 +78,10 @@ impl RithmicSenderApi {
         let header = len.to_be_bytes();
 
         buf.reserve((len + 4) as usize);
-        req.encode(&mut buf).unwrap();
+
+        req.encode(&mut buf)
+            .expect("prost encoding into a Vec<u8> is infallible");
+
         buf.splice(0..0, header.iter().cloned());
 
         (buf, id)

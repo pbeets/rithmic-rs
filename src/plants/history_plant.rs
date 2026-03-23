@@ -751,12 +751,16 @@ impl PlantActor for HistoryPlant {
     }
 }
 
-#[allow(missing_docs)]
+/// Handle for sending commands to a [`RithmicHistoryPlant`] and receiving historical data.
+///
+/// Obtained from [`RithmicHistoryPlant::connect()`]. Use the methods on this handle to
+/// log in and request historical tick, time-bar, or volume data. Streamed responses
+/// arrive on [`subscription_receiver`](Self::subscription_receiver).
 pub struct RithmicHistoryPlantHandle {
     sender: mpsc::Sender<HistoryPlantCommand>,
     subscription_sender: broadcast::Sender<RithmicResponse>,
 
-    /// Receiver for history data responses.
+    /// Receiver for historical data responses.
     pub subscription_receiver: broadcast::Receiver<RithmicResponse>,
 }
 
