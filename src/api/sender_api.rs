@@ -756,6 +756,7 @@ impl RithmicSenderApi {
         &mut self,
         symbol: &str,
         exchange: &str,
+        bar_type_specifier: &str,
         start_index_sec: i32,
         finish_index_sec: i32,
     ) -> (Vec<u8>, String) {
@@ -767,7 +768,7 @@ impl RithmicSenderApi {
             symbol: Some(symbol.to_string()),
             bar_type: Some(BarType::TickBar.into()),
             bar_sub_type: Some(BarSubType::Regular.into()),
-            bar_type_specifier: Some("1".to_string()),
+            bar_type_specifier: Some(bar_type_specifier.to_string()),
             start_index: Some(start_index_sec),
             finish_index: Some(finish_index_sec),
             direction: Some(Direction::First.into()),
