@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`load_tick_bars(symbol, exchange, bar_length, start_time_sec, end_time_sec)`** on `RithmicHistoryPlantHandle`
+  - Fetches historical N-tick bars (e.g., 5-tick, 10-tick) for a symbol
+  - `bar_length` controls the number of ticks aggregated into each bar
+  - Returns `InvalidArgument` error when `bar_length` is 0
+- **`RithmicError::InvalidArgument`** variant for rejecting invalid caller-supplied arguments before a request is sent
+
+### Changed
+
+- **`load_ticks`** now delegates to `load_tick_bars` with `bar_length = 1` — no behavioral change for existing callers
+- **`request_tick_bar_replay`** on `RithmicSenderApi` now accepts a `bar_type_specifier` parameter instead of hard-coding `"1"`
+
 ## [1.0.0]
 
 ### Breaking Changes

@@ -733,23 +733,25 @@ impl RithmicSenderApi {
         self.request_to_buf(req, id)
     }
 
-    /// Request a replay of tick bar data
+    /// Request a replay of tick bar data.
     ///
     /// # Arguments
     ///
     /// * `symbol` - The symbol to request data for
     /// * `exchange` - The exchange of the symbol
-    /// * `start_index_sec` - unix seconds
-    /// * `finish_index_sec` - unix seconds
+    /// * `bar_type_specifier` - Number of ticks per bar as a string (e.g., `"1"` for
+    ///   individual ticks, `"5"` for 5-tick bars)
+    /// * `start_index_sec` - Start time as a Unix timestamp (seconds)
+    /// * `finish_index_sec` - End time as a Unix timestamp (seconds)
     ///
     /// # Returns
     ///
-    /// A tuple containing the request buffer and the message id
+    /// A tuple containing the request buffer and the message id.
     ///
     /// # Note
     ///
     /// Large data requests may be truncated by the server. If the response contains
-    /// a round number of bars (e.g., 10000) or does not cover the entire requested
+    /// a round number of bars (e.g., 10 000) or does not cover the entire requested
     /// time period, use [`request_resume_bars`](Self::request_resume_bars) with the
     /// `request_key` from the response to fetch the remaining data.
     pub fn request_tick_bar_replay(

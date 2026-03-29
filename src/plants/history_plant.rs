@@ -901,19 +901,26 @@ impl RithmicHistoryPlantHandle {
         let _ = self.sender.try_send(HistoryPlantCommand::Abort);
     }
 
-    /// Load historical tick data for a specific symbol and time range
+    /// Load historical tick data for a specific symbol and time range.
     ///
-    /// Each response contains a single tick (1-tick bars). For N-tick bars, use
-    /// [`load_tick_bars`](Self::load_tick_bars) instead.
+    /// This is a convenience wrapper around [`load_tick_bars`](Self::load_tick_bars) with
+    /// `bar_length = 1`, so each response contains a single tick.
     ///
     /// # Arguments
-    /// * `symbol` - The trading symbol (e.g., "ESH6")
-    /// * `exchange` - The exchange code (e.g., "CME")
-    /// * `start_time_sec` - Start time in Unix timestamp (seconds)
-    /// * `end_time_sec` - End time in Unix timestamp (seconds)
+    /// * `symbol` - The trading symbol (e.g., `"ESH6"`)
+    /// * `exchange` - The exchange code (e.g., `"CME"`)
+    /// * `start_time_sec` - Start time as a Unix timestamp (seconds)
+    /// * `end_time_sec` - End time as a Unix timestamp (seconds)
     ///
     /// # Returns
-    /// The historical data responses or an error message
+    /// The historical tick data responses, or a [`RithmicError`] on failure.
+    ///
+    /// # Note
+    ///
+    /// Large requests may be truncated by the server. If the response contains a
+    /// round number of bars (e.g., 10 000) or does not cover the full time range,
+    /// use the `request_key` from the response with `request_resume_bars` on the
+    /// sender API to fetch the remaining data.
     pub async fn load_ticks(
         &self,
         symbol: String,
@@ -925,19 +932,31 @@ impl RithmicHistoryPlantHandle {
             .await
     }
 
-    /// Load historical tick bar data for a specific symbol and time range
+    /// Load historical tick bar data for a specific symbol and time range.
     ///
-    /// Each response contains a bar aggregating `bar_length` ticks.
+    /// Each response contains a bar that aggregates `bar_length` ticks. For
+    /// example, `bar_length = 5` returns 5-tick bars.
     ///
     /// # Arguments
-    /// * `symbol` - The trading symbol (e.g., "ESH6")
-    /// * `exchange` - The exchange code (e.g., "CME")
-    /// * `bar_length` - Number of ticks per bar (e.g., 1, 5, 10)
-    /// * `start_time_sec` - Start time in Unix timestamp (seconds)
-    /// * `end_time_sec` - End time in Unix timestamp (seconds)
+    /// * `symbol` - The trading symbol (e.g., `"ESH6"`)
+    /// * `exchange` - The exchange code (e.g., `"CME"`)
+    /// * `bar_length` - Number of ticks per bar (must be &ge; 1)
+    /// * `start_time_sec` - Start time as a Unix timestamp (seconds)
+    /// * `end_time_sec` - End time as a Unix timestamp (seconds)
     ///
     /// # Returns
-    /// The historical tick bar data responses or an error message
+    /// The historical tick bar data responses, or a [`RithmicError`] on failure.
+    ///
+    /// # Errors
+    /// * [`RithmicError::InvalidArgument`] if `bar_length` is 0.
+    /// * [`RithmicError::ConnectionClosed`] if the history plant has shut down.
+    ///
+    /// # Note
+    ///
+    /// Large requests may be truncated by the server. If the response contains a
+    /// round number of bars (e.g., 10 000) or does not cover the full time range,
+    /// use the `request_key` from the response with `request_resume_bars` on the
+    /// sender API to fetch the remaining data.
     pub async fn load_tick_bars(
         &self,
         symbol: String,
