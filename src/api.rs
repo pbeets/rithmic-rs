@@ -23,13 +23,15 @@ pub(crate) mod sender_api;
 pub use receiver_api::RithmicResponse;
 
 pub use rithmic_command_types::{
-    LoginConfig, RithmicAccount, RithmicBracketOrder, RithmicCancelOrder, RithmicModifyOrder,
-    RithmicOcoOrderLeg, RithmicOrder, TrailingStop,
+    LoginConfig, RithmicAccount, RithmicAdvancedBracketOrder, RithmicBracketOrder,
+    RithmicCancelOrder, RithmicIfTouchedTrigger, RithmicModifyOrder, RithmicOcoOrderLeg,
+    RithmicOrder, TrailingStop,
 };
 
 // Re-export bracket order enums
 pub use crate::rti::request_bracket_order::{
-    Duration as BracketDuration, PriceType as BracketPriceType,
+    BracketType, Condition as BracketCondition, Duration as BracketDuration,
+    PriceField as BracketPriceField, PriceType as BracketPriceType,
     TransactionType as BracketTransactionType,
 };
 
