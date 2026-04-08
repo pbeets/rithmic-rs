@@ -1252,6 +1252,438 @@ impl RithmicTickerPlantHandle {
             .ok_or(RithmicError::EmptyResponse)
     }
 
+    async fn request_market_data_update(
+        &self,
+        symbol: &str,
+        exchange: &str,
+        fields: Vec<UpdateBits>,
+        request_type: Request,
+    ) -> Result<RithmicResponse, RithmicError> {
+        let (tx, rx) = oneshot::channel::<Result<Vec<RithmicResponse>, RithmicError>>();
+
+        let command = TickerPlantCommand::Subscribe {
+            symbol: symbol.to_string(),
+            exchange: exchange.to_string(),
+            fields,
+            request_type,
+            response_sender: tx,
+        };
+
+        let _ = self.sender.send(command).await;
+
+        rx.await
+            .map_err(|_| RithmicError::ConnectionClosed)??
+            .into_iter()
+            .next()
+            .ok_or(RithmicError::EmptyResponse)
+    }
+
+    /// Subscribe to instrument status updates for a specific symbol
+    ///
+    /// # Arguments
+    /// * `symbol` - The trading symbol (e.g., "ESH6")
+    /// * `exchange` - The exchange code (e.g., "CME")
+    ///
+    /// # Returns
+    /// The subscription response or an error message
+    pub async fn subscribe_instrument_status(
+        &self,
+        symbol: &str,
+        exchange: &str,
+    ) -> Result<RithmicResponse, RithmicError> {
+        self.request_market_data_update(
+            symbol,
+            exchange,
+            vec![UpdateBits::MarketMode],
+            Request::Subscribe,
+        )
+        .await
+    }
+
+    /// Unsubscribe from instrument status updates for a specific symbol
+    ///
+    /// # Arguments
+    /// * `symbol` - The trading symbol (e.g., "ESH6")
+    /// * `exchange` - The exchange code (e.g., "CME")
+    ///
+    /// # Returns
+    /// The unsubscription response or an error message
+    pub async fn unsubscribe_instrument_status(
+        &self,
+        symbol: &str,
+        exchange: &str,
+    ) -> Result<RithmicResponse, RithmicError> {
+        self.request_market_data_update(
+            symbol,
+            exchange,
+            vec![UpdateBits::MarketMode],
+            Request::Unsubscribe,
+        )
+        .await
+    }
+
+    /// Subscribe to top-of-book depth (`OrderBook`) updates for a specific symbol
+    ///
+    /// # Arguments
+    /// * `symbol` - The trading symbol (e.g., "ESH6")
+    /// * `exchange` - The exchange code (e.g., "CME")
+    ///
+    /// # Returns
+    /// The subscription response or an error message
+    pub async fn subscribe_order_book_depth(
+        &self,
+        symbol: &str,
+        exchange: &str,
+    ) -> Result<RithmicResponse, RithmicError> {
+        self.request_market_data_update(
+            symbol,
+            exchange,
+            vec![UpdateBits::OrderBook],
+            Request::Subscribe,
+        )
+        .await
+    }
+
+    /// Unsubscribe from top-of-book depth (`OrderBook`) updates for a specific symbol
+    ///
+    /// # Arguments
+    /// * `symbol` - The trading symbol (e.g., "ESH6")
+    /// * `exchange` - The exchange code (e.g., "CME")
+    ///
+    /// # Returns
+    /// The unsubscription response or an error message
+    pub async fn unsubscribe_order_book_depth(
+        &self,
+        symbol: &str,
+        exchange: &str,
+    ) -> Result<RithmicResponse, RithmicError> {
+        self.request_market_data_update(
+            symbol,
+            exchange,
+            vec![UpdateBits::OrderBook],
+            Request::Unsubscribe,
+        )
+        .await
+    }
+
+    /// Subscribe to session price updates for a specific symbol
+    ///
+    /// # Arguments
+    /// * `symbol` - The trading symbol (e.g., "ESH6")
+    /// * `exchange` - The exchange code (e.g., "CME")
+    ///
+    /// # Returns
+    /// The subscription response or an error message
+    pub async fn subscribe_session_prices(
+        &self,
+        symbol: &str,
+        exchange: &str,
+    ) -> Result<RithmicResponse, RithmicError> {
+        self.request_market_data_update(
+            symbol,
+            exchange,
+            vec![UpdateBits::Open, UpdateBits::HighLow],
+            Request::Subscribe,
+        )
+        .await
+    }
+
+    /// Unsubscribe from session price updates for a specific symbol
+    ///
+    /// # Arguments
+    /// * `symbol` - The trading symbol (e.g., "ESH6")
+    /// * `exchange` - The exchange code (e.g., "CME")
+    ///
+    /// # Returns
+    /// The unsubscription response or an error message
+    pub async fn unsubscribe_session_prices(
+        &self,
+        symbol: &str,
+        exchange: &str,
+    ) -> Result<RithmicResponse, RithmicError> {
+        self.request_market_data_update(
+            symbol,
+            exchange,
+            vec![UpdateBits::Open, UpdateBits::HighLow],
+            Request::Unsubscribe,
+        )
+        .await
+    }
+
+    /// Subscribe to quote statistics updates for a specific symbol
+    ///
+    /// # Arguments
+    /// * `symbol` - The trading symbol (e.g., "ESH6")
+    /// * `exchange` - The exchange code (e.g., "CME")
+    ///
+    /// # Returns
+    /// The subscription response or an error message
+    pub async fn subscribe_quote_statistics(
+        &self,
+        symbol: &str,
+        exchange: &str,
+    ) -> Result<RithmicResponse, RithmicError> {
+        self.request_market_data_update(
+            symbol,
+            exchange,
+            vec![UpdateBits::HighBidLowAsk],
+            Request::Subscribe,
+        )
+        .await
+    }
+
+    /// Unsubscribe from quote statistics updates for a specific symbol
+    ///
+    /// # Arguments
+    /// * `symbol` - The trading symbol (e.g., "ESH6")
+    /// * `exchange` - The exchange code (e.g., "CME")
+    ///
+    /// # Returns
+    /// The unsubscription response or an error message
+    pub async fn unsubscribe_quote_statistics(
+        &self,
+        symbol: &str,
+        exchange: &str,
+    ) -> Result<RithmicResponse, RithmicError> {
+        self.request_market_data_update(
+            symbol,
+            exchange,
+            vec![UpdateBits::HighBidLowAsk],
+            Request::Unsubscribe,
+        )
+        .await
+    }
+
+    /// Subscribe to indicator price updates for a specific symbol
+    ///
+    /// # Arguments
+    /// * `symbol` - The trading symbol (e.g., "ESH6")
+    /// * `exchange` - The exchange code (e.g., "CME")
+    ///
+    /// # Returns
+    /// The subscription response or an error message
+    pub async fn subscribe_indicator_prices(
+        &self,
+        symbol: &str,
+        exchange: &str,
+    ) -> Result<RithmicResponse, RithmicError> {
+        self.request_market_data_update(
+            symbol,
+            exchange,
+            vec![UpdateBits::OpeningIndicator, UpdateBits::ClosingIndicator],
+            Request::Subscribe,
+        )
+        .await
+    }
+
+    /// Unsubscribe from indicator price updates for a specific symbol
+    ///
+    /// # Arguments
+    /// * `symbol` - The trading symbol (e.g., "ESH6")
+    /// * `exchange` - The exchange code (e.g., "CME")
+    ///
+    /// # Returns
+    /// The unsubscription response or an error message
+    pub async fn unsubscribe_indicator_prices(
+        &self,
+        symbol: &str,
+        exchange: &str,
+    ) -> Result<RithmicResponse, RithmicError> {
+        self.request_market_data_update(
+            symbol,
+            exchange,
+            vec![UpdateBits::OpeningIndicator, UpdateBits::ClosingIndicator],
+            Request::Unsubscribe,
+        )
+        .await
+    }
+
+    /// Subscribe to open interest updates for a specific symbol
+    ///
+    /// # Arguments
+    /// * `symbol` - The trading symbol (e.g., "ESH6")
+    /// * `exchange` - The exchange code (e.g., "CME")
+    ///
+    /// # Returns
+    /// The subscription response or an error message
+    pub async fn subscribe_open_interest(
+        &self,
+        symbol: &str,
+        exchange: &str,
+    ) -> Result<RithmicResponse, RithmicError> {
+        self.request_market_data_update(
+            symbol,
+            exchange,
+            vec![UpdateBits::OpenInterest],
+            Request::Subscribe,
+        )
+        .await
+    }
+
+    /// Unsubscribe from open interest updates for a specific symbol
+    ///
+    /// # Arguments
+    /// * `symbol` - The trading symbol (e.g., "ESH6")
+    /// * `exchange` - The exchange code (e.g., "CME")
+    ///
+    /// # Returns
+    /// The unsubscription response or an error message
+    pub async fn unsubscribe_open_interest(
+        &self,
+        symbol: &str,
+        exchange: &str,
+    ) -> Result<RithmicResponse, RithmicError> {
+        self.request_market_data_update(
+            symbol,
+            exchange,
+            vec![UpdateBits::OpenInterest],
+            Request::Unsubscribe,
+        )
+        .await
+    }
+
+    /// Subscribe to end-of-day price updates for a specific symbol
+    ///
+    /// # Arguments
+    /// * `symbol` - The trading symbol (e.g., "ESH6")
+    /// * `exchange` - The exchange code (e.g., "CME")
+    ///
+    /// # Returns
+    /// The subscription response or an error message
+    pub async fn subscribe_end_of_day_prices(
+        &self,
+        symbol: &str,
+        exchange: &str,
+    ) -> Result<RithmicResponse, RithmicError> {
+        self.request_market_data_update(
+            symbol,
+            exchange,
+            vec![
+                UpdateBits::Close,
+                UpdateBits::Settlement,
+                UpdateBits::ProjectedSettlement,
+                UpdateBits::AdjustedClose,
+            ],
+            Request::Subscribe,
+        )
+        .await
+    }
+
+    /// Unsubscribe from end-of-day price updates for a specific symbol
+    ///
+    /// # Arguments
+    /// * `symbol` - The trading symbol (e.g., "ESH6")
+    /// * `exchange` - The exchange code (e.g., "CME")
+    ///
+    /// # Returns
+    /// The unsubscription response or an error message
+    pub async fn unsubscribe_end_of_day_prices(
+        &self,
+        symbol: &str,
+        exchange: &str,
+    ) -> Result<RithmicResponse, RithmicError> {
+        self.request_market_data_update(
+            symbol,
+            exchange,
+            vec![
+                UpdateBits::Close,
+                UpdateBits::Settlement,
+                UpdateBits::ProjectedSettlement,
+                UpdateBits::AdjustedClose,
+            ],
+            Request::Unsubscribe,
+        )
+        .await
+    }
+
+    /// Subscribe to order price limit updates for a specific symbol
+    ///
+    /// # Arguments
+    /// * `symbol` - The trading symbol (e.g., "ESH6")
+    /// * `exchange` - The exchange code (e.g., "CME")
+    ///
+    /// # Returns
+    /// The subscription response or an error message
+    pub async fn subscribe_order_price_limits(
+        &self,
+        symbol: &str,
+        exchange: &str,
+    ) -> Result<RithmicResponse, RithmicError> {
+        self.request_market_data_update(
+            symbol,
+            exchange,
+            vec![UpdateBits::HighPriceLimit, UpdateBits::LowPriceLimit],
+            Request::Subscribe,
+        )
+        .await
+    }
+
+    /// Unsubscribe from order price limit updates for a specific symbol
+    ///
+    /// # Arguments
+    /// * `symbol` - The trading symbol (e.g., "ESH6")
+    /// * `exchange` - The exchange code (e.g., "CME")
+    ///
+    /// # Returns
+    /// The unsubscription response or an error message
+    pub async fn unsubscribe_order_price_limits(
+        &self,
+        symbol: &str,
+        exchange: &str,
+    ) -> Result<RithmicResponse, RithmicError> {
+        self.request_market_data_update(
+            symbol,
+            exchange,
+            vec![UpdateBits::HighPriceLimit, UpdateBits::LowPriceLimit],
+            Request::Unsubscribe,
+        )
+        .await
+    }
+
+    /// Subscribe to symbol margin rate updates for a specific symbol
+    ///
+    /// # Arguments
+    /// * `symbol` - The trading symbol (e.g., "ESH6")
+    /// * `exchange` - The exchange code (e.g., "CME")
+    ///
+    /// # Returns
+    /// The subscription response or an error message
+    pub async fn subscribe_symbol_margin_rate(
+        &self,
+        symbol: &str,
+        exchange: &str,
+    ) -> Result<RithmicResponse, RithmicError> {
+        self.request_market_data_update(
+            symbol,
+            exchange,
+            vec![UpdateBits::MarginRate],
+            Request::Subscribe,
+        )
+        .await
+    }
+
+    /// Unsubscribe from symbol margin rate updates for a specific symbol
+    ///
+    /// # Arguments
+    /// * `symbol` - The trading symbol (e.g., "ESH6")
+    /// * `exchange` - The exchange code (e.g., "CME")
+    ///
+    /// # Returns
+    /// The unsubscription response or an error message
+    pub async fn unsubscribe_symbol_margin_rate(
+        &self,
+        symbol: &str,
+        exchange: &str,
+    ) -> Result<RithmicResponse, RithmicError> {
+        self.request_market_data_update(
+            symbol,
+            exchange,
+            vec![UpdateBits::MarginRate],
+            Request::Unsubscribe,
+        )
+        .await
+    }
+
     /// Request a snapshot of the order book depth-by-order for a specific symbol
     ///
     /// # Arguments
