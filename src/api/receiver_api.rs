@@ -1,5 +1,5 @@
 use prost::{Message, bytes::Bytes};
-use tracing::error;
+use tracing::{debug, error};
 
 use crate::rti::{
     AccountListUpdates, AccountPnLPositionUpdate, AccountRmsUpdates, BestBidOffer, BracketUpdates,
@@ -216,6 +216,16 @@ impl RithmicResponse {
             RithmicMessage::AccountPnLPositionUpdate(_)
                 | RithmicMessage::InstrumentPnLPositionUpdate(_)
         )
+    }
+
+    /// Returns true when an execution replay request completed successfully but there
+    /// were no executions available in the requested window.
+    pub fn is_expected_empty_replay(&self) -> bool {
+        matches!(self.message, RithmicMessage::ResponseReplayExecutions(_))
+            && self
+                .error
+                .as_deref()
+                .is_some_and(|error| error.eq_ignore_ascii_case("no data"))
     }
 }
 
@@ -1625,7 +1635,14 @@ impl RithmicReceiverApi {
 
         // Handle errors
         if let Some(error) = check_message_error(&response) {
-            error!("receiver_api: error {:#?} {:?}", response, error);
+            if response.is_expected_empty_replay() {
+                debug!(
+                    "receiver_api: empty replay response for request_id={} source={}: {}",
+                    response.request_id, response.source, error
+                );
+            } else {
+                error!("receiver_api: error {:#?} {:?}", response, error);
+            }
 
             return Err(response);
         }
@@ -1642,8 +1659,6 @@ fn get_error(rp_code: &[String]) -> Option<String> {
     if (rp_code.len() == 1 && rp_code[0] == "0") || (rp_code.is_empty()) {
         None
     } else {
-        error!("receiver_api: error {:#?}", rp_code);
-
         let msg = rp_code
             .get(1)
             .cloned()
@@ -1882,6 +1897,50 @@ mod tests {
             RithmicOrderNotification::default(),
         ));
         assert!(!response.is_pnl_update());
+    }
+
+    #[test]
+    fn is_expected_empty_replay_true_for_replay_no_data() {
+        let response = make_response_with_error(
+            RithmicMessage::ResponseReplayExecutions(ResponseReplayExecutions::default()),
+            "no data",
+        );
+
+        assert!(response.is_expected_empty_replay());
+    }
+
+    #[test]
+    fn is_expected_empty_replay_false_for_other_errors() {
+        let response = make_response_with_error(
+            RithmicMessage::ResponseReplayExecutions(ResponseReplayExecutions::default()),
+            "permission denied",
+        );
+
+        assert!(!response.is_expected_empty_replay());
+    }
+
+    #[test]
+    fn replay_no_data_decodes_as_expected_empty_replay_error() {
+        let api = RithmicReceiverApi {
+            source: "test".to_string(),
+        };
+
+        let err = api
+            .buf_to_message(encode_with_header(&ResponseReplayExecutions {
+                template_id: 3507,
+                user_msg: vec!["3".to_string()],
+                rp_code: vec!["7".to_string(), "no data".to_string()],
+                ..ResponseReplayExecutions::default()
+            }))
+            .unwrap_err();
+
+        assert!(matches!(
+            err.message,
+            RithmicMessage::ResponseReplayExecutions(_)
+        ));
+        assert_eq!(err.request_id, "3");
+        assert_eq!(err.error.as_deref(), Some("no data"));
+        assert!(err.is_expected_empty_replay());
     }
 
     // =========================================================================

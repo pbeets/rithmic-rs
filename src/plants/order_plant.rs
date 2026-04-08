@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use tokio_tungstenite::{
     MaybeTlsStream,
@@ -575,10 +575,17 @@ impl PlantActor for OrderPlant {
                     }
                 }
                 Err(err_response) => {
-                    error!(
-                        "order_plant: error response from server: {:?}",
-                        err_response
-                    );
+                    if err_response.is_expected_empty_replay() {
+                        debug!(
+                            "order_plant: empty replay response from server: {:?}",
+                            err_response
+                        );
+                    } else {
+                        error!(
+                            "order_plant: error response from server: {:?}",
+                            err_response
+                        );
+                    }
 
                     if err_response.is_update {
                         let _ = self.subscription_sender.send(err_response);
