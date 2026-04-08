@@ -221,6 +221,7 @@ impl RithmicHistoryPlant {
 #[derive(Debug)]
 struct HistoryPlant {
     config: RithmicConfig,
+    // Distinguishes an intentional local shutdown from an unexpected peer close.
     close_requested: bool,
     interval: Interval,
     logged_in: bool,
@@ -370,11 +371,11 @@ impl HistoryPlant {
     }
 
     async fn send_heartbeat(&mut self) -> bool {
-        let (heartbeat_bf, _id) = self.rithmic_sender_api.request_heartbeat();
+        let (heartbeat_buf, _id) = self.rithmic_sender_api.request_heartbeat();
 
         match send_with_timeout(
             &mut self.rithmic_sender,
-            Message::Binary(heartbeat_bf.into()),
+            Message::Binary(heartbeat_buf.into()),
             Duration::from_secs(SEND_TIMEOUT_SECS),
         )
         .await

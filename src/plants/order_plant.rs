@@ -393,6 +393,7 @@ impl RithmicOrderPlant {
 
 struct OrderPlant {
     config: RithmicConfig,
+    // Distinguishes an intentional local shutdown from an unexpected peer close.
     close_requested: bool,
     interval: Interval,
     logged_in: bool,
