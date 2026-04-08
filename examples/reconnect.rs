@@ -72,7 +72,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
 
-        // Process until disconnect
+        // Process until disconnect. The plant emits synthetic ConnectionError or
+        // HeartbeatTimeout updates before stopping on transport loss.
         while let Ok(update) = handle.subscription_receiver.recv().await {
             match &update.message {
                 RithmicMessage::HeartbeatTimeout

@@ -21,7 +21,13 @@ pub enum RithmicError {
     ConnectionFailed(String),
     /// The plant's WebSocket connection is gone; pending requests will never complete.
     ConnectionClosed,
-    /// WebSocket send failed after the request was registered.
+    /// WebSocket send failed or timed out after the request was registered.
+    ///
+    /// Treat this as a connection-health failure for the current request path and
+    /// trigger your reconnection logic if the request is required for continued
+    /// trading. The plant actor remains responsive so keep-alive failure detection
+    /// can still emit a synthetic [`crate::rti::messages::RithmicMessage::HeartbeatTimeout`]
+    /// or [`crate::rti::messages::RithmicMessage::ConnectionError`] update.
     SendFailed,
     /// Server returned an empty response where at least one was expected.
     EmptyResponse,
@@ -37,7 +43,7 @@ impl fmt::Display for RithmicError {
         match self {
             RithmicError::ConnectionFailed(msg) => write!(f, "connection failed: {msg}"),
             RithmicError::ConnectionClosed => write!(f, "connection closed"),
-            RithmicError::SendFailed => write!(f, "WebSocket send failed"),
+            RithmicError::SendFailed => write!(f, "WebSocket send failed or timed out"),
             RithmicError::EmptyResponse => write!(f, "empty response"),
             RithmicError::ServerError(msg) => write!(f, "server error: {msg}"),
             RithmicError::InvalidArgument(msg) => write!(f, "invalid argument: {msg}"),

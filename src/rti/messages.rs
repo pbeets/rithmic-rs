@@ -125,8 +125,8 @@ pub enum RithmicMessage {
     /// *Note: This is a synthetic message from rithmic-rs, not from Rithmic servers.*
     ///
     /// This means the network connection to Rithmic was lost (e.g., internet dropped,
-    /// server closed the connection, or a network timeout). The plant has stopped and
-    /// you'll need to reconnect.
+    /// the peer sent a WebSocket close frame, a write failed, or a network timeout).
+    /// The plant has stopped and you'll need to reconnect.
     ///
     /// # Example
     ///

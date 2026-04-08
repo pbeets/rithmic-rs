@@ -393,6 +393,7 @@ impl RithmicOrderPlant {
 
 struct OrderPlant {
     config: RithmicConfig,
+    close_requested: bool,
     interval: Interval,
     logged_in: bool,
     ping_interval: Interval,
@@ -433,6 +434,7 @@ impl OrderPlant {
 
         Ok(OrderPlant {
             config: config.clone(),
+            close_requested: false,
             interval,
             ping_interval,
             logged_in: false,
@@ -659,7 +661,15 @@ impl PlantActor for OrderPlant {
         match message {
             Ok(Message::Close(frame)) => {
                 info!("order_plant: Received close frame: {:?}", frame);
-                self.request_handler.drain_and_drop();
+                if self.close_requested {
+                    self.request_handler.drain_and_drop();
+                } else {
+                    self.fail_connection_and_drain(
+                        "",
+                        RithmicMessage::ConnectionError,
+                        format!("WebSocket close frame received: {:?}", frame),
+                    );
+                }
                 stop = true;
             }
             Ok(Message::Pong(_)) => {
@@ -776,6 +786,7 @@ impl PlantActor for OrderPlant {
     async fn handle_command(&mut self, command: OrderPlantCommand) {
         match command {
             OrderPlantCommand::Close => {
+                self.close_requested = true;
                 self.send_close_best_effort().await;
             }
             OrderPlantCommand::ListSystemInfo { response_sender } => {
