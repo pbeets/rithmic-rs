@@ -1930,7 +1930,6 @@ mod tests {
                 template_id: 3507,
                 user_msg: vec!["3".to_string()],
                 rp_code: vec!["7".to_string(), "no data".to_string()],
-                ..ResponseReplayExecutions::default()
             }))
             .unwrap_err();
 
