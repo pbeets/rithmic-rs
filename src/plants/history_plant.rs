@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use tracing::{error, info, warn};
 
 use tokio_tungstenite::{
@@ -21,13 +23,13 @@ use crate::{
         request_time_bar_replay::BarType, request_time_bar_update,
     },
     ws::{
-        HEARTBEAT_SECS, PING_TIMEOUT_SECS, PlantActor, connect_with_strategy,
-        get_heartbeat_interval, get_ping_interval,
+        HEARTBEAT_SECS, PING_TIMEOUT_SECS, PlantActor, SEND_TIMEOUT_SECS, WebSocketSendError,
+        connect_with_strategy, get_heartbeat_interval, get_ping_interval, send_with_timeout,
     },
 };
 
 use futures_util::{
-    SinkExt, StreamExt,
+    StreamExt,
     stream::{SplitSink, SplitStream},
 };
 
@@ -52,7 +54,6 @@ pub(crate) enum HistoryPlantCommand {
     Logout {
         response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
     },
-    SendHeartbeat,
     UpdateHeartbeat {
         seconds: u64,
     },
@@ -277,15 +278,142 @@ impl HistoryPlant {
 }
 
 impl HistoryPlant {
-    async fn send_or_fail(&mut self, msg: Message, request_id: &str) {
-        if self.rithmic_sender.send(msg).await.is_err() {
-            error!(
-                "history_plant: WebSocket send failed for request {}",
-                request_id
-            );
+    fn emit_connection_health_event(
+        &self,
+        request_id: &str,
+        message: RithmicMessage,
+        error_message: impl Into<String>,
+    ) {
+        let error_response = RithmicResponse {
+            request_id: request_id.to_string(),
+            message,
+            is_update: true,
+            has_more: false,
+            multi_response: false,
+            error: Some(error_message.into()),
+            source: self.rithmic_receiver_api.source.clone(),
+        };
 
-            self.request_handler
-                .fail_request(request_id, RithmicError::SendFailed);
+        let _ = self.subscription_sender.send(error_response);
+    }
+
+    fn fail_connection_and_drain(
+        &mut self,
+        request_id: &str,
+        message: RithmicMessage,
+        error_message: impl Into<String>,
+    ) {
+        self.emit_connection_health_event(request_id, message, error_message);
+        self.request_handler.drain_and_drop();
+    }
+
+    async fn send_or_fail(&mut self, msg: Message, request_id: &str) {
+        match send_with_timeout(
+            &mut self.rithmic_sender,
+            msg,
+            Duration::from_secs(SEND_TIMEOUT_SECS),
+        )
+        .await
+        {
+            Ok(()) => {}
+            Err(WebSocketSendError::Transport(error)) => {
+                error!(
+                    "history_plant: WebSocket send failed for request {}: {}",
+                    request_id, error
+                );
+                self.request_handler
+                    .fail_request(request_id, RithmicError::SendFailed);
+            }
+            Err(WebSocketSendError::Timeout) => {
+                error!(
+                    "history_plant: WebSocket send timed out for request {}",
+                    request_id
+                );
+                self.request_handler
+                    .fail_request(request_id, RithmicError::SendFailed);
+            }
+        }
+    }
+
+    async fn send_ping(&mut self) -> bool {
+        self.ping_manager.sent();
+
+        match send_with_timeout(
+            &mut self.rithmic_sender,
+            Message::Ping(vec![].into()),
+            Duration::from_secs(SEND_TIMEOUT_SECS),
+        )
+        .await
+        {
+            Ok(()) => false,
+            Err(WebSocketSendError::Transport(error)) => {
+                error!("history_plant: WebSocket ping send failed: {}", error);
+                self.fail_connection_and_drain(
+                    "",
+                    RithmicMessage::ConnectionError,
+                    format!("WebSocket ping send failed: {error}"),
+                );
+                true
+            }
+            Err(WebSocketSendError::Timeout) => {
+                error!("history_plant: WebSocket ping send timed out");
+                self.fail_connection_and_drain(
+                    "websocket_ping_timeout",
+                    RithmicMessage::HeartbeatTimeout,
+                    "WebSocket ping send timed out - connection dead",
+                );
+                true
+            }
+        }
+    }
+
+    async fn send_heartbeat(&mut self) -> bool {
+        let (heartbeat_bf, _id) = self.rithmic_sender_api.request_heartbeat();
+
+        match send_with_timeout(
+            &mut self.rithmic_sender,
+            Message::Binary(heartbeat_bf.into()),
+            Duration::from_secs(SEND_TIMEOUT_SECS),
+        )
+        .await
+        {
+            Ok(()) => false,
+            Err(WebSocketSendError::Transport(error)) => {
+                error!("history_plant: heartbeat send failed: {}", error);
+                self.fail_connection_and_drain(
+                    "",
+                    RithmicMessage::ConnectionError,
+                    format!("Heartbeat send failed: {error}"),
+                );
+                true
+            }
+            Err(WebSocketSendError::Timeout) => {
+                error!("history_plant: heartbeat send timed out");
+                self.fail_connection_and_drain(
+                    "heartbeat_send_timeout",
+                    RithmicMessage::HeartbeatTimeout,
+                    "Heartbeat send timed out - connection dead",
+                );
+                true
+            }
+        }
+    }
+
+    async fn send_close_best_effort(&mut self) {
+        match send_with_timeout(
+            &mut self.rithmic_sender,
+            Message::Close(None),
+            Duration::from_secs(SEND_TIMEOUT_SECS),
+        )
+        .await
+        {
+            Ok(()) => {}
+            Err(WebSocketSendError::Transport(error)) => {
+                warn!("history_plant: close send failed: {}", error);
+            }
+            Err(WebSocketSendError::Timeout) => {
+                warn!("history_plant: close send timed out");
+            }
         }
     }
 }
@@ -297,13 +425,14 @@ impl PlantActor for HistoryPlant {
         loop {
             tokio::select! {
               _ = self.interval.tick() => {
-                if self.logged_in {
-                    self.handle_command(HistoryPlantCommand::SendHeartbeat).await;
+                if self.logged_in && self.send_heartbeat().await {
+                    break;
                 }
               }
               _ = self.ping_interval.tick() => {
-                self.ping_manager.sent();
-                let _ = self.rithmic_sender.send(Message::Ping(vec![].into())).await;
+                if self.send_ping().await {
+                    break;
+                }
               }
               _ = async {
                 if let Some(timeout_at) = self.ping_manager.next_timeout_at() {
@@ -314,17 +443,11 @@ impl PlantActor for HistoryPlant {
               } => {
                 if self.ping_manager.check_timeout() {
                     error!("WebSocket ping timed out - connection appears dead");
-
-                    let error_response = RithmicResponse {
-                        request_id: "websocket_ping_timeout".to_string(),
-                        message: RithmicMessage::HeartbeatTimeout,
-                        is_update: true,
-                        has_more: false,
-                        multi_response: false,
-                        error: Some("WebSocket ping timeout - connection dead".to_string()),
-                        source: self.rithmic_receiver_api.source.clone(),
-                    };
-                    let _ = self.subscription_sender.send(error_response);
+                    self.fail_connection_and_drain(
+                        "websocket_ping_timeout",
+                        RithmicMessage::HeartbeatTimeout,
+                        "WebSocket ping timeout - connection dead",
+                    );
                     break;
                 }
               }
@@ -368,6 +491,7 @@ impl PlantActor for HistoryPlant {
         match message {
             Ok(Message::Close(frame)) => {
                 info!("history_plant: Received close frame: {:?}", frame);
+                self.request_handler.drain_and_drop();
                 stop = true;
             }
             Ok(Message::Pong(_)) => {
@@ -421,98 +545,56 @@ impl PlantActor for HistoryPlant {
             },
             Err(Error::ConnectionClosed) => {
                 error!("history_plant: connection closed");
-
-                let error_response = RithmicResponse {
-                    request_id: "".to_string(),
-                    message: RithmicMessage::ConnectionError,
-                    is_update: true,
-                    has_more: false,
-                    multi_response: false,
-                    error: Some("WebSocket connection closed".to_string()),
-                    source: self.rithmic_receiver_api.source.clone(),
-                };
-                let _ = self.subscription_sender.send(error_response);
-
+                self.fail_connection_and_drain(
+                    "",
+                    RithmicMessage::ConnectionError,
+                    "WebSocket connection closed",
+                );
                 stop = true;
             }
             Err(Error::AlreadyClosed) => {
                 error!("history_plant: connection already closed");
-
-                let error_response = RithmicResponse {
-                    request_id: "".to_string(),
-                    message: RithmicMessage::ConnectionError,
-                    is_update: true,
-                    has_more: false,
-                    multi_response: false,
-                    error: Some("WebSocket connection already closed".to_string()),
-                    source: self.rithmic_receiver_api.source.clone(),
-                };
-                let _ = self.subscription_sender.send(error_response);
-
+                self.fail_connection_and_drain(
+                    "",
+                    RithmicMessage::ConnectionError,
+                    "WebSocket connection already closed",
+                );
                 stop = true;
             }
             Err(Error::Io(ref io_err)) => {
                 error!("history_plant: I/O error: {}", io_err);
-
-                let error_response = RithmicResponse {
-                    request_id: "".to_string(),
-                    message: RithmicMessage::ConnectionError,
-                    is_update: true,
-                    has_more: false,
-                    multi_response: false,
-                    error: Some(format!("WebSocket I/O error: {}", io_err)),
-                    source: self.rithmic_receiver_api.source.clone(),
-                };
-                let _ = self.subscription_sender.send(error_response);
-
+                self.fail_connection_and_drain(
+                    "",
+                    RithmicMessage::ConnectionError,
+                    format!("WebSocket I/O error: {}", io_err),
+                );
                 stop = true;
             }
             Err(Error::Protocol(ProtocolError::ResetWithoutClosingHandshake)) => {
                 error!("history_plant: connection reset without closing handshake");
-
-                let error_response = RithmicResponse {
-                    request_id: "".to_string(),
-                    message: RithmicMessage::ConnectionError,
-                    is_update: true,
-                    has_more: false,
-                    multi_response: false,
-                    error: Some("WebSocket connection reset without closing handshake".to_string()),
-                    source: self.rithmic_receiver_api.source.clone(),
-                };
-                let _ = self.subscription_sender.send(error_response);
-
+                self.fail_connection_and_drain(
+                    "",
+                    RithmicMessage::ConnectionError,
+                    "WebSocket connection reset without closing handshake",
+                );
                 stop = true;
             }
             Err(Error::Protocol(ProtocolError::SendAfterClosing)) => {
                 error!("history_plant: attempted to send after closing");
-
-                let error_response = RithmicResponse {
-                    request_id: "".to_string(),
-                    message: RithmicMessage::ConnectionError,
-                    is_update: true,
-                    has_more: false,
-                    multi_response: false,
-                    error: Some("WebSocket attempted to send after closing".to_string()),
-                    source: self.rithmic_receiver_api.source.clone(),
-                };
-                let _ = self.subscription_sender.send(error_response);
-
+                self.fail_connection_and_drain(
+                    "",
+                    RithmicMessage::ConnectionError,
+                    "WebSocket attempted to send after closing",
+                );
                 stop = true;
             }
             Err(Error::Protocol(ProtocolError::ReceivedAfterClosing)) => {
                 error!("history_plant: received data after closing");
-
-                let error_response = RithmicResponse {
-                    request_id: "".to_string(),
-                    message: RithmicMessage::ConnectionError,
-                    is_update: true,
-                    has_more: false,
-                    multi_response: false,
-                    error: Some("WebSocket received data after closing".to_string()),
-                    source: self.rithmic_receiver_api.source.clone(),
-                };
-                let _ = self.subscription_sender.send(error_response);
-
+                self.fail_connection_and_drain(
+                    "",
+                    RithmicMessage::ConnectionError,
+                    "WebSocket received data after closing",
+                );
                 stop = true;
             }
             _ => {
@@ -526,7 +608,7 @@ impl PlantActor for HistoryPlant {
     async fn handle_command(&mut self, command: HistoryPlantCommand) {
         match command {
             HistoryPlantCommand::Close => {
-                let _ = self.rithmic_sender.send(Message::Close(None)).await;
+                self.send_close_best_effort().await;
             }
             HistoryPlantCommand::ListSystemInfo { response_sender } => {
                 let (list_system_info_buf, id) =
@@ -580,14 +662,6 @@ impl PlantActor for HistoryPlant {
                 });
 
                 self.send_or_fail(Message::Binary(logout_buf.into()), &request_id)
-                    .await;
-            }
-            HistoryPlantCommand::SendHeartbeat => {
-                let (heartbeat_bf, _id) = self.rithmic_sender_api.request_heartbeat();
-
-                let _ = self
-                    .rithmic_sender
-                    .send(Message::Binary(heartbeat_bf.into()))
                     .await;
             }
             HistoryPlantCommand::UpdateHeartbeat { seconds } => {

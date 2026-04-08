@@ -1,6 +1,8 @@
 use std::time::Duration;
 use tracing::{info, warn};
 
+use futures_util::{Sink, SinkExt};
+
 use tokio::{
     net::TcpStream,
     time::{Instant, Interval, interval_at, sleep, timeout},
@@ -19,6 +21,9 @@ pub(crate) const PING_INTERVAL_SECS: u64 = 60;
 
 /// Timeout in seconds for WebSocket pong response.
 pub(crate) const PING_TIMEOUT_SECS: u64 = 50;
+
+/// Timeout in seconds for any actor-owned WebSocket write.
+pub(crate) const SEND_TIMEOUT_SECS: u64 = 10;
 
 /// Connection attempt timeout in seconds.
 const CONNECT_TIMEOUT_SECS: u64 = 2;
@@ -47,6 +52,34 @@ pub(crate) trait PlantActor {
     async fn run(&mut self);
     async fn handle_command(&mut self, command: Self::Command);
     async fn handle_rithmic_message(&mut self, message: Result<Message, Error>) -> bool;
+}
+
+/// Error returned when a bounded WebSocket send does not complete.
+#[derive(Debug)]
+pub(crate) enum WebSocketSendError {
+    /// The underlying sink returned an error before the timeout elapsed.
+    Transport(Error),
+    /// The send future did not complete within the configured timeout.
+    Timeout,
+}
+
+/// Sends a WebSocket message with a hard timeout.
+///
+/// This prevents actor loop branches from hanging indefinitely on half-open
+/// connections where the TCP write side no longer makes progress.
+pub(crate) async fn send_with_timeout<S>(
+    sink: &mut S,
+    msg: Message,
+    timeout_duration: Duration,
+) -> Result<(), WebSocketSendError>
+where
+    S: Sink<Message, Error = Error> + Unpin,
+{
+    match timeout(timeout_duration, sink.send(msg)).await {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(error)) => Err(WebSocketSendError::Transport(error)),
+        Err(_) => Err(WebSocketSendError::Timeout),
+    }
 }
 
 pub(crate) fn get_heartbeat_interval(override_secs: Option<u64>) -> Interval {
@@ -194,5 +227,137 @@ pub(crate) async fn connect_with_strategy(
         ConnectStrategy::Simple => connect(primary_url).await,
         ConnectStrategy::Retry => connect_with_retry_single_url(primary_url).await,
         ConnectStrategy::AlternateWithRetry => connect_with_retry(primary_url, beta_url).await,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        pin::Pin,
+        task::{Context, Poll},
+    };
+
+    use super::*;
+
+    enum MockSinkBehavior {
+        Ready,
+        Error,
+        Pending,
+    }
+
+    struct MockMessageSink {
+        behavior: MockSinkBehavior,
+        sent_messages: Vec<Message>,
+    }
+
+    impl MockMessageSink {
+        fn ready() -> Self {
+            Self {
+                behavior: MockSinkBehavior::Ready,
+                sent_messages: Vec::new(),
+            }
+        }
+
+        fn error() -> Self {
+            Self {
+                behavior: MockSinkBehavior::Error,
+                sent_messages: Vec::new(),
+            }
+        }
+
+        fn pending() -> Self {
+            Self {
+                behavior: MockSinkBehavior::Pending,
+                sent_messages: Vec::new(),
+            }
+        }
+    }
+
+    impl Sink<Message> for MockMessageSink {
+        type Error = Error;
+
+        fn poll_ready(
+            self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+        ) -> Poll<Result<(), Self::Error>> {
+            match self.behavior {
+                MockSinkBehavior::Ready => Poll::Ready(Ok(())),
+                MockSinkBehavior::Error => Poll::Ready(Err(Error::ConnectionClosed)),
+                MockSinkBehavior::Pending => Poll::Pending,
+            }
+        }
+
+        fn start_send(self: Pin<&mut Self>, item: Message) -> Result<(), Self::Error> {
+            self.get_mut().sent_messages.push(item);
+            Ok(())
+        }
+
+        fn poll_flush(
+            self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+        ) -> Poll<Result<(), Self::Error>> {
+            match self.behavior {
+                MockSinkBehavior::Ready => Poll::Ready(Ok(())),
+                MockSinkBehavior::Error => Poll::Ready(Err(Error::ConnectionClosed)),
+                MockSinkBehavior::Pending => Poll::Pending,
+            }
+        }
+
+        fn poll_close(
+            self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+        ) -> Poll<Result<(), Self::Error>> {
+            match self.behavior {
+                MockSinkBehavior::Ready => Poll::Ready(Ok(())),
+                MockSinkBehavior::Error => Poll::Ready(Err(Error::ConnectionClosed)),
+                MockSinkBehavior::Pending => Poll::Pending,
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn send_with_timeout_succeeds_for_ready_sink() {
+        let mut sink = MockMessageSink::ready();
+
+        let result = send_with_timeout(
+            &mut sink,
+            Message::Ping(Vec::new().into()),
+            Duration::from_millis(10),
+        )
+        .await;
+
+        assert!(result.is_ok());
+        assert_eq!(sink.sent_messages.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn send_with_timeout_returns_transport_error() {
+        let mut sink = MockMessageSink::error();
+
+        let result = send_with_timeout(
+            &mut sink,
+            Message::Ping(Vec::new().into()),
+            Duration::from_millis(10),
+        )
+        .await;
+
+        assert!(matches!(
+            result,
+            Err(WebSocketSendError::Transport(Error::ConnectionClosed))
+        ));
+    }
+
+    #[tokio::test]
+    async fn send_with_timeout_returns_timeout_for_stuck_sink() {
+        let mut sink = MockMessageSink::pending();
+
+        let result = send_with_timeout(
+            &mut sink,
+            Message::Ping(Vec::new().into()),
+            Duration::from_millis(10),
+        )
+        .await;
+
+        assert!(matches!(result, Err(WebSocketSendError::Timeout)));
     }
 }
