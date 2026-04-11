@@ -1639,18 +1639,24 @@ fn has_multiple(rq_handler_rp_code: &[String]) -> bool {
 }
 
 fn get_error(rp_code: &[String]) -> Option<String> {
-    if (rp_code.len() == 1 && rp_code[0] == "0") || (rp_code.is_empty()) {
-        None
-    } else {
-        error!("receiver_api: error {:#?}", rp_code);
-
-        let msg = rp_code
-            .get(1)
-            .cloned()
-            .unwrap_or_else(|| rp_code[0].clone());
-
-        Some(msg)
+    if (rp_code.len() == 1 && rp_code[0] == "0") || rp_code.is_empty() {
+        return None;
     }
+
+    // Rithmic uses rp_code = ["7", "no data"] to signal "successful query, zero results"
+    // across all list/replay/search responses. Treat it as a normal empty outcome, not an error.
+    if let (Some(code), Some(msg)) = (rp_code.first(), rp_code.get(1)) {
+        if code == "7" && msg.eq_ignore_ascii_case("no data") {
+            return None;
+        }
+    }
+
+    let msg = rp_code
+        .get(1)
+        .cloned()
+        .unwrap_or_else(|| rp_code[0].clone());
+
+    Some(msg)
 }
 
 fn check_message_error(message: &RithmicResponse) -> Option<String> {
@@ -1882,6 +1888,52 @@ mod tests {
             RithmicOrderNotification::default(),
         ));
         assert!(!response.is_pnl_update());
+    }
+
+    // =========================================================================
+    // get_error() / rp_code["7", "no data"] tests
+    // =========================================================================
+
+    #[test]
+    fn get_error_returns_none_for_no_data_rp_code() {
+        // rp_code = ["7", "no data"] means "successful query, zero results" across all
+        // Rithmic list/replay/search responses — must not be treated as an error.
+        let rp_code = vec!["7".to_string(), "no data".to_string()];
+        assert_eq!(get_error(&rp_code), None);
+    }
+
+    #[test]
+    fn get_error_returns_none_for_no_data_case_insensitive() {
+        let rp_code = vec!["7".to_string(), "No Data".to_string()];
+        assert_eq!(get_error(&rp_code), None);
+    }
+
+    #[test]
+    fn get_error_returns_some_for_other_code_7_messages() {
+        // code "7" with a different message is still an error
+        let rp_code = vec!["7".to_string(), "permission denied".to_string()];
+        assert!(get_error(&rp_code).is_some());
+    }
+
+    #[test]
+    fn replay_no_data_decodes_as_ok() {
+        // rp_code = ["7", "no data"] on a ResponseReplayExecutions should produce Ok,
+        // confirming the fix flows end-to-end through buf_to_message.
+        use crate::rti::ResponseReplayExecutions;
+        let api = RithmicReceiverApi {
+            source: "test".to_string(),
+        };
+        let result = api.buf_to_message(encode_with_header(&ResponseReplayExecutions {
+            template_id: 3507,
+            user_msg: vec!["req-1".to_string()],
+            rp_code: vec!["7".to_string(), "no data".to_string()],
+        }));
+        assert!(
+            result.is_ok(),
+            "expected Ok but got Err: {:?}",
+            result.err()
+        );
+        assert_eq!(result.unwrap().error, None);
     }
 
     // =========================================================================
