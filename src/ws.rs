@@ -67,6 +67,14 @@ pub(crate) enum WebSocketSendError {
 ///
 /// This prevents actor loop branches from hanging indefinitely on half-open
 /// connections where the TCP write side no longer makes progress.
+///
+/// # Cancellation safety
+///
+/// This function is not cancel-safe with respect to the underlying sink. If the
+/// timeout fires while the sink is flushing, the message may already be buffered
+/// inside the WebSocket stream even though the future returned `Timeout`.
+/// Callers must treat the sink as poisoned after any non-`Ok` return and avoid
+/// reusing it.
 pub(crate) async fn send_with_timeout<S>(
     sink: &mut S,
     msg: Message,

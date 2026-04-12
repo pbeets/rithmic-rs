@@ -597,12 +597,12 @@ impl PlantActor for OrderPlant {
         loop {
             tokio::select! {
                 _ = self.interval.tick() => {
-                    if self.logged_in && self.send_heartbeat().await {
+                    if self.logged_in && !self.close_requested && self.send_heartbeat().await {
                         break;
                     }
                 }
                 _ = self.ping_interval.tick() => {
-                    if self.send_ping().await {
+                    if !self.close_requested && self.send_ping().await {
                         break;
                     }
                 }
@@ -614,32 +614,27 @@ impl PlantActor for OrderPlant {
                     }
                 } => {
                     if self.ping_manager.check_timeout() {
-                        error!("WebSocket ping timed out - connection appears dead");
-                        self.fail_connection_and_drain(
-                            "websocket_ping_timeout",
-                            RithmicMessage::HeartbeatTimeout,
-                            "WebSocket ping timeout - connection dead",
-                        );
+                        if self.close_requested {
+                            self.request_handler.drain_and_drop();
+                        } else {
+                            error!("WebSocket ping timed out - connection appears dead");
+                            self.fail_connection_and_drain(
+                                "websocket_ping_timeout",
+                                RithmicMessage::HeartbeatTimeout,
+                                "WebSocket ping timeout - connection dead",
+                            );
+                        }
                         break;
                     }
                 }
                 Some(message) = self.request_receiver.recv() => {
                     if matches!(message, OrderPlantCommand::Abort) {
                         info!("order_plant: abort requested, shutting down immediately");
-
-                        let error_response = RithmicResponse {
-                            request_id: "".to_string(),
-                            message: RithmicMessage::ConnectionError,
-                            is_update: true,
-                            has_more: false,
-                            multi_response: false,
-                            error: Some("Plant aborted".to_string()),
-                            source: self.rithmic_receiver_api.source.clone(),
-                        };
-
-                        let _ = self.subscription_sender.send(error_response);
-
-                        self.request_handler.drain_and_drop();
+                        self.fail_connection_and_drain(
+                            "",
+                            RithmicMessage::ConnectionError,
+                            "Plant aborted",
+                        );
                         break;
                     }
                     self.handle_command(message).await;

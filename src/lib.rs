@@ -73,6 +73,11 @@
 //! - [`ConnectStrategy::Retry`]: Indefinite retries with exponential backoff capped at 60s (recommended default)
 //! - [`ConnectStrategy::AlternateWithRetry`]: Alternates between primary and beta URLs
 //!
+//! A graceful `disconnect().await` logs out first and then closes the WebSocket.
+//! On a healthy connection, that shutdown path does not emit synthetic
+//! `HeartbeatTimeout` or `ConnectionError` subscription updates; reserve those
+//! for unexpected connection-health failures and reconnect logic.
+//!
 //! ## Configuration
 //!
 //! Use [`RithmicConfig`] for modern, ergonomic configuration:
@@ -118,6 +123,10 @@
 //!     Err(e) => eprintln!("{e}"),
 //! }
 //! ```
+//!
+//! A graceful `disconnect().await` is separate from that reconnect path: it
+//! shuts the plant down without sending synthetic `HeartbeatTimeout` or
+//! `ConnectionError` updates to subscribers when the close handshake succeeds.
 //!
 //! `RithmicError` implements [`std::error::Error`], so `?` works in functions
 //! returning `Box<dyn Error>`.

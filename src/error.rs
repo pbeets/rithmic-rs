@@ -25,9 +25,12 @@ pub enum RithmicError {
     ///
     /// Treat this as a connection-health failure for the current request path and
     /// trigger your reconnection logic if the request is required for continued
-    /// trading. The plant actor remains responsive so keep-alive failure detection
-    /// can still emit a synthetic [`crate::rti::messages::RithmicMessage::HeartbeatTimeout`]
-    /// or [`crate::rti::messages::RithmicMessage::ConnectionError`] update.
+    /// trading. This error alone does not prove that the actor has already shut
+    /// down; keep-alive failure detection can still emit a synthetic
+    /// [`crate::rti::messages::RithmicMessage::HeartbeatTimeout`] or
+    /// [`crate::rti::messages::RithmicMessage::ConnectionError`] update if the
+    /// connection is actually dead. A successful `disconnect()` on a plant
+    /// handle does not emit those synthetic health events.
     SendFailed,
     /// Server returned an empty response where at least one was expected.
     EmptyResponse,
