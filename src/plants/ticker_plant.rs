@@ -1322,7 +1322,12 @@ impl RithmicTickerPlantHandle {
         .await
     }
 
-    /// Subscribe to top-of-book depth (`OrderBook`) updates for a specific symbol
+    /// Subscribe to level-1 order book summary updates for a specific symbol.
+    ///
+    /// This uses `request_market_data_update` (proto 100) with `UpdateBits::OrderBook`
+    /// and delivers aggregated bid/ask summary ticks. It is distinct from
+    /// [`subscribe_order_book`](Self::subscribe_order_book), which uses
+    /// `request_depth_by_order_updates` (proto 104) for full depth-by-order streaming.
     ///
     /// # Arguments
     /// * `symbol` - The trading symbol (e.g., "ESH6")
@@ -1330,7 +1335,7 @@ impl RithmicTickerPlantHandle {
     ///
     /// # Returns
     /// The subscription response or an error message
-    pub async fn subscribe_order_book_depth(
+    pub async fn subscribe_order_book_summary(
         &self,
         symbol: &str,
         exchange: &str,
@@ -1344,7 +1349,11 @@ impl RithmicTickerPlantHandle {
         .await
     }
 
-    /// Unsubscribe from top-of-book depth (`OrderBook`) updates for a specific symbol
+    /// Unsubscribe from level-1 order book summary updates for a specific symbol.
+    ///
+    /// This reverses [`subscribe_order_book_summary`](Self::subscribe_order_book_summary).
+    /// Use [`unsubscribe_order_book`](Self::unsubscribe_order_book) to stop the
+    /// dedicated depth-by-order stream instead.
     ///
     /// # Arguments
     /// * `symbol` - The trading symbol (e.g., "ESH6")
@@ -1352,7 +1361,7 @@ impl RithmicTickerPlantHandle {
     ///
     /// # Returns
     /// The unsubscription response or an error message
-    pub async fn unsubscribe_order_book_depth(
+    pub async fn unsubscribe_order_book_summary(
         &self,
         symbol: &str,
         exchange: &str,
@@ -1542,7 +1551,13 @@ impl RithmicTickerPlantHandle {
         .await
     }
 
-    /// Subscribe to end-of-day price updates for a specific symbol
+    /// Subscribe to end-of-day price updates for a specific symbol.
+    ///
+    /// Subscribes to `Close`, `Settlement`, `ProjectedSettlement`, and `AdjustedClose`.
+    /// The first three are delivered as real-time updates throughout the session.
+    /// `AdjustedClose` is a reference field and will not fire as a real-time callback;
+    /// it is included for end-of-session reconciliation use cases where its value is
+    /// populated after market close.
     ///
     /// # Arguments
     /// * `symbol` - The trading symbol (e.g., "ESH6")
@@ -1569,7 +1584,10 @@ impl RithmicTickerPlantHandle {
         .await
     }
 
-    /// Unsubscribe from end-of-day price updates for a specific symbol
+    /// Unsubscribe from end-of-day price updates for a specific symbol.
+    ///
+    /// This reverses [`subscribe_end_of_day_prices`](Self::subscribe_end_of_day_prices),
+    /// including the non-streaming `AdjustedClose` reference field.
     ///
     /// # Arguments
     /// * `symbol` - The trading symbol (e.g., "ESH6")
