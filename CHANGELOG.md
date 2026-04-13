@@ -7,25 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0]
+
 ### Breaking Changes
 
-- `RithmicConfig` no longer includes `account_id`, `fcm_id`, or `ib_id`
-- `RithmicOrderPlant::get_handle()` and `RithmicPnlPlant::get_handle()` now require `&RithmicAccount`
-- `subscription_receiver` on order and PnL handles is now `SubscriptionFilter`
+- **`RithmicConfig` no longer includes `account_id`, `fcm_id`, or `ib_id`** — those fields moved to `RithmicAccount`
+- **`RithmicOrderPlant::get_handle()` and `RithmicPnlPlant::get_handle()` now require `&RithmicAccount`**
+  - Create a `RithmicAccount` with `RithmicAccount::from_env(env)` or build one directly
+  - For multi-account workflows, create one `RithmicAccount` per account and call `get_handle(&account)` for each
+- **`subscription_receiver` on order and PnL handles is now `SubscriptionFilter`** instead of `broadcast::Receiver<RithmicResponse>`
 
 ### Added
 
+- **`RithmicAccount`** — account-scoped type for order and PnL operations
+  - `RithmicAccount::from_env(RithmicEnv)` loads `RITHMIC_<ENV>_ACCOUNT_ID`, `FCM_ID`, `IB_ID`
 - **`load_tick_bars(symbol, exchange, bar_length, start_time_sec, end_time_sec)`** on `RithmicHistoryPlantHandle`
   - Fetches historical N-tick bars (e.g., 5-tick, 10-tick) for a symbol
   - `bar_length` controls the number of ticks aggregated into each bar
-  - Returns `InvalidArgument` error when `bar_length` is 0
-- **`RithmicError::InvalidArgument`** variant for rejecting invalid caller-supplied arguments before a request is sent
-- `RithmicAccount` for account-scoped order and PnL operations
+  - Returns `RithmicError::InvalidArgument` when `bar_length` is 0
+- **`RithmicError::InvalidArgument(String)`** variant for rejecting invalid caller-supplied arguments before a request is sent
+- **`RithmicAdvancedBracketOrder`** — full raw bracket order request exposing all venue-native fields
+  - Supports triggered entry, break-even, trailing-stop, timed release/cancel, and if-touched entry conditions
+  - Re-exported from crate root
+- **`RithmicIfTouchedTrigger`** — conditional trigger for advanced bracket order entry (`if_touched_*` fields)
+  - Re-exported from crate root
+- **New bracket order enums** re-exported from crate root: `BracketType`, `BracketCondition`, `BracketPriceField`
+- **Semantic ticker market-data subscription helpers** on `RithmicTickerPlantHandle` (all accept `symbol, exchange`):
+  - `subscribe_instrument_status` / `unsubscribe_instrument_status` — market mode updates
+  - `subscribe_order_book_summary` / `unsubscribe_order_book_summary` — aggregated bid/ask summary (proto 100, distinct from depth-by-order)
+  - `subscribe_session_prices` / `unsubscribe_session_prices` — high/low/open trade statistics
+  - `subscribe_quote_statistics` / `unsubscribe_quote_statistics` — quote-related statistics
+  - `subscribe_indicator_prices` / `unsubscribe_indicator_prices` — settlement and projected settlement prices
+  - `subscribe_open_interest` / `unsubscribe_open_interest` — open interest updates
+  - `subscribe_end_of_day_prices` / `unsubscribe_end_of_day_prices` — end-of-day price data
+  - `subscribe_order_price_limits` / `unsubscribe_order_price_limits` — high/low price limits
+  - `subscribe_symbol_margin_rate` / `unsubscribe_symbol_margin_rate` — margin rate updates
 
 ### Changed
 
+- **`RithmicError::SendFailed`** now also covers send timeouts — all plant WebSocket sends are bounded to 10 seconds; a hung sink surfaces as `SendFailed` rather than blocking the actor indefinitely
 - **`load_ticks`** now delegates to `load_tick_bars` with `bar_length = 1` — no behavioral change for existing callers
 - **`request_tick_bar_replay`** on `RithmicSenderApi` now accepts a `bar_type_specifier` parameter instead of hard-coding `"1"`
+
+### Fixed
+
+- **`rp_code = ["7", "no data"]`** is now treated as a successful empty result (not an error) across all list/replay/search responses — previously this caused methods like `replay_executions` to return `ServerError("no data")` when the query matched zero records
 
 ## [1.0.0]
 
@@ -647,6 +673,7 @@ Previous stable release. See git history for earlier changes.
 
 ## Version History Summary
 
+- **2.0.0**: Breaking changes - `RithmicAccount` split from `RithmicConfig`, account-scoped `get_handle()`, `SubscriptionFilter`; advanced bracket orders, semantic ticker subscriptions, bounded WebSocket sends
 - **1.0.0**: Breaking changes - typed `RithmicError` enum, prost 0.14, async-trait removed, `LoginConfig` for advanced login, `await_shutdown()`, non_exhaustive annotations, MSRV 1.85
 - **0.7.2** (2026-02-07): New RithmicOrder API with trigger prices and trailing stops, ticker plant unsubscribe methods, serde-compatible order types
 - **0.7.1** (2026-01-23): New utility module (InstrumentInfo, OrderStatus, timestamp helpers), RithmicResponse helper methods, optional serde support, improved error handling
@@ -660,7 +687,8 @@ Previous stable release. See git history for earlier changes.
 - **0.5.0** (2025-11-16): Major stability and API improvements - Connection strategies, unified config, panic fixes, connection health monitoring
 - **0.4.2** (2025-11-15): Previous stable release
 
-[Unreleased]: https://github.com/pbeets/rithmic-rs/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/pbeets/rithmic-rs/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/pbeets/rithmic-rs/compare/v1.0.0...v2.0.0
 [1.0.0]: https://github.com/pbeets/rithmic-rs/compare/v0.7.2...v1.0.0
 [0.7.2]: https://github.com/pbeets/rithmic-rs/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/pbeets/rithmic-rs/compare/v0.7.0...v0.7.1

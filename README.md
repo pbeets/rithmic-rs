@@ -15,7 +15,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-rithmic-rs = "1.0.0"
+rithmic-rs = "2.0.0"
 ```
 
 Set your environment variables:
@@ -83,6 +83,12 @@ handle.subscribe("ESM6", "CME").await?;
 // Unsubscribe when done
 handle.unsubscribe("ESM6", "CME").await?;
 
+// Additional market data subscriptions
+handle.subscribe_instrument_status("ESM6", "CME").await?;
+handle.subscribe_open_interest("ESM6", "CME").await?;
+handle.subscribe_session_prices("ESM6", "CME").await?;
+handle.subscribe_order_price_limits("ESM6", "CME").await?;
+
 // Symbol discovery
 let symbols = handle.search_symbols("ES", Some("CME"), None, None, None).await?;
 let front_month = handle.get_front_month_contract("ES", "CME", false).await?;
@@ -115,8 +121,9 @@ let order = RithmicOrder {
 };
 handle.place_order(order).await?;
 
-// Bracket orders, OCO orders
+// Bracket orders, OCO orders, advanced bracket orders
 handle.place_bracket_order(...).await?;
+handle.place_advanced_bracket_order(advanced_order).await?;
 
 // Manage positions
 handle.cancel_order(order_id).await?;
@@ -132,6 +139,9 @@ For multi-account workflows, create one [`RithmicAccount`] per account and call
 // Load historical data (bar_type, period, start_time, end_time as i32 unix seconds)
 let bars = handle.load_time_bars("ESM6", "CME", BarType::MinuteBar, 5, start, end).await?;
 let ticks = handle.load_ticks("ESM6", "CME", start, end).await?;
+
+// Load N-tick bars (e.g., 5-tick bars)
+let tick_bars = handle.load_tick_bars("ESM6", "CME", 5, start, end).await?;
 ```
 
 ### PnL Plant
@@ -165,6 +175,7 @@ match handle.subscribe("ESM6", "CME").await {
         handle.abort();
         // reconnect — see examples/reconnect.rs
     }
+    Err(RithmicError::InvalidArgument(msg)) => eprintln!("Bad argument: {}", msg),
     Err(RithmicError::ServerError(msg)) => eprintln!("Server rejected: {}", msg),
     Err(e) => eprintln!("{}", e),
 }

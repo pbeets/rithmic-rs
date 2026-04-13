@@ -1365,6 +1365,10 @@ impl RithmicTickerPlantHandle {
     ///
     /// # Returns
     /// The subscription response or an error message
+    ///
+    /// # Updates
+    /// After subscribing, market mode changes arrive as [`RithmicMessage::MarketMode`]
+    /// on `subscription_receiver`.
     pub async fn subscribe_instrument_status(
         &self,
         symbol: &str,
@@ -1414,6 +1418,10 @@ impl RithmicTickerPlantHandle {
     ///
     /// # Returns
     /// The subscription response or an error message
+    ///
+    /// # Updates
+    /// After subscribing, aggregated bid/ask updates arrive as [`RithmicMessage::OrderBook`]
+    /// on `subscription_receiver`.
     pub async fn subscribe_order_book_summary(
         &self,
         symbol: &str,
@@ -1462,6 +1470,10 @@ impl RithmicTickerPlantHandle {
     ///
     /// # Returns
     /// The subscription response or an error message
+    ///
+    /// # Updates
+    /// After subscribing, intraday high, low, and open price updates arrive as
+    /// [`RithmicMessage::TradeStatistics`] on `subscription_receiver`.
     pub async fn subscribe_session_prices(
         &self,
         symbol: &str,
@@ -1506,6 +1518,10 @@ impl RithmicTickerPlantHandle {
     ///
     /// # Returns
     /// The subscription response or an error message
+    ///
+    /// # Updates
+    /// After subscribing, high bid / low ask updates arrive as
+    /// [`RithmicMessage::QuoteStatistics`] on `subscription_receiver`.
     pub async fn subscribe_quote_statistics(
         &self,
         symbol: &str,
@@ -1550,6 +1566,10 @@ impl RithmicTickerPlantHandle {
     ///
     /// # Returns
     /// The subscription response or an error message
+    ///
+    /// # Updates
+    /// After subscribing, opening and closing indicator prices arrive as
+    /// [`RithmicMessage::IndicatorPrices`] on `subscription_receiver`.
     pub async fn subscribe_indicator_prices(
         &self,
         symbol: &str,
@@ -1594,6 +1614,10 @@ impl RithmicTickerPlantHandle {
     ///
     /// # Returns
     /// The subscription response or an error message
+    ///
+    /// # Updates
+    /// After subscribing, open interest updates arrive as [`RithmicMessage::OpenInterest`]
+    /// on `subscription_receiver`.
     pub async fn subscribe_open_interest(
         &self,
         symbol: &str,
@@ -1644,6 +1668,10 @@ impl RithmicTickerPlantHandle {
     ///
     /// # Returns
     /// The subscription response or an error message
+    ///
+    /// # Updates
+    /// After subscribing, close, settlement, and projected settlement updates arrive as
+    /// [`RithmicMessage::EndOfDayPrices`] on `subscription_receiver`.
     pub async fn subscribe_end_of_day_prices(
         &self,
         symbol: &str,
@@ -1701,6 +1729,10 @@ impl RithmicTickerPlantHandle {
     ///
     /// # Returns
     /// The subscription response or an error message
+    ///
+    /// # Updates
+    /// After subscribing, high and low price limit updates arrive as
+    /// [`RithmicMessage::OrderPriceLimits`] on `subscription_receiver`.
     pub async fn subscribe_order_price_limits(
         &self,
         symbol: &str,
@@ -1745,6 +1777,10 @@ impl RithmicTickerPlantHandle {
     ///
     /// # Returns
     /// The subscription response or an error message
+    ///
+    /// # Updates
+    /// After subscribing, margin rate updates arrive as [`RithmicMessage::SymbolMarginRate`]
+    /// on `subscription_receiver`.
     pub async fn subscribe_symbol_margin_rate(
         &self,
         symbol: &str,
