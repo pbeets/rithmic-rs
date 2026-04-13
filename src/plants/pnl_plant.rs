@@ -178,12 +178,13 @@ impl RithmicPnlPlant {
     /// Multiple handles can be created from the same plant for different accounts.
     pub fn get_handle(&self, account: &RithmicAccount) -> RithmicPnlPlantHandle {
         let account = Arc::new(account.clone());
+        let account_for_filter = Arc::clone(&account);
 
         RithmicPnlPlantHandle {
-            account: Arc::clone(&account),
+            account,
             sender: self.sender.clone(),
             subscription_receiver: SubscriptionFilter::new(
-                Arc::clone(&account),
+                account_for_filter,
                 self.subscription_sender.subscribe(),
             ),
         }
@@ -588,14 +589,12 @@ impl PlantActor for PnlPlant {
                 let (list_system_info_buf, id) =
                     self.rithmic_sender_api.request_rithmic_system_info();
 
-                let request_id = id.clone();
-
                 self.request_handler.register_request(RithmicRequest {
-                    request_id: id,
+                    request_id: id.clone(),
                     responder: response_sender,
                 });
 
-                self.send_or_fail(Message::Binary(list_system_info_buf.into()), &request_id)
+                self.send_or_fail(Message::Binary(list_system_info_buf.into()), &id)
                     .await;
             }
             PnlPlantCommand::Login {
@@ -612,14 +611,12 @@ impl PlantActor for PnlPlant {
 
                 info!("pnl_plant: sending login request {}", id);
 
-                let request_id = id.clone();
-
                 self.request_handler.register_request(RithmicRequest {
-                    request_id: id,
+                    request_id: id.clone(),
                     responder: response_sender,
                 });
 
-                self.send_or_fail(Message::Binary(login_buf.into()), &request_id)
+                self.send_or_fail(Message::Binary(login_buf.into()), &id)
                     .await;
             }
             PnlPlantCommand::SetLogin => {
@@ -628,14 +625,12 @@ impl PlantActor for PnlPlant {
             PnlPlantCommand::Logout { response_sender } => {
                 let (logout_buf, id) = self.rithmic_sender_api.request_logout();
 
-                let request_id = id.clone();
-
                 self.request_handler.register_request(RithmicRequest {
-                    request_id: id,
+                    request_id: id.clone(),
                     responder: response_sender,
                 });
 
-                self.send_or_fail(Message::Binary(logout_buf.into()), &request_id)
+                self.send_or_fail(Message::Binary(logout_buf.into()), &id)
                     .await;
             }
             PnlPlantCommand::UpdateHeartbeat { seconds } => {
@@ -650,14 +645,12 @@ impl PlantActor for PnlPlant {
                     &account,
                 );
 
-                let request_id = id.clone();
-
                 self.request_handler.register_request(RithmicRequest {
-                    request_id: id,
+                    request_id: id.clone(),
                     responder: response_sender,
                 });
 
-                self.send_or_fail(Message::Binary(subscribe_buf.into()), &request_id)
+                self.send_or_fail(Message::Binary(subscribe_buf.into()), &id)
                     .await;
             }
             PnlPlantCommand::PnlPositionSnapshots {
@@ -668,14 +661,12 @@ impl PlantActor for PnlPlant {
                     .rithmic_sender_api
                     .request_pnl_position_snapshot(&account);
 
-                let request_id = id.clone();
-
                 self.request_handler.register_request(RithmicRequest {
-                    request_id: id,
+                    request_id: id.clone(),
                     responder: response_sender,
                 });
 
-                self.send_or_fail(Message::Binary(snapshot_buf.into()), &request_id)
+                self.send_or_fail(Message::Binary(snapshot_buf.into()), &id)
                     .await;
             }
             PnlPlantCommand::UnsubscribePnlUpdates {
@@ -687,14 +678,12 @@ impl PlantActor for PnlPlant {
                     &account,
                 );
 
-                let request_id = id.clone();
-
                 self.request_handler.register_request(RithmicRequest {
-                    request_id: id,
+                    request_id: id.clone(),
                     responder: response_sender,
                 });
 
-                self.send_or_fail(Message::Binary(unsubscribe_buf.into()), &request_id)
+                self.send_or_fail(Message::Binary(unsubscribe_buf.into()), &id)
                     .await;
             }
             PnlPlantCommand::Abort => {

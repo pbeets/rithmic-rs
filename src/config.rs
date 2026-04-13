@@ -340,7 +340,6 @@ impl RithmicConfig {
 }
 
 /// Builder for constructing a RithmicConfig with custom values.
-#[derive(Default)]
 pub struct RithmicConfigBuilder {
     env: Option<RithmicEnv>,
     url: Option<String>,
@@ -364,8 +363,13 @@ impl RithmicConfigBuilder {
 
         Self {
             env: Some(env),
+            url: None,
+            beta_url: None,
+            user: None,
+            password: None,
             system_name: Some(system_name),
-            ..Default::default()
+            app_name: None,
+            app_version: None,
         }
     }
 

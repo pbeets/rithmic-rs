@@ -705,14 +705,12 @@ impl PlantActor for TickerPlant {
                 let (list_system_info_buf, id) =
                     self.rithmic_sender_api.request_rithmic_system_info();
 
-                let request_id = id.clone();
-
                 self.request_handler.register_request(RithmicRequest {
-                    request_id: id,
+                    request_id: id.clone(),
                     responder: response_sender,
                 });
 
-                self.send_or_fail(Message::Binary(list_system_info_buf.into()), &request_id)
+                self.send_or_fail(Message::Binary(list_system_info_buf.into()), &id)
                     .await;
             }
             TickerPlantCommand::Login {
@@ -729,14 +727,12 @@ impl PlantActor for TickerPlant {
 
                 info!("ticker_plant: sending login request {}", id);
 
-                let request_id = id.clone();
-
                 self.request_handler.register_request(RithmicRequest {
-                    request_id: id,
+                    request_id: id.clone(),
                     responder: response_sender,
                 });
 
-                self.send_or_fail(Message::Binary(login_buf.into()), &request_id)
+                self.send_or_fail(Message::Binary(login_buf.into()), &id)
                     .await;
             }
             TickerPlantCommand::SetLogin => {
@@ -745,14 +741,12 @@ impl PlantActor for TickerPlant {
             TickerPlantCommand::Logout { response_sender } => {
                 let (logout_buf, id) = self.rithmic_sender_api.request_logout();
 
-                let request_id = id.clone();
-
                 self.request_handler.register_request(RithmicRequest {
-                    request_id: id,
+                    request_id: id.clone(),
                     responder: response_sender,
                 });
 
-                self.send_or_fail(Message::Binary(logout_buf.into()), &request_id)
+                self.send_or_fail(Message::Binary(logout_buf.into()), &id)
                     .await;
             }
             TickerPlantCommand::UpdateHeartbeat { seconds } => {
@@ -772,14 +766,12 @@ impl PlantActor for TickerPlant {
                     request_type,
                 );
 
-                let request_id = id.clone();
-
                 self.request_handler.register_request(RithmicRequest {
-                    request_id: id,
+                    request_id: id.clone(),
                     responder: response_sender,
                 });
 
-                self.send_or_fail(Message::Binary(sub_buf.into()), &request_id)
+                self.send_or_fail(Message::Binary(sub_buf.into()), &id)
                     .await;
             }
             TickerPlantCommand::SubscribeOrderBook {
@@ -794,14 +786,12 @@ impl PlantActor for TickerPlant {
                     request_type,
                 );
 
-                let request_id = id.clone();
-
                 self.request_handler.register_request(RithmicRequest {
-                    request_id: id,
+                    request_id: id.clone(),
                     responder: response_sender,
                 });
 
-                self.send_or_fail(Message::Binary(sub_buf.into()), &request_id)
+                self.send_or_fail(Message::Binary(sub_buf.into()), &id)
                     .await;
             }
             TickerPlantCommand::RequestDepthByOrderSnapshot {
@@ -813,14 +803,12 @@ impl PlantActor for TickerPlant {
                     .rithmic_sender_api
                     .request_depth_by_order_snapshot(&symbol, &exchange);
 
-                let request_id = id.clone();
-
                 self.request_handler.register_request(RithmicRequest {
-                    request_id: id,
+                    request_id: id.clone(),
                     responder: response_sender,
                 });
 
-                self.send_or_fail(Message::Binary(snapshot_buf.into()), &request_id)
+                self.send_or_fail(Message::Binary(snapshot_buf.into()), &id)
                     .await;
             }
             TickerPlantCommand::SearchSymbols {
@@ -839,14 +827,12 @@ impl PlantActor for TickerPlant {
                     pattern,
                 );
 
-                let request_id = id.clone();
-
                 self.request_handler.register_request(RithmicRequest {
-                    request_id: id,
+                    request_id: id.clone(),
                     responder: response_sender,
                 });
 
-                self.send_or_fail(Message::Binary(search_buf.into()), &request_id)
+                self.send_or_fail(Message::Binary(search_buf.into()), &id)
                     .await;
             }
             TickerPlantCommand::ListExchanges {
@@ -855,14 +841,12 @@ impl PlantActor for TickerPlant {
             } => {
                 let (list_buf, id) = self.rithmic_sender_api.request_list_exchanges(&user);
 
-                let request_id = id.clone();
-
                 self.request_handler.register_request(RithmicRequest {
-                    request_id: id,
+                    request_id: id.clone(),
                     responder: response_sender,
                 });
 
-                self.send_or_fail(Message::Binary(list_buf.into()), &request_id)
+                self.send_or_fail(Message::Binary(list_buf.into()), &id)
                     .await;
             }
             TickerPlantCommand::GetInstrumentByUnderlying {
@@ -879,15 +863,12 @@ impl PlantActor for TickerPlant {
                         expiration_date.as_deref(),
                     );
 
-                let request_id = id.clone();
-
                 self.request_handler.register_request(RithmicRequest {
-                    request_id: id,
+                    request_id: id.clone(),
                     responder: response_sender,
                 });
 
-                self.send_or_fail(Message::Binary(buf.into()), &request_id)
-                    .await;
+                self.send_or_fail(Message::Binary(buf.into()), &id).await;
             }
             TickerPlantCommand::SubscribeByUnderlying {
                 underlying_symbol,
@@ -907,15 +888,12 @@ impl PlantActor for TickerPlant {
                         request_type,
                     );
 
-                let request_id = id.clone();
-
                 self.request_handler.register_request(RithmicRequest {
-                    request_id: id,
+                    request_id: id.clone(),
                     responder: response_sender,
                 });
 
-                self.send_or_fail(Message::Binary(buf.into()), &request_id)
-                    .await;
+                self.send_or_fail(Message::Binary(buf.into()), &id).await;
             }
             TickerPlantCommand::GetTickSizeTypeTable {
                 tick_size_type,
@@ -925,15 +903,12 @@ impl PlantActor for TickerPlant {
                     .rithmic_sender_api
                     .request_give_tick_size_type_table(&tick_size_type);
 
-                let request_id = id.clone();
-
                 self.request_handler.register_request(RithmicRequest {
-                    request_id: id,
+                    request_id: id.clone(),
                     responder: response_sender,
                 });
 
-                self.send_or_fail(Message::Binary(buf.into()), &request_id)
-                    .await;
+                self.send_or_fail(Message::Binary(buf.into()), &id).await;
             }
             TickerPlantCommand::GetProductCodes {
                 exchange,
@@ -944,15 +919,12 @@ impl PlantActor for TickerPlant {
                     .rithmic_sender_api
                     .request_product_codes(exchange.as_deref(), give_toi_products_only);
 
-                let request_id = id.clone();
-
                 self.request_handler.register_request(RithmicRequest {
-                    request_id: id,
+                    request_id: id.clone(),
                     responder: response_sender,
                 });
 
-                self.send_or_fail(Message::Binary(buf.into()), &request_id)
-                    .await;
+                self.send_or_fail(Message::Binary(buf.into()), &id).await;
             }
             TickerPlantCommand::GetVolumeAtPrice {
                 symbol,
@@ -963,15 +935,12 @@ impl PlantActor for TickerPlant {
                     .rithmic_sender_api
                     .request_get_volume_at_price(&symbol, &exchange);
 
-                let request_id = id.clone();
-
                 self.request_handler.register_request(RithmicRequest {
-                    request_id: id,
+                    request_id: id.clone(),
                     responder: response_sender,
                 });
 
-                self.send_or_fail(Message::Binary(buf.into()), &request_id)
-                    .await;
+                self.send_or_fail(Message::Binary(buf.into()), &id).await;
             }
             TickerPlantCommand::GetAuxilliaryReferenceData {
                 symbol,
@@ -982,15 +951,12 @@ impl PlantActor for TickerPlant {
                     .rithmic_sender_api
                     .request_auxilliary_reference_data(&symbol, &exchange);
 
-                let request_id = id.clone();
-
                 self.request_handler.register_request(RithmicRequest {
-                    request_id: id,
+                    request_id: id.clone(),
                     responder: response_sender,
                 });
 
-                self.send_or_fail(Message::Binary(buf.into()), &request_id)
-                    .await;
+                self.send_or_fail(Message::Binary(buf.into()), &id).await;
             }
             TickerPlantCommand::GetReferenceData {
                 symbol,
@@ -1001,15 +967,12 @@ impl PlantActor for TickerPlant {
                     .rithmic_sender_api
                     .request_reference_data(&symbol, &exchange);
 
-                let request_id = id.clone();
-
                 self.request_handler.register_request(RithmicRequest {
-                    request_id: id,
+                    request_id: id.clone(),
                     responder: response_sender,
                 });
 
-                self.send_or_fail(Message::Binary(buf.into()), &request_id)
-                    .await;
+                self.send_or_fail(Message::Binary(buf.into()), &id).await;
             }
             TickerPlantCommand::GetFrontMonthContract {
                 symbol,
@@ -1023,15 +986,12 @@ impl PlantActor for TickerPlant {
                     need_updates,
                 );
 
-                let request_id = id.clone();
-
                 self.request_handler.register_request(RithmicRequest {
-                    request_id: id,
+                    request_id: id.clone(),
                     responder: response_sender,
                 });
 
-                self.send_or_fail(Message::Binary(buf.into()), &request_id)
-                    .await;
+                self.send_or_fail(Message::Binary(buf.into()), &id).await;
             }
             TickerPlantCommand::GetSystemGatewayInfo {
                 system_name,
@@ -1041,15 +1001,12 @@ impl PlantActor for TickerPlant {
                     .rithmic_sender_api
                     .request_rithmic_system_gateway_info(system_name.as_deref());
 
-                let request_id = id.clone();
-
                 self.request_handler.register_request(RithmicRequest {
-                    request_id: id,
+                    request_id: id.clone(),
                     responder: response_sender,
                 });
 
-                self.send_or_fail(Message::Binary(buf.into()), &request_id)
-                    .await;
+                self.send_or_fail(Message::Binary(buf.into()), &id).await;
             }
             TickerPlantCommand::Abort => {
                 unreachable!("Abort is handled in run() before handle_command");

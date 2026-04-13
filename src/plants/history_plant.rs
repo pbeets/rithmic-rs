@@ -241,7 +241,7 @@ struct HistoryPlant {
 }
 
 impl HistoryPlant {
-    pub async fn new(
+    async fn new(
         request_receiver: mpsc::Receiver<HistoryPlantCommand>,
         subscription_sender: broadcast::Sender<RithmicResponse>,
         config: &RithmicConfig,
@@ -620,14 +620,12 @@ impl PlantActor for HistoryPlant {
                 let (list_system_info_buf, id) =
                     self.rithmic_sender_api.request_rithmic_system_info();
 
-                let request_id = id.clone();
-
                 self.request_handler.register_request(RithmicRequest {
-                    request_id: id,
+                    request_id: id.clone(),
                     responder: response_sender,
                 });
 
-                self.send_or_fail(Message::Binary(list_system_info_buf.into()), &request_id)
+                self.send_or_fail(Message::Binary(list_system_info_buf.into()), &id)
                     .await;
             }
             HistoryPlantCommand::Login {
@@ -644,14 +642,12 @@ impl PlantActor for HistoryPlant {
 
                 info!("history_plant: sending login request {}", id);
 
-                let request_id = id.clone();
-
                 self.request_handler.register_request(RithmicRequest {
-                    request_id: id,
+                    request_id: id.clone(),
                     responder: response_sender,
                 });
 
-                self.send_or_fail(Message::Binary(login_buf.into()), &request_id)
+                self.send_or_fail(Message::Binary(login_buf.into()), &id)
                     .await;
             }
             HistoryPlantCommand::SetLogin => {
@@ -660,14 +656,12 @@ impl PlantActor for HistoryPlant {
             HistoryPlantCommand::Logout { response_sender } => {
                 let (logout_buf, id) = self.rithmic_sender_api.request_logout();
 
-                let request_id = id.clone();
-
                 self.request_handler.register_request(RithmicRequest {
-                    request_id: id,
+                    request_id: id.clone(),
                     responder: response_sender,
                 });
 
-                self.send_or_fail(Message::Binary(logout_buf.into()), &request_id)
+                self.send_or_fail(Message::Binary(logout_buf.into()), &id)
                     .await;
             }
             HistoryPlantCommand::UpdateHeartbeat { seconds } => {
@@ -689,14 +683,12 @@ impl PlantActor for HistoryPlant {
                     end_time_sec,
                 );
 
-                let request_id = id.clone();
-
                 self.request_handler.register_request(RithmicRequest {
-                    request_id: id,
+                    request_id: id.clone(),
                     responder: response_sender,
                 });
 
-                self.send_or_fail(Message::Binary(tick_bar_replay_buf.into()), &request_id)
+                self.send_or_fail(Message::Binary(tick_bar_replay_buf.into()), &id)
                     .await;
             }
             HistoryPlantCommand::LoadTimeBars {
@@ -717,14 +709,12 @@ impl PlantActor for HistoryPlant {
                     end_time_sec,
                 );
 
-                let request_id = id.clone();
-
                 self.request_handler.register_request(RithmicRequest {
-                    request_id: id,
+                    request_id: id.clone(),
                     responder: response_sender,
                 });
 
-                self.send_or_fail(Message::Binary(time_bar_replay_buf.into()), &request_id)
+                self.send_or_fail(Message::Binary(time_bar_replay_buf.into()), &id)
                     .await;
             }
             HistoryPlantCommand::LoadVolumeProfileMinuteBars {
@@ -747,15 +737,12 @@ impl PlantActor for HistoryPlant {
                     resume_bars,
                 );
 
-                let request_id = id.clone();
-
                 self.request_handler.register_request(RithmicRequest {
-                    request_id: id,
+                    request_id: id.clone(),
                     responder: response_sender,
                 });
 
-                self.send_or_fail(Message::Binary(buf.into()), &request_id)
-                    .await;
+                self.send_or_fail(Message::Binary(buf.into()), &id).await;
             }
             HistoryPlantCommand::ResumeBars {
                 request_key,
@@ -763,15 +750,12 @@ impl PlantActor for HistoryPlant {
             } => {
                 let (buf, id) = self.rithmic_sender_api.request_resume_bars(&request_key);
 
-                let request_id = id.clone();
-
                 self.request_handler.register_request(RithmicRequest {
-                    request_id: id,
+                    request_id: id.clone(),
                     responder: response_sender,
                 });
 
-                self.send_or_fail(Message::Binary(buf.into()), &request_id)
-                    .await;
+                self.send_or_fail(Message::Binary(buf.into()), &id).await;
             }
             HistoryPlantCommand::SubscribeTimeBarUpdates {
                 symbol,
@@ -789,15 +773,12 @@ impl PlantActor for HistoryPlant {
                     request,
                 );
 
-                let request_id = id.clone();
-
                 self.request_handler.register_request(RithmicRequest {
-                    request_id: id,
+                    request_id: id.clone(),
                     responder: response_sender,
                 });
 
-                self.send_or_fail(Message::Binary(buf.into()), &request_id)
-                    .await;
+                self.send_or_fail(Message::Binary(buf.into()), &id).await;
             }
             HistoryPlantCommand::SubscribeTickBarUpdates {
                 symbol,
@@ -817,15 +798,12 @@ impl PlantActor for HistoryPlant {
                     request,
                 );
 
-                let request_id = id.clone();
-
                 self.request_handler.register_request(RithmicRequest {
-                    request_id: id,
+                    request_id: id.clone(),
                     responder: response_sender,
                 });
 
-                self.send_or_fail(Message::Binary(buf.into()), &request_id)
-                    .await;
+                self.send_or_fail(Message::Binary(buf.into()), &id).await;
             }
             HistoryPlantCommand::Abort => {
                 unreachable!("Abort is handled in run() before handle_command");
