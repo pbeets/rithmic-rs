@@ -634,7 +634,10 @@ mod tests {
     impl Sink<Message> for MockMessageSink {
         type Error = Error;
 
-        fn poll_ready(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        fn poll_ready(
+            self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+        ) -> Poll<Result<(), Self::Error>> {
             match self.behavior {
                 MockSinkBehavior::Ready => Poll::Ready(Ok(())),
                 MockSinkBehavior::Error => Poll::Ready(Err(Error::ConnectionClosed)),
@@ -647,7 +650,10 @@ mod tests {
             Ok(())
         }
 
-        fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        fn poll_flush(
+            self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+        ) -> Poll<Result<(), Self::Error>> {
             match self.behavior {
                 MockSinkBehavior::Ready => Poll::Ready(Ok(())),
                 MockSinkBehavior::Error => Poll::Ready(Err(Error::ConnectionClosed)),
@@ -655,7 +661,10 @@ mod tests {
             }
         }
 
-        fn poll_close(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        fn poll_close(
+            self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+        ) -> Poll<Result<(), Self::Error>> {
             match self.behavior {
                 MockSinkBehavior::Ready => Poll::Ready(Ok(())),
                 MockSinkBehavior::Error => Poll::Ready(Err(Error::ConnectionClosed)),
@@ -688,10 +697,8 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
 
-        let (client_tcp, server_result) = tokio::join!(
-            TcpStream::connect(addr),
-            async { listener.accept().await }
-        );
+        let (client_tcp, server_result) =
+            tokio::join!(TcpStream::connect(addr), async { listener.accept().await });
 
         let client_tcp = client_tcp.unwrap();
         let (server_tcp, _) = server_result.unwrap();
@@ -713,7 +720,10 @@ mod tests {
     fn make_test_core(
         sink: MockMessageSink,
         rithmic_reader: WsReader,
-    ) -> (PlantCore<MockMessageSink>, broadcast::Receiver<RithmicResponse>) {
+    ) -> (
+        PlantCore<MockMessageSink>,
+        broadcast::Receiver<RithmicResponse>,
+    ) {
         let config = test_config();
         let (sub_tx, sub_rx) = broadcast::channel(16);
         let rithmic_sender_api = RithmicSenderApi::new(&config);
@@ -739,7 +749,10 @@ mod tests {
         (core, sub_rx)
     }
 
-    fn register_request(core: &mut PlantCore<MockMessageSink>, id: &str) -> oneshot::Receiver<Result<Vec<RithmicResponse>, RithmicError>> {
+    fn register_request(
+        core: &mut PlantCore<MockMessageSink>,
+        id: &str,
+    ) -> oneshot::Receiver<Result<Vec<RithmicResponse>, RithmicError>> {
         let (tx, rx) = oneshot::channel();
         core.request_handler.register_request(RithmicRequest {
             request_id: id.to_string(),
@@ -761,7 +774,10 @@ mod tests {
 
         // Subscription broadcast received the event
         let broadcast_msg = sub_rx.try_recv().unwrap();
-        assert!(matches!(broadcast_msg.message, RithmicMessage::ConnectionError));
+        assert!(matches!(
+            broadcast_msg.message,
+            RithmicMessage::ConnectionError
+        ));
         assert_eq!(broadcast_msg.error.as_deref(), Some("test error"));
 
         // Pending request was drained with ConnectionClosed
@@ -778,7 +794,10 @@ mod tests {
         core.fail_connection_and_drain("", RithmicMessage::ConnectionError, "no requests");
 
         let broadcast_msg = sub_rx.try_recv().unwrap();
-        assert!(matches!(broadcast_msg.message, RithmicMessage::ConnectionError));
+        assert!(matches!(
+            broadcast_msg.message,
+            RithmicMessage::ConnectionError
+        ));
     }
 
     // ── send_or_fail ──────────────────────────────────────────────────────────
@@ -791,14 +810,18 @@ mod tests {
         let mut rx1 = register_request(&mut core, "req-1");
         let mut rx2 = register_request(&mut core, "req-2");
 
-        core.send_or_fail(Message::Ping(vec![].into()), "req-1").await;
+        core.send_or_fail(Message::Ping(vec![].into()), "req-1")
+            .await;
 
         // req-1 received SendFailed
         let result = rx1.try_recv().unwrap();
         assert!(matches!(result, Err(RithmicError::SendFailed)));
 
         // req-2 is still pending
-        assert!(matches!(rx2.try_recv(), Err(oneshot::error::TryRecvError::Empty)));
+        assert!(matches!(
+            rx2.try_recv(),
+            Err(oneshot::error::TryRecvError::Empty)
+        ));
     }
 
     #[tokio::test]
@@ -829,7 +852,10 @@ mod tests {
         core.close_requested = true;
         let stop = core.send_ping().await;
 
-        assert!(!stop, "send_ping should return false when close is requested");
+        assert!(
+            !stop,
+            "send_ping should return false when close is requested"
+        );
         assert!(
             core.ping_manager.next_timeout_at().is_none(),
             "no ping should have been registered"
@@ -859,7 +885,10 @@ mod tests {
 
         assert!(stop, "send_ping should return true on transport error");
         let broadcast_msg = sub_rx.try_recv().unwrap();
-        assert!(matches!(broadcast_msg.message, RithmicMessage::ConnectionError));
+        assert!(matches!(
+            broadcast_msg.message,
+            RithmicMessage::ConnectionError
+        ));
     }
 
     #[tokio::test]
@@ -874,7 +903,10 @@ mod tests {
 
         assert!(stop, "send_ping should return true on timeout");
         let broadcast_msg = sub_rx.try_recv().unwrap();
-        assert!(matches!(broadcast_msg.message, RithmicMessage::HeartbeatTimeout));
+        assert!(matches!(
+            broadcast_msg.message,
+            RithmicMessage::HeartbeatTimeout
+        ));
     }
 
     // ── send_heartbeat ────────────────────────────────────────────────────────
@@ -887,7 +919,10 @@ mod tests {
         // logged_in defaults to false
         let stop = core.send_heartbeat().await;
 
-        assert!(!stop, "send_heartbeat should return false when not logged in");
+        assert!(
+            !stop,
+            "send_heartbeat should return false when not logged in"
+        );
         assert!(
             sub_rx.try_recv().is_err(),
             "no broadcast should have been sent"
@@ -903,7 +938,10 @@ mod tests {
         core.close_requested = true;
         let stop = core.send_heartbeat().await;
 
-        assert!(!stop, "send_heartbeat should return false when close is requested");
+        assert!(
+            !stop,
+            "send_heartbeat should return false when close is requested"
+        );
         assert!(
             sub_rx.try_recv().is_err(),
             "no broadcast should have been sent"
@@ -920,7 +958,10 @@ mod tests {
 
         assert!(stop, "send_heartbeat should return true on transport error");
         let broadcast_msg = sub_rx.try_recv().unwrap();
-        assert!(matches!(broadcast_msg.message, RithmicMessage::ConnectionError));
+        assert!(matches!(
+            broadcast_msg.message,
+            RithmicMessage::ConnectionError
+        ));
     }
 
     #[tokio::test]
@@ -937,7 +978,10 @@ mod tests {
 
         assert!(stop, "send_heartbeat should return true on timeout");
         let broadcast_msg = sub_rx.try_recv().unwrap();
-        assert!(matches!(broadcast_msg.message, RithmicMessage::HeartbeatTimeout));
+        assert!(matches!(
+            broadcast_msg.message,
+            RithmicMessage::HeartbeatTimeout
+        ));
     }
 
     // ── handle_rithmic_message ────────────────────────────────────────────────
@@ -979,7 +1023,10 @@ mod tests {
         assert!(matches!(result, Err(RithmicError::ConnectionClosed)));
         // Broadcast should contain ConnectionError
         let broadcast_msg = sub_rx.try_recv().unwrap();
-        assert!(matches!(broadcast_msg.message, RithmicMessage::ConnectionError));
+        assert!(matches!(
+            broadcast_msg.message,
+            RithmicMessage::ConnectionError
+        ));
     }
 
     #[tokio::test]
@@ -1028,7 +1075,10 @@ mod tests {
 
         assert!(stop, "ping with failing sink should stop actor");
         let broadcast_msg = sub_rx.try_recv().unwrap();
-        assert!(matches!(broadcast_msg.message, RithmicMessage::ConnectionError));
+        assert!(matches!(
+            broadcast_msg.message,
+            RithmicMessage::ConnectionError
+        ));
     }
 
     #[tokio::test]
@@ -1042,7 +1092,10 @@ mod tests {
 
         assert!(stop, "ConnectionClosed error should stop actor");
         let broadcast_msg = sub_rx.try_recv().unwrap();
-        assert!(matches!(broadcast_msg.message, RithmicMessage::ConnectionError));
+        assert!(matches!(
+            broadcast_msg.message,
+            RithmicMessage::ConnectionError
+        ));
     }
 
     #[tokio::test]
@@ -1050,13 +1103,14 @@ mod tests {
         let reader = make_dormant_ws_reader().await;
         let (mut core, mut sub_rx) = make_test_core(MockMessageSink::ready(), reader);
 
-        let stop = core
-            .handle_rithmic_message(Err(Error::AlreadyClosed))
-            .await;
+        let stop = core.handle_rithmic_message(Err(Error::AlreadyClosed)).await;
 
         assert!(stop, "AlreadyClosed error should stop actor");
         let broadcast_msg = sub_rx.try_recv().unwrap();
-        assert!(matches!(broadcast_msg.message, RithmicMessage::ConnectionError));
+        assert!(matches!(
+            broadcast_msg.message,
+            RithmicMessage::ConnectionError
+        ));
     }
 
     #[tokio::test]
@@ -1072,7 +1126,10 @@ mod tests {
 
         assert!(stop, "protocol reset should stop actor");
         let broadcast_msg = sub_rx.try_recv().unwrap();
-        assert!(matches!(broadcast_msg.message, RithmicMessage::ConnectionError));
+        assert!(matches!(
+            broadcast_msg.message,
+            RithmicMessage::ConnectionError
+        ));
     }
 
     // ── handle_stream_closed ──────────────────────────────────────────────────
@@ -1088,7 +1145,10 @@ mod tests {
 
         assert!(stop, "handle_stream_closed should return true");
         let broadcast_msg = sub_rx.try_recv().unwrap();
-        assert!(matches!(broadcast_msg.message, RithmicMessage::ConnectionError));
+        assert!(matches!(
+            broadcast_msg.message,
+            RithmicMessage::ConnectionError
+        ));
         let result = rx1.try_recv().unwrap();
         assert!(matches!(result, Err(RithmicError::ConnectionClosed)));
     }

@@ -233,7 +233,9 @@ impl PlantActor for PnlPlant {
                 SelectResult::PingTimeout => {
                     if self.core.ping_manager.check_timeout() {
                         if self.core.close_requested {
-                            warn!("pnl_plant: ping timed out while waiting for server close echo — terminating");
+                            warn!(
+                                "pnl_plant: ping timed out while waiting for server close echo — terminating"
+                            );
                             self.core.request_handler.drain_and_drop();
                         } else {
                             self.core.fail_connection_and_drain(

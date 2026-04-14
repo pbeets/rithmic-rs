@@ -165,6 +165,9 @@ mod tests {
         } else {
             expected - deadline
         };
-        assert!(delta <= Duration::from_millis(1), "deadline delta too large: {delta:?}");
+        assert!(
+            delta <= Duration::from_millis(1),
+            "deadline delta too large: {delta:?}"
+        );
     }
 }

@@ -1943,10 +1943,7 @@ mod tests {
 
     #[test]
     fn get_error_returns_first_element_when_no_second() {
-        assert_eq!(
-            super::get_error(&["5".to_string()]),
-            Some("5".to_string())
-        );
+        assert_eq!(super::get_error(&["5".to_string()]), Some("5".to_string()));
     }
 
     #[test]
