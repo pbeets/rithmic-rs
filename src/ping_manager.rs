@@ -80,8 +80,6 @@ mod tests {
     use super::*;
     use std::time::Duration;
 
-    // ── synchronous tests ────────────────────────────────────────────────────
-
     #[test]
     fn new_has_no_pending() {
         let mut mgr = PingManager::new(60);
@@ -126,8 +124,6 @@ mod tests {
         mgr.sent(); // should not panic, just log a warning
         assert!(mgr.next_timeout_at().is_some());
     }
-
-    // ── timing tests (paused tokio clock) ───────────────────────────────────
 
     #[tokio::test]
     async fn check_timeout_returns_true_after_deadline() {

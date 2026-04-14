@@ -35,7 +35,6 @@ use crate::{
     },
 };
 
-// Type aliases for the split WebSocket stream components.
 pub(crate) type WsStream = WebSocketStream<MaybeTlsStream<TcpStream>>;
 pub(crate) type WsSink = SplitSink<WsStream, Message>;
 pub(crate) type WsReader = SplitStream<WsStream>;
@@ -114,8 +113,6 @@ impl PlantCore<WsSink> {
         })
     }
 }
-
-// ── Infrastructure methods ────────────────────────────────────────────────────
 
 impl<S> PlantCore<S>
 where
@@ -484,8 +481,6 @@ where
     }
 }
 
-// ── Shared command handlers ───────────────────────────────────────────────────
-
 impl<S> PlantCore<S>
 where
     S: Sink<Message, Error = Error> + Unpin,
@@ -565,8 +560,6 @@ where
     }
 }
 
-// ── Unit tests ────────────────────────────────────────────────────────────────
-
 #[cfg(test)]
 mod tests {
     use std::{
@@ -588,8 +581,6 @@ mod tests {
         rti::messages::RithmicMessage,
         ws::{PING_TIMEOUT_SECS, get_heartbeat_interval, get_ping_interval},
     };
-
-    // ── Mock sink ──────────────────────────────────────────────────────────────
 
     enum MockSinkBehavior {
         Ready,
@@ -672,8 +663,6 @@ mod tests {
             }
         }
     }
-
-    // ── Helpers ───────────────────────────────────────────────────────────────
 
     fn test_config() -> RithmicConfig {
         RithmicConfig::builder(RithmicEnv::Demo)
@@ -761,8 +750,6 @@ mod tests {
         rx
     }
 
-    // ── fail_connection_and_drain ─────────────────────────────────────────────
-
     #[tokio::test]
     async fn fail_connection_and_drain_broadcasts_and_drains_pending() {
         let reader = make_dormant_ws_reader().await;
@@ -790,7 +777,6 @@ mod tests {
         let reader = make_dormant_ws_reader().await;
         let (mut core, mut sub_rx) = make_test_core(MockMessageSink::ready(), reader);
 
-        // No registered requests — should not panic
         core.fail_connection_and_drain("", RithmicMessage::ConnectionError, "no requests");
 
         let broadcast_msg = sub_rx.try_recv().unwrap();
@@ -799,8 +785,6 @@ mod tests {
             RithmicMessage::ConnectionError
         ));
     }
-
-    // ── send_or_fail ──────────────────────────────────────────────────────────
 
     #[tokio::test]
     async fn send_or_fail_transport_error_fails_only_that_request() {
@@ -813,11 +797,9 @@ mod tests {
         core.send_or_fail(Message::Ping(vec![].into()), "req-1")
             .await;
 
-        // req-1 received SendFailed
         let result = rx1.try_recv().unwrap();
         assert!(matches!(result, Err(RithmicError::SendFailed)));
 
-        // req-2 is still pending
         assert!(matches!(
             rx2.try_recv(),
             Err(oneshot::error::TryRecvError::Empty)
@@ -831,18 +813,14 @@ mod tests {
 
         let mut rx1 = register_request(&mut core, "req-1");
 
-        // The send_or_fail uses SEND_TIMEOUT_SECS — pause time so it resolves fast
         tokio::time::pause();
         let fut = core.send_or_fail(Message::Ping(vec![].into()), "req-1");
-        // Advance far enough past SEND_TIMEOUT_SECS
         tokio::time::advance(std::time::Duration::from_secs(SEND_TIMEOUT_SECS + 1)).await;
         fut.await;
 
         let result = rx1.try_recv().unwrap();
         assert!(matches!(result, Err(RithmicError::SendFailed)));
     }
-
-    // ── send_ping ─────────────────────────────────────────────────────────────
 
     #[tokio::test]
     async fn send_ping_skips_when_close_requested() {
@@ -908,8 +886,6 @@ mod tests {
             RithmicMessage::HeartbeatTimeout
         ));
     }
-
-    // ── send_heartbeat ────────────────────────────────────────────────────────
 
     #[tokio::test]
     async fn send_heartbeat_skips_when_not_logged_in() {
@@ -983,8 +959,6 @@ mod tests {
             RithmicMessage::HeartbeatTimeout
         ));
     }
-
-    // ── handle_rithmic_message ────────────────────────────────────────────────
 
     #[tokio::test]
     async fn handle_rithmic_message_close_with_close_requested_drains_silently() {
@@ -1131,8 +1105,6 @@ mod tests {
             RithmicMessage::ConnectionError
         ));
     }
-
-    // ── handle_stream_closed ──────────────────────────────────────────────────
 
     #[tokio::test]
     async fn handle_stream_closed_stops_and_emits_connection_error() {
