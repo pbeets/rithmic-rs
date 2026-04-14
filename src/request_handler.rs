@@ -47,8 +47,12 @@ impl RithmicRequestHandler {
 
     /// Remove a pending request and send an error through its oneshot channel.
     ///
+    /// Also removes any partially-accumulated multi-part responses for the same
+    /// request ID so that `response_vec_map` does not retain stale data.
+    ///
     /// Returns `true` if the request was found and the error was sent.
     pub fn fail_request(&mut self, request_id: &str, error: RithmicError) -> bool {
+        self.response_vec_map.remove(request_id);
         if let Some(responder) = self.handle_map.remove(request_id) {
             let _ = responder.send(Err(error));
             true

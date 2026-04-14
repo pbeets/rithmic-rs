@@ -1,18 +1,12 @@
-use std::time::Duration;
-
 use tracing::{error, info, warn};
 
 use crate::{
     ConnectStrategy,
-    api::{
-        receiver_api::{RithmicReceiverApi, RithmicResponse},
-        rithmic_command_types::LoginConfig,
-        sender_api::RithmicSenderApi,
-    },
+    api::{receiver_api::RithmicResponse, rithmic_command_types::LoginConfig},
     config::RithmicConfig,
     error::RithmicError,
-    ping_manager::PingManager,
-    request_handler::{RithmicRequest, RithmicRequestHandler},
+    plants::core::{PlantCore, SelectResult},
+    request_handler::RithmicRequest,
     rti::{
         messages::RithmicMessage,
         request_depth_by_order_updates,
@@ -20,26 +14,16 @@ use crate::{
         request_market_data_update::{Request, UpdateBits},
         request_market_data_update_by_underlying, request_search_symbols,
     },
-    ws::{
-        HEARTBEAT_SECS, PING_TIMEOUT_SECS, PlantActor, SEND_TIMEOUT_SECS, WebSocketSendError,
-        connect_with_strategy, get_heartbeat_interval, get_ping_interval, send_with_timeout,
-    },
+    ws::{HEARTBEAT_SECS, PlantActor},
 };
 
-use futures_util::{
-    StreamExt,
-    stream::{SplitSink, SplitStream},
-};
+use tokio_tungstenite::tungstenite::Message;
 
-use tokio_tungstenite::{
-    MaybeTlsStream,
-    tungstenite::{Error, Message, error::ProtocolError},
-};
+use futures_util::StreamExt;
 
 use tokio::{
-    net::TcpStream,
     sync::{broadcast, mpsc, oneshot},
-    time::{Interval, sleep_until},
+    time::sleep_until,
 };
 
 pub(crate) enum TickerPlantCommand {
@@ -301,24 +285,8 @@ impl RithmicTickerPlant {
 
 #[derive(Debug)]
 struct TickerPlant {
-    config: RithmicConfig,
-    // Distinguishes an intentional local shutdown from an unexpected peer close.
-    close_requested: bool,
-    interval: Interval,
-    logged_in: bool,
-    ping_interval: Interval,
-    ping_manager: PingManager,
-    request_handler: RithmicRequestHandler,
+    core: PlantCore,
     request_receiver: mpsc::Receiver<TickerPlantCommand>,
-    rithmic_reader: SplitStream<tokio_tungstenite::WebSocketStream<MaybeTlsStream<TcpStream>>>,
-    rithmic_receiver_api: RithmicReceiverApi,
-    rithmic_sender: SplitSink<
-        tokio_tungstenite::WebSocketStream<MaybeTlsStream<TcpStream>>,
-        tokio_tungstenite::tungstenite::Message,
-    >,
-
-    rithmic_sender_api: RithmicSenderApi,
-    subscription_sender: broadcast::Sender<RithmicResponse>,
 }
 
 impl TickerPlant {
@@ -328,429 +296,110 @@ impl TickerPlant {
         config: &RithmicConfig,
         strategy: ConnectStrategy,
     ) -> Result<TickerPlant, RithmicError> {
-        let ws_stream = connect_with_strategy(&config.url, &config.beta_url, strategy)
-            .await
-            .map_err(|e| RithmicError::ConnectionFailed(e.to_string()))?;
-
-        let (rithmic_sender, rithmic_reader) = ws_stream.split();
-
-        let rithmic_sender_api = RithmicSenderApi::new(config);
-        let rithmic_receiver_api = RithmicReceiverApi {
-            source: "ticker_plant".to_string(),
-        };
-
-        let interval = get_heartbeat_interval(None);
-        let ping_interval = get_ping_interval(None);
-        let ping_manager = PingManager::new(PING_TIMEOUT_SECS);
-
+        let core = PlantCore::new(subscription_sender, config, strategy, "ticker_plant").await?;
         Ok(TickerPlant {
-            config: config.clone(),
-            close_requested: false,
-            interval,
-            ping_interval,
-            logged_in: false,
-            ping_manager,
-            request_handler: RithmicRequestHandler::new(),
+            core,
             request_receiver,
-            rithmic_reader,
-            rithmic_receiver_api,
-            rithmic_sender_api,
-            rithmic_sender,
-            subscription_sender,
         })
-    }
-}
-
-impl TickerPlant {
-    fn emit_connection_health_event(
-        &self,
-        request_id: &str,
-        message: RithmicMessage,
-        error_message: impl Into<String>,
-    ) {
-        let error_response = RithmicResponse {
-            request_id: request_id.to_string(),
-            message,
-            is_update: true,
-            has_more: false,
-            multi_response: false,
-            error: Some(error_message.into()),
-            source: self.rithmic_receiver_api.source.clone(),
-        };
-
-        let _ = self.subscription_sender.send(error_response);
-    }
-
-    fn fail_connection_and_drain(
-        &mut self,
-        request_id: &str,
-        message: RithmicMessage,
-        error_message: impl Into<String>,
-    ) {
-        self.emit_connection_health_event(request_id, message, error_message);
-        self.request_handler.drain_and_drop();
-    }
-
-    async fn send_or_fail(&mut self, msg: Message, request_id: &str) {
-        match send_with_timeout(
-            &mut self.rithmic_sender,
-            msg,
-            Duration::from_secs(SEND_TIMEOUT_SECS),
-        )
-        .await
-        {
-            Ok(()) => {}
-            Err(WebSocketSendError::Transport(error)) => {
-                error!(
-                    "ticker_plant: WebSocket send failed for request {}: {}",
-                    request_id, error
-                );
-                self.request_handler
-                    .fail_request(request_id, RithmicError::SendFailed);
-            }
-            Err(WebSocketSendError::Timeout) => {
-                error!(
-                    "ticker_plant: WebSocket send timed out for request {}",
-                    request_id
-                );
-                self.request_handler
-                    .fail_request(request_id, RithmicError::SendFailed);
-            }
-        }
-    }
-
-    async fn send_ping(&mut self) -> bool {
-        self.ping_manager.sent();
-
-        match send_with_timeout(
-            &mut self.rithmic_sender,
-            Message::Ping(vec![].into()),
-            Duration::from_secs(SEND_TIMEOUT_SECS),
-        )
-        .await
-        {
-            Ok(()) => false,
-            Err(WebSocketSendError::Transport(error)) => {
-                error!("ticker_plant: WebSocket ping send failed: {}", error);
-                self.fail_connection_and_drain(
-                    "",
-                    RithmicMessage::ConnectionError,
-                    format!("WebSocket ping send failed: {error}"),
-                );
-                true
-            }
-            Err(WebSocketSendError::Timeout) => {
-                error!("ticker_plant: WebSocket ping send timed out");
-                self.fail_connection_and_drain(
-                    "websocket_ping_timeout",
-                    RithmicMessage::HeartbeatTimeout,
-                    "WebSocket ping send timed out - connection dead",
-                );
-                true
-            }
-        }
-    }
-
-    async fn send_heartbeat(&mut self) -> bool {
-        let (heartbeat_buf, _id) = self.rithmic_sender_api.request_heartbeat();
-
-        match send_with_timeout(
-            &mut self.rithmic_sender,
-            Message::Binary(heartbeat_buf.into()),
-            Duration::from_secs(SEND_TIMEOUT_SECS),
-        )
-        .await
-        {
-            Ok(()) => false,
-            Err(WebSocketSendError::Transport(error)) => {
-                error!("ticker_plant: heartbeat send failed: {}", error);
-                self.fail_connection_and_drain(
-                    "",
-                    RithmicMessage::ConnectionError,
-                    format!("Heartbeat send failed: {error}"),
-                );
-                true
-            }
-            Err(WebSocketSendError::Timeout) => {
-                error!("ticker_plant: heartbeat send timed out");
-                self.fail_connection_and_drain(
-                    "heartbeat_send_timeout",
-                    RithmicMessage::HeartbeatTimeout,
-                    "Heartbeat send timed out - connection dead",
-                );
-                true
-            }
-        }
-    }
-
-    async fn send_close_best_effort(&mut self) {
-        match send_with_timeout(
-            &mut self.rithmic_sender,
-            Message::Close(None),
-            Duration::from_secs(SEND_TIMEOUT_SECS),
-        )
-        .await
-        {
-            Ok(()) => {}
-            Err(WebSocketSendError::Transport(error)) => {
-                warn!("ticker_plant: close send failed: {}", error);
-            }
-            Err(WebSocketSendError::Timeout) => {
-                warn!("ticker_plant: close send timed out");
-            }
-        }
     }
 }
 
 impl PlantActor for TickerPlant {
     type Command = TickerPlantCommand;
 
-    /// Execute the ticker plant in its own thread
-    /// We will listen for messages from request_receiver and forward them to Rithmic
-    /// while also listening for messages from Rithmic and forwarding them to subscription_sender
-    /// or request handler
+    /// Execute the ticker plant actor loop.
     async fn run(&mut self) {
         loop {
-            tokio::select! {
-                _ = self.interval.tick() => {
-                    if self.logged_in && !self.close_requested && self.send_heartbeat().await {
-                        break;
-                    }
-                }
-                _ = self.ping_interval.tick() => {
-                    if !self.close_requested && self.send_ping().await {
-                        break;
-                    }
-                }
-                _ = async {
-                    if let Some(timeout_at) = self.ping_manager.next_timeout_at() {
-                        sleep_until(timeout_at).await
-                    } else {
-                        std::future::pending::<()>().await
-                    }
-                } => {
-                    if self.ping_manager.check_timeout() {
-                        if self.close_requested {
-                            self.request_handler.drain_and_drop();
+            let result = {
+                let interval = &mut self.core.interval;
+                let ping_interval = &mut self.core.ping_interval;
+                let ping_manager = &mut self.core.ping_manager;
+                let reader = &mut self.core.rithmic_reader;
+                let receiver = &mut self.request_receiver;
+                tokio::select! {
+                    _ = interval.tick()      => SelectResult::HeartbeatFired,
+                    _ = ping_interval.tick() => SelectResult::PingFired,
+                    _ = async {
+                        if let Some(t) = ping_manager.next_timeout_at() {
+                            sleep_until(t).await
                         } else {
-                            error!("WebSocket ping timed out - connection appears dead");
-                            self.fail_connection_and_drain(
+                            std::future::pending::<()>().await
+                        }
+                    } => SelectResult::PingTimeout,
+                    Some(cmd) = receiver.recv() => SelectResult::Command(cmd),
+                    msg = reader.next() => match msg {
+                        Some(m) => SelectResult::RithmicMessage(m),
+                        None => SelectResult::StreamClosed,
+                    },
+                }
+            };
+            let stop = match result {
+                SelectResult::HeartbeatFired => self.core.send_heartbeat().await,
+                SelectResult::PingFired => self.core.send_ping().await,
+                SelectResult::PingTimeout => {
+                    if self.core.ping_manager.check_timeout() {
+                        if self.core.close_requested {
+                            warn!("ticker_plant: ping timed out while waiting for server close echo — terminating");
+                            self.core.request_handler.drain_and_drop();
+                        } else {
+                            self.core.fail_connection_and_drain(
                                 "websocket_ping_timeout",
                                 RithmicMessage::HeartbeatTimeout,
                                 "WebSocket ping timeout - connection dead",
                             );
                         }
-                        break;
+                        true
+                    } else {
+                        false
                     }
                 }
-                Some(message) = self.request_receiver.recv() => {
-                    if matches!(message, TickerPlantCommand::Abort) {
+                SelectResult::Command(cmd) => {
+                    if matches!(cmd, TickerPlantCommand::Abort) {
                         info!("ticker_plant: abort requested, shutting down immediately");
-                        self.fail_connection_and_drain(
+                        self.core.fail_connection_and_drain(
                             "",
                             RithmicMessage::ConnectionError,
                             "Plant aborted",
                         );
-                        break;
-                    }
-                    self.handle_command(message).await;
-                }
-                Some(message) = self.rithmic_reader.next() => {
-                    let stop = self.handle_rithmic_message(message).await;
-
-                    if stop {
-                        break;
+                        true
+                    } else {
+                        self.handle_command(cmd).await;
+                        false
                     }
                 }
-                else => { break }
+                SelectResult::RithmicMessage(msg) => self.core.handle_rithmic_message(msg).await,
+                SelectResult::StreamClosed => self.core.handle_stream_closed(),
+            };
+            if stop {
+                break;
             }
         }
-    }
-
-    async fn handle_rithmic_message(&mut self, message: Result<Message, Error>) -> bool {
-        let mut stop = false;
-
-        match message {
-            Ok(Message::Close(frame)) => {
-                info!("ticker_plant received close frame: {:?}", frame);
-                if self.close_requested {
-                    self.request_handler.drain_and_drop();
-                } else {
-                    self.fail_connection_and_drain(
-                        "",
-                        RithmicMessage::ConnectionError,
-                        format!("WebSocket close frame received: {:?}", frame),
-                    );
-                }
-                stop = true;
-            }
-            Ok(Message::Pong(_)) => {
-                self.ping_manager.received();
-            }
-            Ok(Message::Binary(data)) => match self.rithmic_receiver_api.buf_to_message(data) {
-                Ok(response) => {
-                    // Handle heartbeat responses: only forward if they contain an error
-                    if matches!(response.message, RithmicMessage::ResponseHeartbeat(_)) {
-                        if let Some(error) = response.error {
-                            let error_response = RithmicResponse {
-                                request_id: response.request_id,
-                                message: RithmicMessage::HeartbeatTimeout,
-                                is_update: true,
-                                has_more: false,
-                                multi_response: false,
-                                error: Some(error),
-                                source: self.rithmic_receiver_api.source.clone(),
-                            };
-
-                            let _ = self.subscription_sender.send(error_response);
-                        }
-
-                        // Always drop heartbeat responses (successful or error)
-                        return false;
-                    }
-
-                    if response.is_update {
-                        match self.subscription_sender.send(response) {
-                            Ok(_) => {}
-                            Err(e) => {
-                                warn!("ticker_plant: no active subscribers: {:?}", e);
-                            }
-                        }
-                    } else {
-                        self.request_handler.handle_response(response);
-                    }
-                }
-                Err(err_response) => {
-                    error!(
-                        "ticker_plant: error response from server: {:?}",
-                        err_response
-                    );
-
-                    if err_response.is_update {
-                        let _ = self.subscription_sender.send(err_response);
-                    } else {
-                        self.request_handler.handle_response(err_response);
-                    }
-                }
-            },
-            Err(Error::ConnectionClosed) => {
-                error!("ticker_plant: connection closed");
-                self.fail_connection_and_drain(
-                    "",
-                    RithmicMessage::ConnectionError,
-                    "WebSocket connection closed",
-                );
-                stop = true;
-            }
-            Err(Error::AlreadyClosed) => {
-                error!("ticker_plant: connection already closed");
-                self.fail_connection_and_drain(
-                    "",
-                    RithmicMessage::ConnectionError,
-                    "WebSocket connection already closed",
-                );
-                stop = true;
-            }
-            Err(Error::Io(ref io_err)) => {
-                error!("ticker_plant: I/O error: {}", io_err);
-                self.fail_connection_and_drain(
-                    "",
-                    RithmicMessage::ConnectionError,
-                    format!("WebSocket I/O error: {}", io_err),
-                );
-                stop = true;
-            }
-            Err(Error::Protocol(ProtocolError::ResetWithoutClosingHandshake)) => {
-                error!("ticker_plant: connection reset without closing handshake");
-                self.fail_connection_and_drain(
-                    "",
-                    RithmicMessage::ConnectionError,
-                    "WebSocket connection reset without closing handshake",
-                );
-                stop = true;
-            }
-            Err(Error::Protocol(ProtocolError::SendAfterClosing)) => {
-                error!("ticker_plant: attempted to send after closing");
-                self.fail_connection_and_drain(
-                    "",
-                    RithmicMessage::ConnectionError,
-                    "WebSocket attempted to send after closing",
-                );
-                stop = true;
-            }
-            Err(Error::Protocol(ProtocolError::ReceivedAfterClosing)) => {
-                error!("ticker_plant: received data after closing");
-                self.fail_connection_and_drain(
-                    "",
-                    RithmicMessage::ConnectionError,
-                    "WebSocket received data after closing",
-                );
-                stop = true;
-            }
-            _ => {
-                warn!("ticker_plant received unknown message {:?}", message);
-            }
-        }
-
-        stop
     }
 
     async fn handle_command(&mut self, command: TickerPlantCommand) {
         match command {
             TickerPlantCommand::Close => {
-                self.close_requested = true;
-                self.send_close_best_effort().await;
+                self.core.handle_close().await;
             }
             TickerPlantCommand::ListSystemInfo { response_sender } => {
-                let (list_system_info_buf, id) =
-                    self.rithmic_sender_api.request_rithmic_system_info();
-
-                self.request_handler.register_request(RithmicRequest {
-                    request_id: id.clone(),
-                    responder: response_sender,
-                });
-
-                self.send_or_fail(Message::Binary(list_system_info_buf.into()), &id)
-                    .await;
+                self.core.handle_list_system_info(response_sender).await;
             }
             TickerPlantCommand::Login {
                 config,
                 response_sender,
             } => {
-                let (login_buf, id) = self.rithmic_sender_api.request_login(
-                    &self.config.system_name,
-                    SysInfraType::TickerPlant,
-                    &self.config.user,
-                    &self.config.password,
-                    &config,
-                );
-
-                info!("ticker_plant: sending login request {}", id);
-
-                self.request_handler.register_request(RithmicRequest {
-                    request_id: id.clone(),
-                    responder: response_sender,
-                });
-
-                self.send_or_fail(Message::Binary(login_buf.into()), &id)
+                self.core
+                    .handle_login(config, SysInfraType::TickerPlant, response_sender)
                     .await;
             }
             TickerPlantCommand::SetLogin => {
-                self.logged_in = true;
+                self.core.handle_set_login();
             }
             TickerPlantCommand::Logout { response_sender } => {
-                let (logout_buf, id) = self.rithmic_sender_api.request_logout();
-
-                self.request_handler.register_request(RithmicRequest {
-                    request_id: id.clone(),
-                    responder: response_sender,
-                });
-
-                self.send_or_fail(Message::Binary(logout_buf.into()), &id)
-                    .await;
+                self.core.handle_logout(response_sender).await;
             }
             TickerPlantCommand::UpdateHeartbeat { seconds } => {
-                self.interval = get_heartbeat_interval(Some(seconds));
+                self.core.handle_update_heartbeat(seconds);
             }
             TickerPlantCommand::Subscribe {
                 symbol,
@@ -759,19 +408,20 @@ impl PlantActor for TickerPlant {
                 request_type,
                 response_sender,
             } => {
-                let (sub_buf, id) = self.rithmic_sender_api.request_market_data_update(
+                let (sub_buf, id) = self.core.rithmic_sender_api.request_market_data_update(
                     &symbol,
                     &exchange,
                     fields,
                     request_type,
                 );
 
-                self.request_handler.register_request(RithmicRequest {
+                self.core.request_handler.register_request(RithmicRequest {
                     request_id: id.clone(),
                     responder: response_sender,
                 });
 
-                self.send_or_fail(Message::Binary(sub_buf.into()), &id)
+                self.core
+                    .send_or_fail(Message::Binary(sub_buf.into()), &id)
                     .await;
             }
             TickerPlantCommand::SubscribeOrderBook {
@@ -780,18 +430,19 @@ impl PlantActor for TickerPlant {
                 request_type,
                 response_sender,
             } => {
-                let (sub_buf, id) = self.rithmic_sender_api.request_depth_by_order_update(
+                let (sub_buf, id) = self.core.rithmic_sender_api.request_depth_by_order_update(
                     &symbol,
                     &exchange,
                     request_type,
                 );
 
-                self.request_handler.register_request(RithmicRequest {
+                self.core.request_handler.register_request(RithmicRequest {
                     request_id: id.clone(),
                     responder: response_sender,
                 });
 
-                self.send_or_fail(Message::Binary(sub_buf.into()), &id)
+                self.core
+                    .send_or_fail(Message::Binary(sub_buf.into()), &id)
                     .await;
             }
             TickerPlantCommand::RequestDepthByOrderSnapshot {
@@ -800,15 +451,17 @@ impl PlantActor for TickerPlant {
                 response_sender,
             } => {
                 let (snapshot_buf, id) = self
+                    .core
                     .rithmic_sender_api
                     .request_depth_by_order_snapshot(&symbol, &exchange);
 
-                self.request_handler.register_request(RithmicRequest {
+                self.core.request_handler.register_request(RithmicRequest {
                     request_id: id.clone(),
                     responder: response_sender,
                 });
 
-                self.send_or_fail(Message::Binary(snapshot_buf.into()), &id)
+                self.core
+                    .send_or_fail(Message::Binary(snapshot_buf.into()), &id)
                     .await;
             }
             TickerPlantCommand::SearchSymbols {
@@ -819,7 +472,7 @@ impl PlantActor for TickerPlant {
                 pattern,
                 response_sender,
             } => {
-                let (search_buf, id) = self.rithmic_sender_api.request_search_symbols(
+                let (search_buf, id) = self.core.rithmic_sender_api.request_search_symbols(
                     &search_text,
                     exchange.as_deref(),
                     product_code.as_deref(),
@@ -827,26 +480,28 @@ impl PlantActor for TickerPlant {
                     pattern,
                 );
 
-                self.request_handler.register_request(RithmicRequest {
+                self.core.request_handler.register_request(RithmicRequest {
                     request_id: id.clone(),
                     responder: response_sender,
                 });
 
-                self.send_or_fail(Message::Binary(search_buf.into()), &id)
+                self.core
+                    .send_or_fail(Message::Binary(search_buf.into()), &id)
                     .await;
             }
             TickerPlantCommand::ListExchanges {
                 user,
                 response_sender,
             } => {
-                let (list_buf, id) = self.rithmic_sender_api.request_list_exchanges(&user);
+                let (list_buf, id) = self.core.rithmic_sender_api.request_list_exchanges(&user);
 
-                self.request_handler.register_request(RithmicRequest {
+                self.core.request_handler.register_request(RithmicRequest {
                     request_id: id.clone(),
                     responder: response_sender,
                 });
 
-                self.send_or_fail(Message::Binary(list_buf.into()), &id)
+                self.core
+                    .send_or_fail(Message::Binary(list_buf.into()), &id)
                     .await;
             }
             TickerPlantCommand::GetInstrumentByUnderlying {
@@ -856,6 +511,7 @@ impl PlantActor for TickerPlant {
                 response_sender,
             } => {
                 let (buf, id) = self
+                    .core
                     .rithmic_sender_api
                     .request_get_instrument_by_underlying(
                         &underlying_symbol,
@@ -863,12 +519,14 @@ impl PlantActor for TickerPlant {
                         expiration_date.as_deref(),
                     );
 
-                self.request_handler.register_request(RithmicRequest {
+                self.core.request_handler.register_request(RithmicRequest {
                     request_id: id.clone(),
                     responder: response_sender,
                 });
 
-                self.send_or_fail(Message::Binary(buf.into()), &id).await;
+                self.core
+                    .send_or_fail(Message::Binary(buf.into()), &id)
+                    .await;
             }
             TickerPlantCommand::SubscribeByUnderlying {
                 underlying_symbol,
@@ -879,6 +537,7 @@ impl PlantActor for TickerPlant {
                 response_sender,
             } => {
                 let (buf, id) = self
+                    .core
                     .rithmic_sender_api
                     .request_market_data_update_by_underlying(
                         &underlying_symbol,
@@ -888,27 +547,32 @@ impl PlantActor for TickerPlant {
                         request_type,
                     );
 
-                self.request_handler.register_request(RithmicRequest {
+                self.core.request_handler.register_request(RithmicRequest {
                     request_id: id.clone(),
                     responder: response_sender,
                 });
 
-                self.send_or_fail(Message::Binary(buf.into()), &id).await;
+                self.core
+                    .send_or_fail(Message::Binary(buf.into()), &id)
+                    .await;
             }
             TickerPlantCommand::GetTickSizeTypeTable {
                 tick_size_type,
                 response_sender,
             } => {
                 let (buf, id) = self
+                    .core
                     .rithmic_sender_api
                     .request_give_tick_size_type_table(&tick_size_type);
 
-                self.request_handler.register_request(RithmicRequest {
+                self.core.request_handler.register_request(RithmicRequest {
                     request_id: id.clone(),
                     responder: response_sender,
                 });
 
-                self.send_or_fail(Message::Binary(buf.into()), &id).await;
+                self.core
+                    .send_or_fail(Message::Binary(buf.into()), &id)
+                    .await;
             }
             TickerPlantCommand::GetProductCodes {
                 exchange,
@@ -916,15 +580,18 @@ impl PlantActor for TickerPlant {
                 response_sender,
             } => {
                 let (buf, id) = self
+                    .core
                     .rithmic_sender_api
                     .request_product_codes(exchange.as_deref(), give_toi_products_only);
 
-                self.request_handler.register_request(RithmicRequest {
+                self.core.request_handler.register_request(RithmicRequest {
                     request_id: id.clone(),
                     responder: response_sender,
                 });
 
-                self.send_or_fail(Message::Binary(buf.into()), &id).await;
+                self.core
+                    .send_or_fail(Message::Binary(buf.into()), &id)
+                    .await;
             }
             TickerPlantCommand::GetVolumeAtPrice {
                 symbol,
@@ -932,15 +599,18 @@ impl PlantActor for TickerPlant {
                 response_sender,
             } => {
                 let (buf, id) = self
+                    .core
                     .rithmic_sender_api
                     .request_get_volume_at_price(&symbol, &exchange);
 
-                self.request_handler.register_request(RithmicRequest {
+                self.core.request_handler.register_request(RithmicRequest {
                     request_id: id.clone(),
                     responder: response_sender,
                 });
 
-                self.send_or_fail(Message::Binary(buf.into()), &id).await;
+                self.core
+                    .send_or_fail(Message::Binary(buf.into()), &id)
+                    .await;
             }
             TickerPlantCommand::GetAuxilliaryReferenceData {
                 symbol,
@@ -948,15 +618,18 @@ impl PlantActor for TickerPlant {
                 response_sender,
             } => {
                 let (buf, id) = self
+                    .core
                     .rithmic_sender_api
                     .request_auxilliary_reference_data(&symbol, &exchange);
 
-                self.request_handler.register_request(RithmicRequest {
+                self.core.request_handler.register_request(RithmicRequest {
                     request_id: id.clone(),
                     responder: response_sender,
                 });
 
-                self.send_or_fail(Message::Binary(buf.into()), &id).await;
+                self.core
+                    .send_or_fail(Message::Binary(buf.into()), &id)
+                    .await;
             }
             TickerPlantCommand::GetReferenceData {
                 symbol,
@@ -964,15 +637,18 @@ impl PlantActor for TickerPlant {
                 response_sender,
             } => {
                 let (buf, id) = self
+                    .core
                     .rithmic_sender_api
                     .request_reference_data(&symbol, &exchange);
 
-                self.request_handler.register_request(RithmicRequest {
+                self.core.request_handler.register_request(RithmicRequest {
                     request_id: id.clone(),
                     responder: response_sender,
                 });
 
-                self.send_or_fail(Message::Binary(buf.into()), &id).await;
+                self.core
+                    .send_or_fail(Message::Binary(buf.into()), &id)
+                    .await;
             }
             TickerPlantCommand::GetFrontMonthContract {
                 symbol,
@@ -980,33 +656,38 @@ impl PlantActor for TickerPlant {
                 need_updates,
                 response_sender,
             } => {
-                let (buf, id) = self.rithmic_sender_api.request_front_month_contract(
+                let (buf, id) = self.core.rithmic_sender_api.request_front_month_contract(
                     &symbol,
                     &exchange,
                     need_updates,
                 );
 
-                self.request_handler.register_request(RithmicRequest {
+                self.core.request_handler.register_request(RithmicRequest {
                     request_id: id.clone(),
                     responder: response_sender,
                 });
 
-                self.send_or_fail(Message::Binary(buf.into()), &id).await;
+                self.core
+                    .send_or_fail(Message::Binary(buf.into()), &id)
+                    .await;
             }
             TickerPlantCommand::GetSystemGatewayInfo {
                 system_name,
                 response_sender,
             } => {
                 let (buf, id) = self
+                    .core
                     .rithmic_sender_api
                     .request_rithmic_system_gateway_info(system_name.as_deref());
 
-                self.request_handler.register_request(RithmicRequest {
+                self.core.request_handler.register_request(RithmicRequest {
                     request_id: id.clone(),
                     responder: response_sender,
                 });
 
-                self.send_or_fail(Message::Binary(buf.into()), &id).await;
+                self.core
+                    .send_or_fail(Message::Binary(buf.into()), &id)
+                    .await;
             }
             TickerPlantCommand::Abort => {
                 unreachable!("Abort is handled in run() before handle_command");

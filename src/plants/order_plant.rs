@@ -1,45 +1,35 @@
-use std::{sync::Arc, time::Duration};
-
+use std::sync::Arc;
 use tracing::{error, info, warn};
-
-use tokio_tungstenite::{
-    MaybeTlsStream,
-    tungstenite::{Error, Message, error::ProtocolError},
-};
 
 use crate::{
     ConnectStrategy,
     api::{
-        receiver_api::{RithmicReceiverApi, RithmicResponse},
+        receiver_api::RithmicResponse,
         rithmic_command_types::{
             LoginConfig, RithmicAdvancedBracketOrder, RithmicBracketOrder, RithmicCancelOrder,
             RithmicModifyOrder, RithmicOcoOrderLeg, RithmicOrder,
         },
-        sender_api::RithmicSenderApi,
     },
     config::{RithmicAccount, RithmicConfig},
     error::RithmicError,
-    ping_manager::PingManager,
-    plants::subscription::SubscriptionFilter,
-    request_handler::{RithmicRequest, RithmicRequestHandler},
-    rti::{messages::RithmicMessage, request_easy_to_borrow_list, request_login::SysInfraType},
-    ws::{
-        HEARTBEAT_SECS, PING_TIMEOUT_SECS, PlantActor, SEND_TIMEOUT_SECS, WebSocketSendError,
-        connect_with_strategy, get_heartbeat_interval, get_ping_interval, send_with_timeout,
+    plants::{
+        core::{PlantCore, SelectResult},
+        subscription::SubscriptionFilter,
     },
+    request_handler::RithmicRequest,
+    rti::{messages::RithmicMessage, request_easy_to_borrow_list, request_login::SysInfraType},
+    ws::{HEARTBEAT_SECS, PlantActor},
 };
 
-use futures_util::{
-    StreamExt,
-    stream::{SplitSink, SplitStream},
-};
+use futures_util::StreamExt;
 
 use tokio::{
-    net::TcpStream,
     sync::{broadcast, mpsc, oneshot},
     task::JoinHandle,
-    time::{Interval, sleep_until},
+    time::sleep_until,
 };
+
+use tokio_tungstenite::tungstenite::Message;
 
 pub(crate) enum OrderPlantCommand {
     Close,
@@ -392,24 +382,10 @@ impl RithmicOrderPlant {
     }
 }
 
+#[derive(Debug)]
 struct OrderPlant {
-    config: RithmicConfig,
-    // Distinguishes an intentional local shutdown from an unexpected peer close.
-    close_requested: bool,
-    interval: Interval,
-    logged_in: bool,
-    ping_interval: Interval,
-    ping_manager: PingManager,
-    request_handler: RithmicRequestHandler,
+    core: PlantCore,
     request_receiver: mpsc::Receiver<OrderPlantCommand>,
-    rithmic_reader: SplitStream<tokio_tungstenite::WebSocketStream<MaybeTlsStream<TcpStream>>>,
-    rithmic_receiver_api: RithmicReceiverApi,
-    rithmic_sender: SplitSink<
-        tokio_tungstenite::WebSocketStream<MaybeTlsStream<TcpStream>>,
-        tokio_tungstenite::tungstenite::Message,
-    >,
-    rithmic_sender_api: RithmicSenderApi,
-    subscription_sender: broadcast::Sender<RithmicResponse>,
 }
 
 impl OrderPlant {
@@ -419,175 +395,11 @@ impl OrderPlant {
         config: &RithmicConfig,
         strategy: ConnectStrategy,
     ) -> Result<OrderPlant, RithmicError> {
-        let ws_stream = connect_with_strategy(&config.url, &config.beta_url, strategy)
-            .await
-            .map_err(|e| RithmicError::ConnectionFailed(e.to_string()))?;
-
-        let (rithmic_sender, rithmic_reader) = ws_stream.split();
-
-        let rithmic_sender_api = RithmicSenderApi::new(config);
-        let rithmic_receiver_api = RithmicReceiverApi {
-            source: "order_plant".to_string(),
-        };
-
-        let interval = get_heartbeat_interval(None);
-        let ping_interval = get_ping_interval(None);
-        let ping_manager = PingManager::new(PING_TIMEOUT_SECS);
-
+        let core = PlantCore::new(subscription_sender, config, strategy, "order_plant").await?;
         Ok(OrderPlant {
-            config: config.clone(),
-            close_requested: false,
-            interval,
-            ping_interval,
-            logged_in: false,
-            ping_manager,
-            request_handler: RithmicRequestHandler::new(),
+            core,
             request_receiver,
-            rithmic_reader,
-            rithmic_receiver_api,
-            rithmic_sender_api,
-            rithmic_sender,
-            subscription_sender,
         })
-    }
-
-    fn emit_connection_health_event(
-        &self,
-        request_id: &str,
-        message: RithmicMessage,
-        error_message: impl Into<String>,
-    ) {
-        let error_response = RithmicResponse {
-            request_id: request_id.to_string(),
-            message,
-            is_update: true,
-            has_more: false,
-            multi_response: false,
-            error: Some(error_message.into()),
-            source: self.rithmic_receiver_api.source.clone(),
-        };
-
-        let _ = self.subscription_sender.send(error_response);
-    }
-
-    fn fail_connection_and_drain(
-        &mut self,
-        request_id: &str,
-        message: RithmicMessage,
-        error_message: impl Into<String>,
-    ) {
-        self.emit_connection_health_event(request_id, message, error_message);
-        self.request_handler.drain_and_drop();
-    }
-
-    async fn send_or_fail(&mut self, msg: Message, request_id: &str) {
-        match send_with_timeout(
-            &mut self.rithmic_sender,
-            msg,
-            Duration::from_secs(SEND_TIMEOUT_SECS),
-        )
-        .await
-        {
-            Ok(()) => {}
-            Err(WebSocketSendError::Transport(error)) => {
-                error!(
-                    "order_plant: WebSocket send failed for request {}: {}",
-                    request_id, error
-                );
-                self.request_handler
-                    .fail_request(request_id, RithmicError::SendFailed);
-            }
-            Err(WebSocketSendError::Timeout) => {
-                error!(
-                    "order_plant: WebSocket send timed out for request {}",
-                    request_id
-                );
-                self.request_handler
-                    .fail_request(request_id, RithmicError::SendFailed);
-            }
-        }
-    }
-
-    async fn send_ping(&mut self) -> bool {
-        self.ping_manager.sent();
-
-        match send_with_timeout(
-            &mut self.rithmic_sender,
-            Message::Ping(vec![].into()),
-            Duration::from_secs(SEND_TIMEOUT_SECS),
-        )
-        .await
-        {
-            Ok(()) => false,
-            Err(WebSocketSendError::Transport(error)) => {
-                error!("order_plant: WebSocket ping send failed: {}", error);
-                self.fail_connection_and_drain(
-                    "",
-                    RithmicMessage::ConnectionError,
-                    format!("WebSocket ping send failed: {error}"),
-                );
-                true
-            }
-            Err(WebSocketSendError::Timeout) => {
-                error!("order_plant: WebSocket ping send timed out");
-                self.fail_connection_and_drain(
-                    "websocket_ping_timeout",
-                    RithmicMessage::HeartbeatTimeout,
-                    "WebSocket ping send timed out - connection dead",
-                );
-                true
-            }
-        }
-    }
-
-    async fn send_heartbeat(&mut self) -> bool {
-        let (heartbeat_buf, _id) = self.rithmic_sender_api.request_heartbeat();
-
-        match send_with_timeout(
-            &mut self.rithmic_sender,
-            Message::Binary(heartbeat_buf.into()),
-            Duration::from_secs(SEND_TIMEOUT_SECS),
-        )
-        .await
-        {
-            Ok(()) => false,
-            Err(WebSocketSendError::Transport(error)) => {
-                error!("order_plant: heartbeat send failed: {}", error);
-                self.fail_connection_and_drain(
-                    "",
-                    RithmicMessage::ConnectionError,
-                    format!("Heartbeat send failed: {error}"),
-                );
-                true
-            }
-            Err(WebSocketSendError::Timeout) => {
-                error!("order_plant: heartbeat send timed out");
-                self.fail_connection_and_drain(
-                    "heartbeat_send_timeout",
-                    RithmicMessage::HeartbeatTimeout,
-                    "Heartbeat send timed out - connection dead",
-                );
-                true
-            }
-        }
-    }
-
-    async fn send_close_best_effort(&mut self) {
-        match send_with_timeout(
-            &mut self.rithmic_sender,
-            Message::Close(None),
-            Duration::from_secs(SEND_TIMEOUT_SECS),
-        )
-        .await
-        {
-            Ok(()) => {}
-            Err(WebSocketSendError::Transport(error)) => {
-                warn!("order_plant: close send failed: {}", error);
-            }
-            Err(WebSocketSendError::Timeout) => {
-                warn!("order_plant: close send timed out");
-            }
-        }
     }
 }
 
@@ -596,256 +408,109 @@ impl PlantActor for OrderPlant {
 
     async fn run(&mut self) {
         loop {
-            tokio::select! {
-                _ = self.interval.tick() => {
-                    if self.logged_in && !self.close_requested && self.send_heartbeat().await {
-                        break;
-                    }
-                }
-                _ = self.ping_interval.tick() => {
-                    if !self.close_requested && self.send_ping().await {
-                        break;
-                    }
-                }
-                _ = async {
-                    if let Some(timeout_at) = self.ping_manager.next_timeout_at() {
-                        sleep_until(timeout_at).await
-                    } else {
-                        std::future::pending::<()>().await
-                    }
-                } => {
-                    if self.ping_manager.check_timeout() {
-                        if self.close_requested {
-                            self.request_handler.drain_and_drop();
+            let result = {
+                let interval = &mut self.core.interval;
+                let ping_interval = &mut self.core.ping_interval;
+                let ping_manager = &mut self.core.ping_manager;
+                let reader = &mut self.core.rithmic_reader;
+                let receiver = &mut self.request_receiver;
+
+                tokio::select! {
+                    _ = interval.tick()      => SelectResult::HeartbeatFired,
+                    _ = ping_interval.tick() => SelectResult::PingFired,
+                    _ = async {
+                        if let Some(t) = ping_manager.next_timeout_at() {
+                            sleep_until(t).await
                         } else {
-                            error!("WebSocket ping timed out - connection appears dead");
-                            self.fail_connection_and_drain(
+                            std::future::pending::<()>().await
+                        }
+                    } => SelectResult::PingTimeout,
+                    Some(cmd) = receiver.recv() => SelectResult::Command(cmd),
+                    msg = reader.next() => match msg {
+                        Some(m) => SelectResult::RithmicMessage(m),
+                        None => SelectResult::StreamClosed,
+                    },
+                }
+            };
+
+            let stop = match result {
+                SelectResult::HeartbeatFired => self.core.send_heartbeat().await,
+                SelectResult::PingFired => self.core.send_ping().await,
+                SelectResult::PingTimeout => {
+                    if self.core.ping_manager.check_timeout() {
+                        if self.core.close_requested {
+                            warn!("order_plant: ping timed out while waiting for server close echo — terminating");
+                            self.core.request_handler.drain_and_drop();
+                        } else {
+                            self.core.fail_connection_and_drain(
                                 "websocket_ping_timeout",
                                 RithmicMessage::HeartbeatTimeout,
                                 "WebSocket ping timeout - connection dead",
                             );
                         }
-                        break;
+                        true
+                    } else {
+                        false
                     }
                 }
-                Some(message) = self.request_receiver.recv() => {
-                    if matches!(message, OrderPlantCommand::Abort) {
+                SelectResult::Command(cmd) => {
+                    if matches!(cmd, OrderPlantCommand::Abort) {
                         info!("order_plant: abort requested, shutting down immediately");
-                        self.fail_connection_and_drain(
+                        self.core.fail_connection_and_drain(
                             "",
                             RithmicMessage::ConnectionError,
                             "Plant aborted",
                         );
-                        break;
-                    }
-                    self.handle_command(message).await;
-                }
-                Some(message) = self.rithmic_reader.next() => {
-                    let stop = self.handle_rithmic_message(message).await;
-
-                    if stop {
-                        break;
+                        true
+                    } else {
+                        self.handle_command(cmd).await;
+                        false
                     }
                 }
-                else => { break; }
+                SelectResult::RithmicMessage(msg) => self.core.handle_rithmic_message(msg).await,
+                SelectResult::StreamClosed => self.core.handle_stream_closed(),
+            };
+            if stop {
+                break;
             }
         }
-    }
-
-    async fn handle_rithmic_message(&mut self, message: Result<Message, Error>) -> bool {
-        let mut stop = false;
-
-        match message {
-            Ok(Message::Close(frame)) => {
-                info!("order_plant: Received close frame: {:?}", frame);
-                if self.close_requested {
-                    self.request_handler.drain_and_drop();
-                } else {
-                    self.fail_connection_and_drain(
-                        "",
-                        RithmicMessage::ConnectionError,
-                        format!("WebSocket close frame received: {:?}", frame),
-                    );
-                }
-                stop = true;
-            }
-            Ok(Message::Pong(_)) => {
-                self.ping_manager.received();
-            }
-            Ok(Message::Binary(data)) => match self.rithmic_receiver_api.buf_to_message(data) {
-                Ok(response) => {
-                    // Handle heartbeat responses: only forward if they contain an error
-                    if matches!(response.message, RithmicMessage::ResponseHeartbeat(_)) {
-                        if let Some(error) = response.error {
-                            let error_response = RithmicResponse {
-                                request_id: response.request_id,
-                                message: RithmicMessage::HeartbeatTimeout,
-                                is_update: true,
-                                has_more: false,
-                                multi_response: false,
-                                error: Some(error),
-                                source: self.rithmic_receiver_api.source.clone(),
-                            };
-
-                            let _ = self.subscription_sender.send(error_response);
-                        }
-
-                        // Always drop heartbeat responses (successful or error)
-                        return false;
-                    }
-
-                    if response.is_update {
-                        match self.subscription_sender.send(response) {
-                            Ok(_) => {}
-                            Err(e) => {
-                                warn!("order_plant: no active subscribers: {:?}", e);
-                            }
-                        }
-                    } else {
-                        self.request_handler.handle_response(response);
-                    }
-                }
-                Err(err_response) => {
-                    error!(
-                        "order_plant: error response from server: {:?}",
-                        err_response
-                    );
-
-                    if err_response.is_update {
-                        let _ = self.subscription_sender.send(err_response);
-                    } else {
-                        self.request_handler.handle_response(err_response);
-                    }
-                }
-            },
-            Err(Error::ConnectionClosed) => {
-                error!("order_plant: connection closed");
-                self.fail_connection_and_drain(
-                    "",
-                    RithmicMessage::ConnectionError,
-                    "WebSocket connection closed",
-                );
-                stop = true;
-            }
-            Err(Error::AlreadyClosed) => {
-                error!("order_plant: connection already closed");
-                self.fail_connection_and_drain(
-                    "",
-                    RithmicMessage::ConnectionError,
-                    "WebSocket connection already closed",
-                );
-                stop = true;
-            }
-            Err(Error::Io(ref io_err)) => {
-                error!("order_plant: I/O error: {}", io_err);
-                self.fail_connection_and_drain(
-                    "",
-                    RithmicMessage::ConnectionError,
-                    format!("WebSocket I/O error: {}", io_err),
-                );
-                stop = true;
-            }
-            Err(Error::Protocol(ProtocolError::ResetWithoutClosingHandshake)) => {
-                error!("order_plant: connection reset without closing handshake");
-                self.fail_connection_and_drain(
-                    "",
-                    RithmicMessage::ConnectionError,
-                    "WebSocket connection reset without closing handshake",
-                );
-                stop = true;
-            }
-            Err(Error::Protocol(ProtocolError::SendAfterClosing)) => {
-                error!("order_plant: attempted to send after closing");
-                self.fail_connection_and_drain(
-                    "",
-                    RithmicMessage::ConnectionError,
-                    "WebSocket attempted to send after closing",
-                );
-                stop = true;
-            }
-            Err(Error::Protocol(ProtocolError::ReceivedAfterClosing)) => {
-                error!("order_plant: received data after closing");
-                self.fail_connection_and_drain(
-                    "",
-                    RithmicMessage::ConnectionError,
-                    "WebSocket received data after closing",
-                );
-                stop = true;
-            }
-            _ => {
-                warn!("order_plant: Unhandled message: {:?}", message);
-            }
-        }
-
-        stop
     }
 
     async fn handle_command(&mut self, command: OrderPlantCommand) {
         match command {
             OrderPlantCommand::Close => {
-                self.close_requested = true;
-                self.send_close_best_effort().await;
+                self.core.handle_close().await;
             }
             OrderPlantCommand::ListSystemInfo { response_sender } => {
-                let (list_system_info_buf, id) =
-                    self.rithmic_sender_api.request_rithmic_system_info();
-
-                self.request_handler.register_request(RithmicRequest {
-                    request_id: id.clone(),
-                    responder: response_sender,
-                });
-
-                self.send_or_fail(Message::Binary(list_system_info_buf.into()), &id)
-                    .await;
+                self.core.handle_list_system_info(response_sender).await;
             }
             OrderPlantCommand::Login {
                 config,
                 response_sender,
             } => {
-                let (login_buf, id) = self.rithmic_sender_api.request_login(
-                    &self.config.system_name,
-                    SysInfraType::OrderPlant,
-                    &self.config.user,
-                    &self.config.password,
-                    &config,
-                );
-
-                info!("order_plant: sending login request {}", id);
-
-                self.request_handler.register_request(RithmicRequest {
-                    request_id: id.clone(),
-                    responder: response_sender,
-                });
-
-                self.send_or_fail(Message::Binary(login_buf.into()), &id)
+                self.core
+                    .handle_login(config, SysInfraType::OrderPlant, response_sender)
                     .await;
             }
             OrderPlantCommand::SetLogin => {
-                self.logged_in = true;
+                self.core.handle_set_login();
             }
             OrderPlantCommand::Logout { response_sender } => {
-                let (logout_buf, id) = self.rithmic_sender_api.request_logout();
-
-                self.request_handler.register_request(RithmicRequest {
-                    request_id: id.clone(),
-                    responder: response_sender,
-                });
-
-                self.send_or_fail(Message::Binary(logout_buf.into()), &id)
-                    .await;
+                self.core.handle_logout(response_sender).await;
             }
             OrderPlantCommand::UpdateHeartbeat { seconds } => {
-                self.interval = get_heartbeat_interval(Some(seconds));
+                self.core.handle_update_heartbeat(seconds);
             }
             OrderPlantCommand::AccountList { response_sender } => {
-                let (req_buf, id) = self.rithmic_sender_api.request_account_list();
+                let (req_buf, id) = self.core.rithmic_sender_api.request_account_list();
 
-                self.request_handler.register_request(RithmicRequest {
+                self.core.request_handler.register_request(RithmicRequest {
                     request_id: id.clone(),
                     responder: response_sender,
                 });
 
-                self.send_or_fail(Message::Binary(req_buf.into()), &id)
+                self.core
+                    .send_or_fail(Message::Binary(req_buf.into()), &id)
                     .await;
             }
             OrderPlantCommand::SubscribeOrderUpdates {
@@ -853,15 +518,17 @@ impl PlantActor for OrderPlant {
                 response_sender,
             } => {
                 let (req_buf, id) = self
+                    .core
                     .rithmic_sender_api
                     .request_subscribe_for_order_updates(&account);
 
-                self.request_handler.register_request(RithmicRequest {
+                self.core.request_handler.register_request(RithmicRequest {
                     request_id: id.clone(),
                     responder: response_sender,
                 });
 
-                self.send_or_fail(Message::Binary(req_buf.into()), &id)
+                self.core
+                    .send_or_fail(Message::Binary(req_buf.into()), &id)
                     .await;
             }
             OrderPlantCommand::SubscribeBracketUpdates {
@@ -869,15 +536,17 @@ impl PlantActor for OrderPlant {
                 response_sender,
             } => {
                 let (req_buf, id) = self
+                    .core
                     .rithmic_sender_api
                     .request_subscribe_to_bracket_updates(&account);
 
-                self.request_handler.register_request(RithmicRequest {
+                self.core.request_handler.register_request(RithmicRequest {
                     request_id: id.clone(),
                     responder: response_sender,
                 });
 
-                self.send_or_fail(Message::Binary(req_buf.into()), &id)
+                self.core
+                    .send_or_fail(Message::Binary(req_buf.into()), &id)
                     .await;
             }
             OrderPlantCommand::PlaceBracketOrder {
@@ -886,15 +555,17 @@ impl PlantActor for OrderPlant {
                 response_sender,
             } => {
                 let (req_buf, id) = self
+                    .core
                     .rithmic_sender_api
                     .request_bracket_order(bracket_order, &account);
 
-                self.request_handler.register_request(RithmicRequest {
+                self.core.request_handler.register_request(RithmicRequest {
                     request_id: id.clone(),
                     responder: response_sender,
                 });
 
-                self.send_or_fail(Message::Binary(req_buf.into()), &id)
+                self.core
+                    .send_or_fail(Message::Binary(req_buf.into()), &id)
                     .await;
             }
             OrderPlantCommand::PlaceAdvancedBracketOrder {
@@ -903,15 +574,17 @@ impl PlantActor for OrderPlant {
                 response_sender,
             } => {
                 let (req_buf, id) = self
+                    .core
                     .rithmic_sender_api
                     .request_advanced_bracket_order(bracket_order, &account);
 
-                self.request_handler.register_request(RithmicRequest {
+                self.core.request_handler.register_request(RithmicRequest {
                     request_id: id.clone(),
                     responder: response_sender,
                 });
 
-                self.send_or_fail(Message::Binary(req_buf.into()), &id)
+                self.core
+                    .send_or_fail(Message::Binary(req_buf.into()), &id)
                     .await;
             }
             OrderPlantCommand::ModifyOrder {
@@ -919,7 +592,7 @@ impl PlantActor for OrderPlant {
                 account,
                 response_sender,
             } => {
-                let (req_buf, id) = self.rithmic_sender_api.request_modify_order(
+                let (req_buf, id) = self.core.rithmic_sender_api.request_modify_order(
                     &order.id,
                     &order.exchange,
                     &order.symbol,
@@ -929,12 +602,13 @@ impl PlantActor for OrderPlant {
                     &account,
                 );
 
-                self.request_handler.register_request(RithmicRequest {
+                self.core.request_handler.register_request(RithmicRequest {
                     request_id: id.clone(),
                     responder: response_sender,
                 });
 
-                self.send_or_fail(Message::Binary(req_buf.into()), &id)
+                self.core
+                    .send_or_fail(Message::Binary(req_buf.into()), &id)
                     .await;
             }
             OrderPlantCommand::CancelOrder {
@@ -943,15 +617,17 @@ impl PlantActor for OrderPlant {
                 response_sender,
             } => {
                 let (req_buf, id) = self
+                    .core
                     .rithmic_sender_api
                     .request_cancel_order(&order_id, &account);
 
-                self.request_handler.register_request(RithmicRequest {
+                self.core.request_handler.register_request(RithmicRequest {
                     request_id: id.clone(),
                     responder: response_sender,
                 });
 
-                self.send_or_fail(Message::Binary(req_buf.into()), &id)
+                self.core
+                    .send_or_fail(Message::Binary(req_buf.into()), &id)
                     .await;
             }
             OrderPlantCommand::ModifyStop {
@@ -961,15 +637,17 @@ impl PlantActor for OrderPlant {
                 response_sender,
             } => {
                 let (req_buf, id) = self
+                    .core
                     .rithmic_sender_api
                     .request_update_stop_bracket_level(&order_id, ticks, &account);
 
-                self.request_handler.register_request(RithmicRequest {
+                self.core.request_handler.register_request(RithmicRequest {
                     request_id: id.clone(),
                     responder: response_sender,
                 });
 
-                self.send_or_fail(Message::Binary(req_buf.into()), &id)
+                self.core
+                    .send_or_fail(Message::Binary(req_buf.into()), &id)
                     .await;
             }
             OrderPlantCommand::ModifyProfit {
@@ -979,71 +657,86 @@ impl PlantActor for OrderPlant {
                 response_sender,
             } => {
                 let (req_buf, id) = self
+                    .core
                     .rithmic_sender_api
                     .request_update_target_bracket_level(&order_id, ticks, &account);
 
-                self.request_handler.register_request(RithmicRequest {
+                self.core.request_handler.register_request(RithmicRequest {
                     request_id: id.clone(),
                     responder: response_sender,
                 });
 
-                self.send_or_fail(Message::Binary(req_buf.into()), &id)
+                self.core
+                    .send_or_fail(Message::Binary(req_buf.into()), &id)
                     .await;
             }
             OrderPlantCommand::ShowOrders {
                 account,
                 response_sender,
             } => {
-                let (req_buf, id) = self.rithmic_sender_api.request_show_orders(&account);
+                let (req_buf, id) = self.core.rithmic_sender_api.request_show_orders(&account);
 
-                self.request_handler.register_request(RithmicRequest {
+                self.core.request_handler.register_request(RithmicRequest {
                     request_id: id.clone(),
                     responder: response_sender,
                 });
 
-                self.send_or_fail(Message::Binary(req_buf.into()), &id)
+                self.core
+                    .send_or_fail(Message::Binary(req_buf.into()), &id)
                     .await;
             }
             OrderPlantCommand::CancelAllOrders {
                 account,
                 response_sender,
             } => {
-                let (req_buf, id) = self.rithmic_sender_api.request_cancel_all_orders(&account);
+                let (req_buf, id) = self
+                    .core
+                    .rithmic_sender_api
+                    .request_cancel_all_orders(&account);
 
-                self.request_handler.register_request(RithmicRequest {
+                self.core.request_handler.register_request(RithmicRequest {
                     request_id: id.clone(),
                     responder: response_sender,
                 });
 
-                self.send_or_fail(Message::Binary(req_buf.into()), &id)
+                self.core
+                    .send_or_fail(Message::Binary(req_buf.into()), &id)
                     .await;
             }
             OrderPlantCommand::GetAccountRmsInfo {
                 account,
                 response_sender,
             } => {
-                let (req_buf, id) = self.rithmic_sender_api.request_account_rms_info(&account);
+                let (req_buf, id) = self
+                    .core
+                    .rithmic_sender_api
+                    .request_account_rms_info(&account);
 
-                self.request_handler.register_request(RithmicRequest {
+                self.core.request_handler.register_request(RithmicRequest {
                     request_id: id.clone(),
                     responder: response_sender,
                 });
 
-                self.send_or_fail(Message::Binary(req_buf.into()), &id)
+                self.core
+                    .send_or_fail(Message::Binary(req_buf.into()), &id)
                     .await;
             }
             OrderPlantCommand::GetProductRmsInfo {
                 account,
                 response_sender,
             } => {
-                let (req_buf, id) = self.rithmic_sender_api.request_product_rms_info(&account);
+                let (req_buf, id) = self
+                    .core
+                    .rithmic_sender_api
+                    .request_product_rms_info(&account);
 
-                self.request_handler.register_request(RithmicRequest {
+                self.core.request_handler.register_request(RithmicRequest {
                     request_id: id.clone(),
                     responder: response_sender,
                 });
 
-                self.send_or_fail(Message::Binary(req_buf.into()), &id)
+                self.core
+                    .send_or_fail(Message::Binary(req_buf.into()), &id)
                     .await;
             }
             OrderPlantCommand::GetTradeRoutes {
@@ -1051,26 +744,32 @@ impl PlantActor for OrderPlant {
                 response_sender,
             } => {
                 let (req_buf, id) = self
+                    .core
                     .rithmic_sender_api
                     .request_trade_routes(subscribe_for_updates);
 
-                self.request_handler.register_request(RithmicRequest {
+                self.core.request_handler.register_request(RithmicRequest {
                     request_id: id.clone(),
                     responder: response_sender,
                 });
 
-                self.send_or_fail(Message::Binary(req_buf.into()), &id)
+                self.core
+                    .send_or_fail(Message::Binary(req_buf.into()), &id)
                     .await;
             }
             OrderPlantCommand::ShowOrderHistoryDates { response_sender } => {
-                let (req_buf, id) = self.rithmic_sender_api.request_show_order_history_dates();
+                let (req_buf, id) = self
+                    .core
+                    .rithmic_sender_api
+                    .request_show_order_history_dates();
 
-                self.request_handler.register_request(RithmicRequest {
+                self.core.request_handler.register_request(RithmicRequest {
                     request_id: id.clone(),
                     responder: response_sender,
                 });
 
-                self.send_or_fail(Message::Binary(req_buf.into()), &id)
+                self.core
+                    .send_or_fail(Message::Binary(req_buf.into()), &id)
                     .await;
             }
             OrderPlantCommand::ShowOrderHistorySummary {
@@ -1079,15 +778,17 @@ impl PlantActor for OrderPlant {
                 response_sender,
             } => {
                 let (req_buf, id) = self
+                    .core
                     .rithmic_sender_api
                     .request_show_order_history_summary(&date, &account);
 
-                self.request_handler.register_request(RithmicRequest {
+                self.core.request_handler.register_request(RithmicRequest {
                     request_id: id.clone(),
                     responder: response_sender,
                 });
 
-                self.send_or_fail(Message::Binary(req_buf.into()), &id)
+                self.core
+                    .send_or_fail(Message::Binary(req_buf.into()), &id)
                     .await;
             }
             OrderPlantCommand::ShowOrderHistoryDetail {
@@ -1097,15 +798,17 @@ impl PlantActor for OrderPlant {
                 response_sender,
             } => {
                 let (req_buf, id) = self
+                    .core
                     .rithmic_sender_api
                     .request_show_order_history_detail(&basket_id, &date, &account);
 
-                self.request_handler.register_request(RithmicRequest {
+                self.core.request_handler.register_request(RithmicRequest {
                     request_id: id.clone(),
                     responder: response_sender,
                 });
 
-                self.send_or_fail(Message::Binary(req_buf.into()), &id)
+                self.core
+                    .send_or_fail(Message::Binary(req_buf.into()), &id)
                     .await;
             }
             OrderPlantCommand::ShowOrderHistory {
@@ -1114,15 +817,17 @@ impl PlantActor for OrderPlant {
                 response_sender,
             } => {
                 let (req_buf, id) = self
+                    .core
                     .rithmic_sender_api
                     .request_show_order_history(basket_id.as_deref(), &account);
 
-                self.request_handler.register_request(RithmicRequest {
+                self.core.request_handler.register_request(RithmicRequest {
                     request_id: id.clone(),
                     responder: response_sender,
                 });
 
-                self.send_or_fail(Message::Binary(req_buf.into()), &id)
+                self.core
+                    .send_or_fail(Message::Binary(req_buf.into()), &id)
                     .await;
             }
             OrderPlantCommand::PlaceOrder {
@@ -1130,14 +835,15 @@ impl PlantActor for OrderPlant {
                 account,
                 response_sender,
             } => {
-                let (req_buf, id) = self.rithmic_sender_api.request_order(&order, &account);
+                let (req_buf, id) = self.core.rithmic_sender_api.request_order(&order, &account);
 
-                self.request_handler.register_request(RithmicRequest {
+                self.core.request_handler.register_request(RithmicRequest {
                     request_id: id.clone(),
                     responder: response_sender,
                 });
 
-                self.send_or_fail(Message::Binary(req_buf.into()), &id)
+                self.core
+                    .send_or_fail(Message::Binary(req_buf.into()), &id)
                     .await;
             }
             OrderPlantCommand::PlaceOcoOrder {
@@ -1147,43 +853,50 @@ impl PlantActor for OrderPlant {
                 response_sender,
             } => {
                 let (req_buf, id) = self
+                    .core
                     .rithmic_sender_api
                     .request_oco_order(order1, order2, &account);
 
-                self.request_handler.register_request(RithmicRequest {
+                self.core.request_handler.register_request(RithmicRequest {
                     request_id: id.clone(),
                     responder: response_sender,
                 });
 
-                self.send_or_fail(Message::Binary(req_buf.into()), &id)
+                self.core
+                    .send_or_fail(Message::Binary(req_buf.into()), &id)
                     .await;
             }
             OrderPlantCommand::ShowBrackets {
                 account,
                 response_sender,
             } => {
-                let (req_buf, id) = self.rithmic_sender_api.request_show_brackets(&account);
+                let (req_buf, id) = self.core.rithmic_sender_api.request_show_brackets(&account);
 
-                self.request_handler.register_request(RithmicRequest {
+                self.core.request_handler.register_request(RithmicRequest {
                     request_id: id.clone(),
                     responder: response_sender,
                 });
 
-                self.send_or_fail(Message::Binary(req_buf.into()), &id)
+                self.core
+                    .send_or_fail(Message::Binary(req_buf.into()), &id)
                     .await;
             }
             OrderPlantCommand::ShowBracketStops {
                 account,
                 response_sender,
             } => {
-                let (req_buf, id) = self.rithmic_sender_api.request_show_bracket_stops(&account);
+                let (req_buf, id) = self
+                    .core
+                    .rithmic_sender_api
+                    .request_show_bracket_stops(&account);
 
-                self.request_handler.register_request(RithmicRequest {
+                self.core.request_handler.register_request(RithmicRequest {
                     request_id: id.clone(),
                     responder: response_sender,
                 });
 
-                self.send_or_fail(Message::Binary(req_buf.into()), &id)
+                self.core
+                    .send_or_fail(Message::Binary(req_buf.into()), &id)
                     .await;
             }
             OrderPlantCommand::ExitPosition {
@@ -1193,15 +906,17 @@ impl PlantActor for OrderPlant {
                 response_sender,
             } => {
                 let (req_buf, id) = self
+                    .core
                     .rithmic_sender_api
                     .request_exit_position(&symbol, &exchange, &account);
 
-                self.request_handler.register_request(RithmicRequest {
+                self.core.request_handler.register_request(RithmicRequest {
                     request_id: id.clone(),
                     responder: response_sender,
                 });
 
-                self.send_or_fail(Message::Binary(req_buf.into()), &id)
+                self.core
+                    .send_or_fail(Message::Binary(req_buf.into()), &id)
                     .await;
             }
             OrderPlantCommand::LinkOrders {
@@ -1210,15 +925,17 @@ impl PlantActor for OrderPlant {
                 response_sender,
             } => {
                 let (req_buf, id) = self
+                    .core
                     .rithmic_sender_api
                     .request_link_orders(basket_ids, &account);
 
-                self.request_handler.register_request(RithmicRequest {
+                self.core.request_handler.register_request(RithmicRequest {
                     request_id: id.clone(),
                     responder: response_sender,
                 });
 
-                self.send_or_fail(Message::Binary(req_buf.into()), &id)
+                self.core
+                    .send_or_fail(Message::Binary(req_buf.into()), &id)
                     .await;
             }
             OrderPlantCommand::GetEasyToBorrowList {
@@ -1226,15 +943,17 @@ impl PlantActor for OrderPlant {
                 response_sender,
             } => {
                 let (req_buf, id) = self
+                    .core
                     .rithmic_sender_api
                     .request_easy_to_borrow_list(request_type);
 
-                self.request_handler.register_request(RithmicRequest {
+                self.core.request_handler.register_request(RithmicRequest {
                     request_id: id.clone(),
                     responder: response_sender,
                 });
 
-                self.send_or_fail(Message::Binary(req_buf.into()), &id)
+                self.core
+                    .send_or_fail(Message::Binary(req_buf.into()), &id)
                     .await;
             }
             OrderPlantCommand::ModifyOrderReferenceData {
@@ -1244,15 +963,17 @@ impl PlantActor for OrderPlant {
                 response_sender,
             } => {
                 let (req_buf, id) = self
+                    .core
                     .rithmic_sender_api
                     .request_modify_order_reference_data(&basket_id, &user_tag, &account);
 
-                self.request_handler.register_request(RithmicRequest {
+                self.core.request_handler.register_request(RithmicRequest {
                     request_id: id.clone(),
                     responder: response_sender,
                 });
 
-                self.send_or_fail(Message::Binary(req_buf.into()), &id)
+                self.core
+                    .send_or_fail(Message::Binary(req_buf.into()), &id)
                     .await;
             }
             OrderPlantCommand::GetOrderSessionConfig {
@@ -1260,15 +981,17 @@ impl PlantActor for OrderPlant {
                 response_sender,
             } => {
                 let (req_buf, id) = self
+                    .core
                     .rithmic_sender_api
                     .request_order_session_config(should_defer_request);
 
-                self.request_handler.register_request(RithmicRequest {
+                self.core.request_handler.register_request(RithmicRequest {
                     request_id: id.clone(),
                     responder: response_sender,
                 });
 
-                self.send_or_fail(Message::Binary(req_buf.into()), &id)
+                self.core
+                    .send_or_fail(Message::Binary(req_buf.into()), &id)
                     .await;
             }
             OrderPlantCommand::ReplayExecutions {
@@ -1277,18 +1000,19 @@ impl PlantActor for OrderPlant {
                 account,
                 response_sender,
             } => {
-                let (req_buf, id) = self.rithmic_sender_api.request_replay_executions(
+                let (req_buf, id) = self.core.rithmic_sender_api.request_replay_executions(
                     start_index_sec,
                     finish_index_sec,
                     &account,
                 );
 
-                self.request_handler.register_request(RithmicRequest {
+                self.core.request_handler.register_request(RithmicRequest {
                     request_id: id.clone(),
                     responder: response_sender,
                 });
 
-                self.send_or_fail(Message::Binary(req_buf.into()), &id)
+                self.core
+                    .send_or_fail(Message::Binary(req_buf.into()), &id)
                     .await;
             }
             OrderPlantCommand::SubscribeAccountRmsUpdates {
@@ -1297,48 +1021,59 @@ impl PlantActor for OrderPlant {
                 response_sender,
             } => {
                 let (req_buf, id) = self
+                    .core
                     .rithmic_sender_api
                     .request_account_rms_updates(subscribe, &account);
 
-                self.request_handler.register_request(RithmicRequest {
+                self.core.request_handler.register_request(RithmicRequest {
                     request_id: id.clone(),
                     responder: response_sender,
                 });
 
-                self.send_or_fail(Message::Binary(req_buf.into()), &id)
+                self.core
+                    .send_or_fail(Message::Binary(req_buf.into()), &id)
                     .await;
             }
             OrderPlantCommand::GetLoginInfo { response_sender } => {
-                let (req_buf, id) = self.rithmic_sender_api.request_login_info();
+                let (req_buf, id) = self.core.rithmic_sender_api.request_login_info();
 
-                self.request_handler.register_request(RithmicRequest {
+                self.core.request_handler.register_request(RithmicRequest {
                     request_id: id.clone(),
                     responder: response_sender,
                 });
 
-                self.send_or_fail(Message::Binary(req_buf.into()), &id)
+                self.core
+                    .send_or_fail(Message::Binary(req_buf.into()), &id)
                     .await;
             }
             OrderPlantCommand::ListUnacceptedAgreements { response_sender } => {
-                let (req_buf, id) = self.rithmic_sender_api.request_list_unaccepted_agreements();
+                let (req_buf, id) = self
+                    .core
+                    .rithmic_sender_api
+                    .request_list_unaccepted_agreements();
 
-                self.request_handler.register_request(RithmicRequest {
+                self.core.request_handler.register_request(RithmicRequest {
                     request_id: id.clone(),
                     responder: response_sender,
                 });
 
-                self.send_or_fail(Message::Binary(req_buf.into()), &id)
+                self.core
+                    .send_or_fail(Message::Binary(req_buf.into()), &id)
                     .await;
             }
             OrderPlantCommand::ListAcceptedAgreements { response_sender } => {
-                let (req_buf, id) = self.rithmic_sender_api.request_list_accepted_agreements();
+                let (req_buf, id) = self
+                    .core
+                    .rithmic_sender_api
+                    .request_list_accepted_agreements();
 
-                self.request_handler.register_request(RithmicRequest {
+                self.core.request_handler.register_request(RithmicRequest {
                     request_id: id.clone(),
                     responder: response_sender,
                 });
 
-                self.send_or_fail(Message::Binary(req_buf.into()), &id)
+                self.core
+                    .send_or_fail(Message::Binary(req_buf.into()), &id)
                     .await;
             }
             OrderPlantCommand::AcceptAgreement {
@@ -1347,15 +1082,17 @@ impl PlantActor for OrderPlant {
                 response_sender,
             } => {
                 let (req_buf, id) = self
+                    .core
                     .rithmic_sender_api
                     .request_accept_agreement(&agreement_id, market_data_usage_capacity.as_deref());
 
-                self.request_handler.register_request(RithmicRequest {
+                self.core.request_handler.register_request(RithmicRequest {
                     request_id: id.clone(),
                     responder: response_sender,
                 });
 
-                self.send_or_fail(Message::Binary(req_buf.into()), &id)
+                self.core
+                    .send_or_fail(Message::Binary(req_buf.into()), &id)
                     .await;
             }
             OrderPlantCommand::ShowAgreement {
@@ -1363,15 +1100,17 @@ impl PlantActor for OrderPlant {
                 response_sender,
             } => {
                 let (req_buf, id) = self
+                    .core
                     .rithmic_sender_api
                     .request_show_agreement(&agreement_id);
 
-                self.request_handler.register_request(RithmicRequest {
+                self.core.request_handler.register_request(RithmicRequest {
                     request_id: id.clone(),
                     responder: response_sender,
                 });
 
-                self.send_or_fail(Message::Binary(req_buf.into()), &id)
+                self.core
+                    .send_or_fail(Message::Binary(req_buf.into()), &id)
                     .await;
             }
             OrderPlantCommand::SetRithmicMrktDataSelfCertStatus {
@@ -1380,38 +1119,41 @@ impl PlantActor for OrderPlant {
                 response_sender,
             } => {
                 let (req_buf, id) = self
+                    .core
                     .rithmic_sender_api
                     .request_set_rithmic_mrkt_data_self_cert_status(
                         &agreement_id,
                         &market_data_usage_capacity,
                     );
 
-                self.request_handler.register_request(RithmicRequest {
+                self.core.request_handler.register_request(RithmicRequest {
                     request_id: id.clone(),
                     responder: response_sender,
                 });
 
-                self.send_or_fail(Message::Binary(req_buf.into()), &id)
+                self.core
+                    .send_or_fail(Message::Binary(req_buf.into()), &id)
                     .await;
             }
             OrderPlantCommand::ListExchangePermissions {
                 user,
                 response_sender,
             } => {
-                let (req_buf, id) = self.rithmic_sender_api.request_list_exchanges(&user);
+                let (req_buf, id) = self.core.rithmic_sender_api.request_list_exchanges(&user);
 
-                self.request_handler.register_request(RithmicRequest {
+                self.core.request_handler.register_request(RithmicRequest {
                     request_id: id.clone(),
                     responder: response_sender,
                 });
 
-                self.send_or_fail(Message::Binary(req_buf.into()), &id)
+                self.core
+                    .send_or_fail(Message::Binary(req_buf.into()), &id)
                     .await;
             }
             OrderPlantCommand::Abort => {
                 unreachable!("Abort is handled in run() before handle_command");
             }
-        };
+        }
     }
 }
 

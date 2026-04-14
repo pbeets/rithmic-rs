@@ -10,6 +10,7 @@
 //! - **PnlPlant**: Position and profit/loss tracking
 //! - **HistoryPlant**: Historical data retrieval
 
+pub(crate) mod core;
 /// Access to historical market data
 pub mod history_plant;
 /// Order entry and management

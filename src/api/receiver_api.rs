@@ -1891,8 +1891,18 @@ mod tests {
     }
 
     // =========================================================================
-    // get_error() / rp_code["7", "no data"] tests
+    // get_error() / has_multiple() unit tests
     // =========================================================================
+
+    #[test]
+    fn get_error_returns_none_for_empty_rp_code() {
+        assert_eq!(super::get_error(&[]), None);
+    }
+
+    #[test]
+    fn get_error_returns_none_for_zero_rp_code() {
+        assert_eq!(super::get_error(&["0".to_string()]), None);
+    }
 
     #[test]
     fn get_error_returns_none_for_no_data_rp_code() {
@@ -1913,6 +1923,50 @@ mod tests {
         // code "7" with a different message is still an error
         let rp_code = vec!["7".to_string(), "permission denied".to_string()];
         assert!(get_error(&rp_code).is_some());
+    }
+
+    #[test]
+    fn get_error_returns_some_for_code_7_with_error() {
+        assert_eq!(
+            super::get_error(&["7".to_string(), "permission denied".to_string()]),
+            Some("permission denied".to_string())
+        );
+    }
+
+    #[test]
+    fn get_error_returns_second_element_for_non_zero_non_7_code() {
+        assert_eq!(
+            super::get_error(&["3".to_string(), "bad request".to_string()]),
+            Some("bad request".to_string())
+        );
+    }
+
+    #[test]
+    fn get_error_returns_first_element_when_no_second() {
+        assert_eq!(
+            super::get_error(&["5".to_string()]),
+            Some("5".to_string())
+        );
+    }
+
+    #[test]
+    fn has_multiple_returns_true_for_zero_code() {
+        assert!(super::has_multiple(&["0".to_string()]));
+    }
+
+    #[test]
+    fn has_multiple_returns_false_for_empty() {
+        assert!(!super::has_multiple(&[]));
+    }
+
+    #[test]
+    fn has_multiple_returns_false_for_non_zero_code() {
+        assert!(!super::has_multiple(&["7".to_string()]));
+    }
+
+    #[test]
+    fn has_multiple_returns_false_for_zero_as_second_element() {
+        assert!(!super::has_multiple(&["1".to_string(), "0".to_string()]));
     }
 
     #[test]

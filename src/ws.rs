@@ -51,7 +51,6 @@ pub(crate) trait PlantActor {
 
     async fn run(&mut self);
     async fn handle_command(&mut self, command: Self::Command);
-    async fn handle_rithmic_message(&mut self, message: Result<Message, Error>) -> bool;
 }
 
 /// Error returned when a bounded WebSocket send does not complete.
