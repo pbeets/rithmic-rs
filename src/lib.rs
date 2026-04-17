@@ -119,10 +119,24 @@
 //!         handle.abort();
 //!         // reconnect — see examples/reconnect.rs
 //!     }
-//!     Err(RithmicError::ServerError(msg)) => eprintln!("Server rejected: {msg}"),
+//!     Err(RithmicError::RequestRejected(err)) => {
+//!         eprintln!(
+//!             "Server rejected: code={} msg={}",
+//!             err.code.as_deref().unwrap_or("?"),
+//!             err.message,
+//!         );
+//!     }
+//!     Err(RithmicError::ProtocolError(msg)) => {
+//!         eprintln!("Protocol error: {msg}");
+//!     }
 //!     Err(e) => eprintln!("{e}"),
 //! }
 //! ```
+//!
+//! For inspecting a `RithmicResponse` directly, use `response.request_error()` to
+//! obtain a typed [`RithmicError`] (rp_code rejection → `RequestRejected`, other
+//! non-transport failures → `ProtocolError`). The raw rp_code payload is available
+//! via `response.rp_code()`, `response.rp_code_first()`, and `response.rp_code_text()`.
 //!
 //! A graceful `disconnect().await` is separate from that reconnect path: it
 //! shuts the plant down without sending synthetic `HeartbeatTimeout` or
@@ -211,7 +225,7 @@ pub use plants::ticker_plant::{RithmicTickerPlant, RithmicTickerPlantHandle};
 pub use config::{ConfigError, RithmicAccount, RithmicConfig, RithmicConfigBuilder, RithmicEnv};
 
 // Re-export error types
-pub use error::RithmicError;
+pub use error::{RithmicError, RithmicRequestError};
 
 // Re-export connection strategy
 pub use ws::ConnectStrategy;

@@ -176,10 +176,29 @@ match handle.subscribe("ESM6", "CME").await {
         // reconnect — see examples/reconnect.rs
     }
     Err(RithmicError::InvalidArgument(msg)) => eprintln!("Bad argument: {}", msg),
-    Err(RithmicError::ServerError(msg)) => eprintln!("Server rejected: {}", msg),
+    Err(RithmicError::RequestRejected(err)) => {
+        eprintln!(
+            "Server rejected: code={} msg={}",
+            err.code.as_deref().unwrap_or("?"),
+            err.message,
+        );
+    }
+    Err(RithmicError::ProtocolError(msg)) => eprintln!("Protocol error: {}", msg),
     Err(e) => eprintln!("{}", e),
 }
 ```
+
+When inspecting a `RithmicResponse` directly (for example, entries from a
+subscription broadcast), these helpers surface server-side failures and the raw
+rp_code payload:
+
+- `response.request_error() -> Option<RithmicError>` — typed non-transport error.
+  An rp_code rejection maps to `RithmicError::RequestRejected(RithmicRequestError)`;
+  a populated `response.error` without an rp_code maps to
+  `RithmicError::ProtocolError(String)`.
+- `response.rp_code() -> Option<&[String]>` — full raw payload as received.
+- `response.rp_code_first() -> Option<&str>` — first element (numeric code).
+- `response.rp_code_text() -> Option<&str>` — second element (human message).
 
 `RithmicError` implements `std::error::Error`, so `?` works in functions returning `Box<dyn Error>`.
 

@@ -161,20 +161,29 @@ where
                     "{}: WebSocket send failed for request {}: {}",
                     self.rithmic_receiver_api.source, request_id, error
                 );
-                // Fail only this request.  The dead sink will be detected on the
-                // next reader poll or ping, which will drain remaining requests and
-                // emit the connection-health event from a code path that can stop
-                // the actor loop.
+                // Fail only this request. Transport errors from the sink surface
+                // promptly through the reader (e.g. Error::ConnectionClosed),
+                // which drains remaining requests and emits the connection-health
+                // event from a path that can stop the actor loop.
                 self.request_handler
                     .fail_request(request_id, RithmicError::SendFailed);
             }
             Err(WebSocketSendError::Timeout) => {
                 error!(
-                    "{}: WebSocket send timed out for request {}",
+                    "{}: WebSocket send timed out for request {} — sink poisoned",
                     self.rithmic_receiver_api.source, request_id
                 );
-                self.request_handler
-                    .fail_request(request_id, RithmicError::SendFailed);
+                // send_with_timeout's contract requires the sink be treated as
+                // poisoned after a Timeout (the message may still be buffered).
+                // A half-open TCP connection may not surface through the reader,
+                // so drain all pending requests and broadcast ConnectionError
+                // now rather than letting subsequent sends pile into a dead sink.
+                // The next ping/heartbeat tick will stop the actor loop.
+                self.fail_connection_and_drain(
+                    request_id,
+                    RithmicMessage::ConnectionError,
+                    "WebSocket send timed out — sink poisoned",
+                );
             }
         }
     }
@@ -200,13 +209,15 @@ where
             }
             Err(WebSocketSendError::Transport(error)) => {
                 error!(
-                    "{}: WebSocket ping send failed: {}",
+                    "{}: WebSocket ping send failed — connection dead: {}",
                     self.rithmic_receiver_api.source, error
                 );
+                // Dead link: surface as HeartbeatTimeout so reconnect callers
+                // see the same signal as a true ping timeout.
                 self.fail_connection_and_drain(
-                    "",
-                    RithmicMessage::ConnectionError,
-                    format!("WebSocket ping send failed: {error}"),
+                    "websocket_ping_send_failed",
+                    RithmicMessage::HeartbeatTimeout,
+                    format!("WebSocket ping send failed — connection dead: {error}"),
                 );
                 true
             }
@@ -245,13 +256,15 @@ where
             Ok(()) => false,
             Err(WebSocketSendError::Transport(error)) => {
                 error!(
-                    "{}: heartbeat send failed: {}",
+                    "{}: heartbeat send failed — connection dead: {}",
                     self.rithmic_receiver_api.source, error
                 );
+                // Dead link: surface as HeartbeatTimeout (same signal as a
+                // true heartbeat timeout).
                 self.fail_connection_and_drain(
-                    "",
-                    RithmicMessage::ConnectionError,
-                    format!("Heartbeat send failed: {error}"),
+                    "heartbeat_send_failed",
+                    RithmicMessage::HeartbeatTimeout,
+                    format!("Heartbeat send failed — connection dead: {error}"),
                 );
                 true
             }
@@ -291,6 +304,43 @@ where
         }
     }
 
+    /// Route a decoded or decode-failed response into the subscription
+    /// broadcast vs the per-request responder, with the heartbeat special case
+    /// that synthesizes a `HeartbeatTimeout` subscription update for errors
+    /// while still resolving any registered oneshot with the original frame.
+    fn forward_response(&mut self, source: &str, response: RithmicResponse) {
+        // Heartbeat: synthesize HeartbeatTimeout for errors (broadcast on
+        // subscription channel), but ALWAYS call handle_response with the
+        // original ResponseHeartbeat message so any registered oneshot
+        // responder is still resolved. Passing the synthetic HeartbeatTimeout
+        // to handle_response would mis-route it (handle_response dispatches on
+        // message type).
+        if matches!(response.message, RithmicMessage::ResponseHeartbeat(_)) {
+            if response.error.is_some() {
+                let synthetic = RithmicResponse {
+                    request_id: response.request_id.clone(),
+                    message: RithmicMessage::HeartbeatTimeout,
+                    is_update: true,
+                    has_more: false,
+                    multi_response: false,
+                    error: response.error.clone(),
+                    source: self.rithmic_receiver_api.source.clone(),
+                };
+                let _ = self.subscription_sender.send(synthetic);
+            }
+            self.request_handler.handle_response(response);
+            return;
+        }
+
+        if response.is_update {
+            if let Err(e) = self.subscription_sender.send(response) {
+                warn!("{}: no active subscribers: {:?}", source, e);
+            }
+        } else {
+            self.request_handler.handle_response(response);
+        }
+    }
+
     /// Handle a raw WebSocket message. Returns `true` if the actor should stop.
     pub(crate) async fn handle_rithmic_message(&mut self, message: Result<Message, Error>) -> bool {
         let mut stop = false;
@@ -316,46 +366,10 @@ where
             Ok(Message::Binary(data)) => {
                 let source = self.rithmic_receiver_api.source.clone();
                 match self.rithmic_receiver_api.buf_to_message(data) {
-                    Ok(response) => {
-                        // Handle heartbeat responses: only forward if they contain an error
-                        if matches!(response.message, RithmicMessage::ResponseHeartbeat(_)) {
-                            if let Some(error) = response.error {
-                                let error_response = RithmicResponse {
-                                    request_id: response.request_id,
-                                    message: RithmicMessage::HeartbeatTimeout,
-                                    is_update: true,
-                                    has_more: false,
-                                    multi_response: false,
-                                    error: Some(error),
-                                    source: self.rithmic_receiver_api.source.clone(),
-                                };
-
-                                let _ = self.subscription_sender.send(error_response);
-                            }
-
-                            // Always drop heartbeat responses (successful or error)
-                            return false;
-                        }
-
-                        if response.is_update {
-                            match self.subscription_sender.send(response) {
-                                Ok(_) => {}
-                                Err(e) => {
-                                    warn!("{}: no active subscribers: {:?}", source, e);
-                                }
-                            }
-                        } else {
-                            self.request_handler.handle_response(response);
-                        }
-                    }
+                    Ok(response) => self.forward_response(&source, response),
                     Err(err_response) => {
-                        error!("{}: error response from server: {:?}", source, err_response);
-
-                        if err_response.is_update {
-                            let _ = self.subscription_sender.send(err_response);
-                        } else {
-                            self.request_handler.handle_response(err_response);
-                        }
+                        error!("{}: decode failure: {:?}", source, err_response);
+                        self.forward_response(&source, err_response);
                     }
                 }
             }
@@ -374,6 +388,13 @@ where
                 {
                     Ok(()) => {}
                     Err(e) => {
+                        // Surfaced as ConnectionError (not HeartbeatTimeout): a
+                        // pong is a reply to a server-initiated ping, not part
+                        // of our own heartbeat lifecycle. ping/heartbeat send
+                        // failures use HeartbeatTimeout because they share a
+                        // timeout semantics with a true heartbeat timeout.
+                        // Both satisfy is_connection_issue() so reconnect
+                        // callers see the same signal either way.
                         warn!("{}: failed to send pong: {:?}", source, e);
                         self.fail_connection_and_drain(
                             "",
@@ -807,19 +828,42 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn send_or_fail_timeout_fails_only_that_request() {
+    async fn send_or_fail_timeout_drains_all_pending_and_broadcasts() {
+        // send_with_timeout's contract poisons the sink on any non-Ok return.
+        // A half-open TCP connection may not surface through the reader, so
+        // send_or_fail must drain ALL pending requests and broadcast a
+        // ConnectionError on Timeout, not just fail the one request.
         let reader = make_dormant_ws_reader().await;
-        let (mut core, _sub_rx) = make_test_core(MockMessageSink::pending(), reader);
+        let (mut core, mut sub_rx) = make_test_core(MockMessageSink::pending(), reader);
 
         let mut rx1 = register_request(&mut core, "req-1");
+        let mut rx2 = register_request(&mut core, "req-2");
 
         tokio::time::pause();
         let fut = core.send_or_fail(Message::Ping(vec![].into()), "req-1");
         tokio::time::advance(std::time::Duration::from_secs(SEND_TIMEOUT_SECS + 1)).await;
         fut.await;
 
-        let result = rx1.try_recv().unwrap();
-        assert!(matches!(result, Err(RithmicError::SendFailed)));
+        // Both pending requests drained with ConnectionClosed.
+        assert!(matches!(
+            rx1.try_recv().unwrap(),
+            Err(RithmicError::ConnectionClosed)
+        ));
+        assert!(matches!(
+            rx2.try_recv().unwrap(),
+            Err(RithmicError::ConnectionClosed)
+        ));
+
+        // Subscribers saw a ConnectionError, not a HeartbeatTimeout — the
+        // reviewer's note on the pong/ping asymmetry covers why this path uses
+        // ConnectionError (the sink, not the heartbeat, is what failed).
+        let broadcast_msg = sub_rx.try_recv().unwrap();
+        assert!(
+            matches!(broadcast_msg.message, RithmicMessage::ConnectionError),
+            "send_or_fail timeout should broadcast ConnectionError, got {:?}",
+            broadcast_msg.message
+        );
+        assert!(broadcast_msg.is_connection_issue());
     }
 
     #[tokio::test]
@@ -855,7 +899,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn send_ping_transport_error_stops_and_broadcasts_connection_error() {
+    async fn ping_send_transport_failure_broadcasts_heartbeat_timeout() {
         let reader = make_dormant_ws_reader().await;
         let (mut core, mut sub_rx) = make_test_core(MockMessageSink::error(), reader);
 
@@ -863,10 +907,13 @@ mod tests {
 
         assert!(stop, "send_ping should return true on transport error");
         let broadcast_msg = sub_rx.try_recv().unwrap();
-        assert!(matches!(
-            broadcast_msg.message,
-            RithmicMessage::ConnectionError
-        ));
+        assert!(
+            matches!(broadcast_msg.message, RithmicMessage::HeartbeatTimeout),
+            "ping send transport failure should surface as HeartbeatTimeout, got {:?}",
+            broadcast_msg.message
+        );
+        // Still satisfies is_connection_issue() for reconnect-driving callers.
+        assert!(broadcast_msg.is_connection_issue());
     }
 
     #[tokio::test]
@@ -925,7 +972,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn send_heartbeat_transport_error_stops_and_broadcasts_connection_error() {
+    async fn heartbeat_send_transport_failure_broadcasts_heartbeat_timeout() {
         let reader = make_dormant_ws_reader().await;
         let (mut core, mut sub_rx) = make_test_core(MockMessageSink::error(), reader);
 
@@ -934,10 +981,13 @@ mod tests {
 
         assert!(stop, "send_heartbeat should return true on transport error");
         let broadcast_msg = sub_rx.try_recv().unwrap();
-        assert!(matches!(
-            broadcast_msg.message,
-            RithmicMessage::ConnectionError
-        ));
+        assert!(
+            matches!(broadcast_msg.message, RithmicMessage::HeartbeatTimeout),
+            "heartbeat send transport failure should surface as HeartbeatTimeout, got {:?}",
+            broadcast_msg.message
+        );
+        // Still satisfies is_connection_issue() for reconnect-driving callers.
+        assert!(broadcast_msg.is_connection_issue());
     }
 
     #[tokio::test]
@@ -1107,6 +1157,73 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn non_heartbeat_transport_error_still_broadcasts_connection_error() {
+        // Guard against over-application of the HeartbeatTimeout relabel —
+        // only ping/heartbeat SEND transport failures become HeartbeatTimeout;
+        // reader-side transport errors must remain ConnectionError.
+        let reader = make_dormant_ws_reader().await;
+        let (mut core, mut sub_rx) = make_test_core(MockMessageSink::ready(), reader);
+
+        let stop = core
+            .handle_rithmic_message(Err(Error::ConnectionClosed))
+            .await;
+
+        assert!(stop);
+        let broadcast_msg = sub_rx.try_recv().unwrap();
+        assert!(matches!(
+            broadcast_msg.message,
+            RithmicMessage::ConnectionError
+        ));
+    }
+
+    #[tokio::test]
+    async fn rp_code_error_in_request_response_does_not_broadcast_connection_issue() {
+        // Protocol rejection must route to the request handler (via oneshot),
+        // not the subscription broadcast, and must not drain other pending
+        // requests or trip a connection-issue event.
+        use crate::rti::ResponseLogin;
+        use prost::Message as _;
+
+        let reader = make_dormant_ws_reader().await;
+        let (mut core, mut sub_rx) = make_test_core(MockMessageSink::ready(), reader);
+
+        let mut rx1 = register_request(&mut core, "req-1");
+
+        let resp = ResponseLogin {
+            template_id: 11,
+            user_msg: vec!["req-1".to_string()],
+            rp_code: vec!["3".to_string(), "some rejection".to_string()],
+            ..ResponseLogin::default()
+        };
+        let mut payload = Vec::new();
+        resp.encode(&mut payload).unwrap();
+        let mut framed = (payload.len() as u32).to_be_bytes().to_vec();
+        framed.extend(payload);
+
+        // Second pending request: verifies the pool is not drained on rejection.
+        let mut rx2 = register_request(&mut core, "req-2");
+
+        let stop = core
+            .handle_rithmic_message(Ok(Message::Binary(framed.into())))
+            .await;
+
+        assert!(!stop, "protocol rejection must not stop the actor");
+        assert!(
+            sub_rx.try_recv().is_err(),
+            "protocol rejection must not broadcast a connection issue"
+        );
+
+        let result = rx1.try_recv().unwrap().unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].error.as_deref(), Some("some rejection"));
+
+        assert!(matches!(
+            rx2.try_recv(),
+            Err(oneshot::error::TryRecvError::Empty)
+        ));
+    }
+
+    #[tokio::test]
     async fn handle_stream_closed_stops_and_emits_connection_error() {
         let reader = make_dormant_ws_reader().await;
         let (mut core, mut sub_rx) = make_test_core(MockMessageSink::ready(), reader);
@@ -1123,5 +1240,161 @@ mod tests {
         ));
         let result = rx1.try_recv().unwrap();
         assert!(matches!(result, Err(RithmicError::ConnectionClosed)));
+    }
+
+    /// Heartbeat success with a registered oneshot must resolve the oneshot
+    /// with the original `ResponseHeartbeat` frame and must NOT broadcast any
+    /// subscription update (no synthetic `HeartbeatTimeout`).
+    #[tokio::test]
+    async fn heartbeat_response_with_registered_oneshot_resolves_oneshot() {
+        use crate::rti::ResponseHeartbeat;
+        use prost::Message as _;
+
+        let reader = make_dormant_ws_reader().await;
+        let (mut core, mut sub_rx) = make_test_core(MockMessageSink::ready(), reader);
+
+        let mut rx = register_request(&mut core, "hb-1");
+
+        let resp = ResponseHeartbeat {
+            template_id: 19,
+            user_msg: vec!["hb-1".to_string()],
+            ..ResponseHeartbeat::default()
+        };
+        let mut payload = Vec::new();
+        resp.encode(&mut payload).unwrap();
+        let mut framed = (payload.len() as u32).to_be_bytes().to_vec();
+        framed.extend(payload);
+
+        let stop = core
+            .handle_rithmic_message(Ok(Message::Binary(framed.into())))
+            .await;
+
+        assert!(!stop, "healthy heartbeat must not stop the actor");
+        assert!(
+            sub_rx.try_recv().is_err(),
+            "healthy heartbeat must not broadcast any subscription update"
+        );
+
+        let result = rx.try_recv().unwrap().unwrap();
+        assert_eq!(result.len(), 1);
+        assert!(matches!(
+            result[0].message,
+            RithmicMessage::ResponseHeartbeat(_)
+        ));
+        assert!(result[0].error.is_none());
+    }
+
+    /// Heartbeat with a populated `error` (e.g. rp_code rejection) must BOTH
+    /// broadcast a synthetic `HeartbeatTimeout` update AND resolve any
+    /// registered oneshot with the original `ResponseHeartbeat` frame.
+    #[tokio::test]
+    async fn heartbeat_response_error_broadcasts_timeout_and_resolves_oneshot() {
+        use crate::rti::ResponseHeartbeat;
+        use prost::Message as _;
+
+        let reader = make_dormant_ws_reader().await;
+        let (mut core, mut sub_rx) = make_test_core(MockMessageSink::ready(), reader);
+
+        let mut rx = register_request(&mut core, "hb-err");
+
+        let resp = ResponseHeartbeat {
+            template_id: 19,
+            user_msg: vec!["hb-err".to_string()],
+            rp_code: vec!["3".to_string(), "heartbeat rejected".to_string()],
+            ..ResponseHeartbeat::default()
+        };
+        let mut payload = Vec::new();
+        resp.encode(&mut payload).unwrap();
+        let mut framed = (payload.len() as u32).to_be_bytes().to_vec();
+        framed.extend(payload);
+
+        let stop = core
+            .handle_rithmic_message(Ok(Message::Binary(framed.into())))
+            .await;
+
+        assert!(!stop, "heartbeat rejection must not stop the actor");
+
+        // Synthetic HeartbeatTimeout broadcast on the subscription channel.
+        let broadcast_msg = sub_rx.try_recv().unwrap();
+        assert!(matches!(
+            broadcast_msg.message,
+            RithmicMessage::HeartbeatTimeout
+        ));
+        assert_eq!(broadcast_msg.error.as_deref(), Some("heartbeat rejected"));
+        assert!(broadcast_msg.is_connection_issue());
+
+        // Oneshot still resolves with the original ResponseHeartbeat frame so
+        // callers awaiting a ping/heartbeat request don't hang.
+        let result = rx.try_recv().unwrap().unwrap();
+        assert_eq!(result.len(), 1);
+        assert!(matches!(
+            result[0].message,
+            RithmicMessage::ResponseHeartbeat(_)
+        ));
+        assert_eq!(result[0].error.as_deref(), Some("heartbeat rejected"));
+    }
+
+    /// Multi-part request flow: an intermediate frame (has_more = true) is
+    /// accumulated on the responder; the terminal frame arrives as a rejection
+    /// and MUST flush both frames to the oneshot without broadcasting on the
+    /// subscription channel.
+    #[tokio::test]
+    async fn multipart_terminal_rejection_flushes_accumulated_frames() {
+        use crate::rti::ResponseSearchSymbols;
+        use prost::Message as _;
+
+        let reader = make_dormant_ws_reader().await;
+        let (mut core, mut sub_rx) = make_test_core(MockMessageSink::ready(), reader);
+
+        let mut rx = register_request(&mut core, "multi-1");
+
+        // Intermediate frame: rq_handler_rp_code = ["0"] → has_more = true,
+        // rp_code empty → no error.
+        let intermediate = ResponseSearchSymbols {
+            template_id: 110,
+            user_msg: vec!["multi-1".to_string()],
+            rq_handler_rp_code: vec!["0".to_string()],
+            ..ResponseSearchSymbols::default()
+        };
+        let mut payload = Vec::new();
+        intermediate.encode(&mut payload).unwrap();
+        let mut framed = (payload.len() as u32).to_be_bytes().to_vec();
+        framed.extend(payload);
+
+        let stop = core
+            .handle_rithmic_message(Ok(Message::Binary(framed.into())))
+            .await;
+        assert!(!stop);
+        assert!(
+            sub_rx.try_recv().is_err(),
+            "intermediate multi-response frame must not broadcast"
+        );
+
+        // Terminal frame: no rq_handler_rp_code (has_more = false), rp_code
+        // carries a rejection.
+        let terminal = ResponseSearchSymbols {
+            template_id: 110,
+            user_msg: vec!["multi-1".to_string()],
+            rp_code: vec!["5".to_string(), "bad".to_string()],
+            ..ResponseSearchSymbols::default()
+        };
+        let mut payload = Vec::new();
+        terminal.encode(&mut payload).unwrap();
+        let mut framed = (payload.len() as u32).to_be_bytes().to_vec();
+        framed.extend(payload);
+
+        let stop = core
+            .handle_rithmic_message(Ok(Message::Binary(framed.into())))
+            .await;
+        assert!(!stop);
+        assert!(
+            sub_rx.try_recv().is_err(),
+            "terminal multi-response rejection must not broadcast"
+        );
+
+        let result = rx.try_recv().unwrap().unwrap();
+        assert_eq!(result.len(), 2, "both accumulated frames must be flushed");
+        assert!(result[0].error.is_none());
+        assert_eq!(result[1].error.as_deref(), Some("bad"));
     }
 }

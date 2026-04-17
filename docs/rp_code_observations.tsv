@@ -1,0 +1,12 @@
+category	response	code	message
+known_benign_empty	ResponseGetInstrumentByUnderlyingKeys	7	no data
+known_benign_empty	ResponseReplayExecutions	7	no data
+invalid_argument	ResponseListAcceptedAgreements	6	bad input
+invalid_argument	ResponseListUnacceptedAgreements	6	bad input
+invalid_argument	ResponseShowOrders	1039	FCM Id field is not received.
+invalid_argument	ResponsePnLPositionSnapshot	1039	FCM Id field is not received.
+invalid_argument	ResponseSearchSymbols	1062	Search pattern field is not received.
+wrong_plant	ResponseShowOrders	6	bad input
+wrong_plant	ResponseSearchSymbols	6	bad input
+protocol_error	ResponseOrderSessionConfig	7	an error occurred while parsing data.
+wrong_plant	ResponseOrderSessionConfig	13	an error occurred while parsing data.

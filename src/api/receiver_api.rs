@@ -64,35 +64,44 @@ use crate::rti::{
 ///
 /// See [`RithmicMessage::ConnectionError`] for detailed error handling guidance.
 ///
+/// ## Reconnect Guidance
+///
+/// A populated `error` is a **protocol-level** outcome and is NOT a reconnect
+/// signal. Use [`RithmicResponse::request_error`] / [`RithmicResponse::rp_code`]
+/// to inspect the classified outcome without treating it as a transport failure.
+/// Reconnect only on [`RithmicResponse::is_connection_issue`] (the
+/// authoritative subscription-stream signal) or the transport
+/// [`RithmicError`](crate::error::RithmicError) variants (`ConnectionFailed`,
+/// `ConnectionClosed`, `SendFailed`). The only benign-empty `rp_code`
+/// normalization is `["7", "no data"]` (case-insensitive).
+///
 /// ## Example: Handling Errors
+///
+/// `response.error` is display-only — prefer the typed accessors below so a
+/// single-element rp_code (e.g. `["5"]`) doesn't surface as an empty string.
 ///
 /// ```no_run
 /// # use rithmic_rs::RithmicResponse;
 /// # use rithmic_rs::rti::messages::RithmicMessage;
 /// # fn handle_response(response: RithmicResponse) {
-/// match response.message {
-///     RithmicMessage::ConnectionError => {
-///         // WebSocket connection failed
-///         eprintln!(
-///             "Connection error from {}: {}",
-///             response.source,
-///             response.error.as_ref().unwrap()
-///         );
-///         // Implement reconnection logic
-///     }
-///     RithmicMessage::Reject(reject) => {
-///         // Rithmic rejected a request
-///         eprintln!(
-///             "Request rejected: {}",
-///             response.error.as_ref().unwrap_or(&"Unknown".to_string())
-///         );
-///     }
-///     _ => {
-///         // Check error field even for successful-looking messages
-///         if let Some(err) = response.error {
-///             eprintln!("Error in {}: {}", response.source, err);
-///         }
-///     }
+/// // Connection-level signals come from is_connection_issue(); the `error`
+/// // field on these frames carries the transport failure description.
+/// if response.is_connection_issue() {
+///     eprintln!(
+///         "Connection issue ({:?}) from {}: {}",
+///         response.message,
+///         response.source,
+///         response.error.as_deref().unwrap_or("")
+///     );
+///     // Implement reconnection logic
+///     return;
+/// }
+///
+/// // Protocol-level request rejections classify through request_error() —
+/// // this preserves the full rp_code payload and avoids the empty-string
+/// // footgun when a rejection carries only a code without a trailing message.
+/// if let Some(err) = response.request_error() {
+///     eprintln!("Request rejected from {}: {}", response.source, err);
 /// }
 /// # }
 /// ```
@@ -105,42 +114,36 @@ pub struct RithmicResponse {
     pub is_update: bool,
     pub has_more: bool,
     pub multi_response: bool,
+    /// Display-only view of a protocol-level rejection or non-transport
+    /// failure. For typed access use [`RithmicResponse::request_error`]
+    /// — it classifies rp_code rejections as
+    /// [`RithmicError::RequestRejected`](crate::error::RithmicError::RequestRejected)
+    /// and non-rp_code failures as
+    /// [`RithmicError::ProtocolError`](crate::error::RithmicError::ProtocolError).
+    /// Raw rp_code payloads are exposed via [`RithmicResponse::rp_code`] /
+    /// [`RithmicResponse::rp_code_first`] / [`RithmicResponse::rp_code_text`].
+    ///
+    /// `Some("")` is possible: a single-element rp_code (e.g. `["5"]`) has no
+    /// trailing message and renders as an empty display string. Don't branch
+    /// on `error.is_some()` — use [`RithmicResponse::request_error`].
     pub error: Option<String>,
     pub source: String,
 }
 
 impl RithmicResponse {
-    /// Returns true if this response represents an error condition.
-    ///
-    /// This checks both:
-    /// - The `error` field being set (Rithmic protocol errors)
-    /// - Connection issues (WebSocket errors, heartbeat timeouts, forced logout)
-    ///
-    /// # Example
-    /// ```ignore
-    /// if response.is_error() {
-    ///     eprintln!("Error: {:?}", response.error);
-    /// }
-    /// ```
+    /// Returns true if this response represents any error (protocol-level
+    /// rejection OR connection health issue). For reconnect decisions use
+    /// [`RithmicResponse::is_connection_issue`] instead — a populated `error`
+    /// alone is request-level, not a reconnect signal.
     pub fn is_error(&self) -> bool {
         self.error.is_some() || self.is_connection_issue()
     }
 
-    /// Returns true if this response indicates a connection health issue.
-    ///
-    /// Connection issues include:
-    /// - `ConnectionError`: WebSocket connection failed
-    /// - `HeartbeatTimeout`: Connection appears dead
-    /// - `ForcedLogout`: Server forcibly logged out the client
-    ///
-    /// These conditions typically require reconnection logic.
-    ///
-    /// # Example
-    /// ```ignore
-    /// if response.is_connection_issue() {
-    ///     // Trigger reconnection
-    /// }
-    /// ```
+    /// Authoritative reconnect signal on the subscription stream: true for
+    /// `ConnectionError`, `HeartbeatTimeout` (includes ping/heartbeat send
+    /// failures), or `ForcedLogout`. Protocol-level rejections (populated
+    /// `error` / rp_code rejections surfaced via
+    /// [`RithmicResponse::request_error`]) do NOT set this.
     pub fn is_connection_issue(&self) -> bool {
         matches!(
             self.message,
@@ -148,6 +151,53 @@ impl RithmicResponse {
                 | RithmicMessage::HeartbeatTimeout
                 | RithmicMessage::ForcedLogout(_)
         )
+    }
+
+    /// Full raw rp_code payload as received. `None` for message variants that
+    /// don't carry rp_code (updates, ConnectionError, HeartbeatTimeout, etc.).
+    pub fn rp_code(&self) -> Option<&[String]> {
+        response_rp_code_info(&self.message).map(|(_, rp_code)| rp_code)
+    }
+
+    /// First element of rp_code (the numeric code), if present.
+    pub fn rp_code_first(&self) -> Option<&str> {
+        self.rp_code().and_then(|c| c.first().map(String::as_str))
+    }
+
+    /// Second element of rp_code (the human message), if present.
+    pub fn rp_code_text(&self) -> Option<&str> {
+        self.rp_code().and_then(|c| c.get(1).map(String::as_str))
+    }
+
+    /// Structured `rp_code` rejection. `pub(crate)` — downstream consumers
+    /// should use [`RithmicResponse::request_error`], which correctly
+    /// classifies non-rp_code failures as `ProtocolError` instead of silently
+    /// dropping them.
+    pub(crate) fn request_rejection(&self) -> Option<crate::error::RithmicRequestError> {
+        if self.is_connection_issue() {
+            return None;
+        }
+        match self.rp_code().map(classify_rp_code) {
+            Some(RpCodeClassification::RequestRejected(err)) => Some(err),
+            _ => None,
+        }
+    }
+
+    /// Maps non-transport response failures into a typed
+    /// [`RithmicError`](crate::error::RithmicError).
+    /// - rp_code rejections → `RithmicError::RequestRejected`
+    /// - populated `error` without rp_code → `RithmicError::ProtocolError`
+    /// - transport-health events → `None` (reconnect signals, not request errors)
+    pub fn request_error(&self) -> Option<crate::error::RithmicError> {
+        if let Some(err) = self.request_rejection() {
+            return Some(crate::error::RithmicError::RequestRejected(err));
+        }
+        if self.is_connection_issue() {
+            return None;
+        }
+        self.error
+            .clone()
+            .map(crate::error::RithmicError::ProtocolError)
     }
 
     /// Returns true if this response contains market data.
@@ -1608,10 +1658,12 @@ impl RithmicReceiverApi {
                     data.len()
                 );
 
+                // Unknown templates are unsolicited; route as an update so we
+                // don't spam "no responder found" via the request handler.
                 return Err(RithmicResponse {
                     request_id: "".to_string(),
                     message: RithmicMessage::Unknown,
-                    is_update: false,
+                    is_update: true,
                     has_more: false,
                     multi_response: false,
                     error: Some(format!(
@@ -1623,44 +1675,175 @@ impl RithmicReceiverApi {
             }
         };
 
-        // Handle errors
-        if let Some(error) = check_message_error(&response) {
-            error!("receiver_api: error {:#?} {:?}", response, error);
-
-            return Err(response);
-        }
-
         Ok(response)
     }
 }
 
+// Per the Rithmic R|Protocol Reference Guide (§3 "Responses From Server"):
+// a response message carries either `rq_hndlr_rp_code` OR `rp_code`, never
+// both. The *presence* of `rq_hndlr_rp_code` means more frames follow;
+// `rp_code` marks the terminal frame. The value inside `rq_handler_rp_code`
+// is not the multipart signal — presence is. Keying on `[0] == "0"` silently
+// truncates multipart responses whose intermediate frames carry a non-"0"
+// status.
+//
+// proto3 `repeated string` has no "absent" vs "empty" distinction on the wire,
+// so "presence" is equivalent to "non-empty".
 fn has_multiple(rq_handler_rp_code: &[String]) -> bool {
-    !rq_handler_rp_code.is_empty() && rq_handler_rp_code[0] == "0"
+    !rq_handler_rp_code.is_empty()
 }
 
-fn get_error(rp_code: &[String]) -> Option<String> {
-    if (rp_code.len() == 1 && rp_code[0] == "0") || rp_code.is_empty() {
-        return None;
+/// Classified outcome of a Rithmic `rp_code` tuple.
+///
+/// `rp_code` is a protocol-level response code, not a transport signal. Any
+/// non-success classification here represents a request-level result and has
+/// no bearing on WebSocket/connection health.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum RpCodeClassification {
+    /// Request succeeded (rp_code is empty or `["0"]`).
+    Success,
+    /// Benign empty result — currently only `["7", "no data"]` (case-insensitive).
+    KnownBenignEmpty,
+    /// Protocol-level rejection (rp_code reports a non-zero failure code).
+    RequestRejected(crate::error::RithmicRequestError),
+}
+
+impl RpCodeClassification {
+    /// Returns the human-readable rejection message, or `None` for
+    /// `Success` / `KnownBenignEmpty`.
+    fn error_message(&self) -> Option<String> {
+        match self {
+            Self::Success | Self::KnownBenignEmpty => None,
+            Self::RequestRejected(err) => Some(err.message.clone()),
+        }
+    }
+}
+
+// INVARIANT: every variant in this list must have an rp_code field on its
+// inner proto. If you add a Response* variant to RithmicMessage whose
+// proto carries rp_code, add it here AND add a decode-time
+// `get_error(&resp.rp_code)` call in the matching decoder arm. See
+// docs/rp-code-audit.md for rationale.
+macro_rules! rp_code_response_variants {
+    ($macro:ident) => {
+        $macro! {
+            Reject,
+            ResponseAcceptAgreement,
+            ResponseAccountList,
+            ResponseAccountRmsInfo,
+            ResponseAccountRmsUpdates,
+            ResponseAuxilliaryReferenceData,
+            ResponseBracketOrder,
+            ResponseCancelAllOrders,
+            ResponseCancelOrder,
+            ResponseDepthByOrderSnapshot,
+            ResponseDepthByOrderUpdates,
+            ResponseEasyToBorrowList,
+            ResponseExitPosition,
+            ResponseFrontMonthContract,
+            ResponseGetInstrumentByUnderlying,
+            ResponseGetInstrumentByUnderlyingKeys,
+            ResponseGetVolumeAtPrice,
+            ResponseGiveTickSizeTypeTable,
+            ResponseHeartbeat,
+            ResponseLinkOrders,
+            ResponseListAcceptedAgreements,
+            ResponseListExchangePermissions,
+            ResponseListUnacceptedAgreements,
+            ResponseLogin,
+            ResponseLoginInfo,
+            ResponseLogout,
+            ResponseMarketDataUpdate,
+            ResponseMarketDataUpdateByUnderlying,
+            ResponseModifyOrder,
+            ResponseModifyOrderReferenceData,
+            ResponseNewOrder,
+            ResponseOcoOrder,
+            ResponseOrderSessionConfig,
+            ResponsePnLPositionSnapshot,
+            ResponsePnLPositionUpdates,
+            ResponseProductCodes,
+            ResponseProductRmsInfo,
+            ResponseReferenceData,
+            ResponseReplayExecutions,
+            ResponseResumeBars,
+            ResponseRithmicSystemGatewayInfo,
+            ResponseRithmicSystemInfo,
+            ResponseSearchSymbols,
+            ResponseSetRithmicMrktDataSelfCertStatus,
+            ResponseShowAgreement,
+            ResponseShowBracketStops,
+            ResponseShowBrackets,
+            ResponseShowOrderHistory,
+            ResponseShowOrderHistoryDates,
+            ResponseShowOrderHistoryDetail,
+            ResponseShowOrderHistorySummary,
+            ResponseShowOrders,
+            ResponseSubscribeForOrderUpdates,
+            ResponseSubscribeToBracketUpdates,
+            ResponseTickBarReplay,
+            ResponseTickBarUpdate,
+            ResponseTimeBarReplay,
+            ResponseTimeBarUpdate,
+            ResponseTradeRoutes,
+            ResponseUpdateStopBracketLevel,
+            ResponseUpdateTargetBracketLevel,
+            ResponseVolumeProfileMinuteBars,
+        }
+    };
+}
+
+macro_rules! define_response_rp_code_info {
+    ($($variant:ident),* $(,)?) => {
+        fn response_rp_code_info(message: &RithmicMessage) -> Option<(&'static str, &[String])> {
+            match message {
+                $(RithmicMessage::$variant(resp) => {
+                    Some((stringify!($variant), resp.rp_code.as_slice()))
+                })*
+                _ => None,
+            }
+        }
+    };
+}
+
+rp_code_response_variants!(define_response_rp_code_info);
+
+// Single extension point for benign `rp_code` normalizations. Any new mapping
+// MUST match exactly on both code AND message and ship with a captured-fixture
+// decode test — see docs/rp_code_observations.tsv (e.g. `["7", "an error
+// occurred while parsing data."]` shares code "7" but is a real error).
+fn classify_rp_code(rp_code: &[String]) -> RpCodeClassification {
+    // Per §2.1.b of the Rithmic Reference Guide, `rp_code[0] == "0"` is the
+    // authoritative "success" signal regardless of whether a trailing message
+    // is present. `[]` is also success (e.g. an intermediate multipart frame
+    // that doesn't carry rp_code at all wouldn't reach here anyway, but be
+    // conservative).
+    if rp_code.is_empty() || rp_code[0] == "0" {
+        return RpCodeClassification::Success;
     }
 
-    // Rithmic uses rp_code = ["7", "no data"] to signal "successful query, zero results"
-    // across all list/replay/search responses. Treat it as a normal empty outcome, not an error.
     if let (Some(code), Some(msg)) = (rp_code.first(), rp_code.get(1)) {
         if code == "7" && msg.eq_ignore_ascii_case("no data") {
-            return None;
+            return RpCodeClassification::KnownBenignEmpty;
         }
     }
 
-    let msg = rp_code
-        .get(1)
-        .cloned()
-        .unwrap_or_else(|| rp_code[0].clone());
+    let code = rp_code.first().cloned();
+    // `message` is strictly the second element, else empty — matches the prior
+    // `rp_code.get(1).cloned().unwrap_or_default()` behavior for legacy
+    // `response.error`. Single-element rp_codes (e.g. ["5"]) produce an empty
+    // message; Display then renders `[5]` without a dangling duplicate.
+    let message = rp_code.get(1).cloned().unwrap_or_default();
 
-    Some(msg)
+    RpCodeClassification::RequestRejected(crate::error::RithmicRequestError {
+        rp_code: rp_code.to_vec(),
+        code,
+        message,
+    })
 }
 
-fn check_message_error(message: &RithmicResponse) -> Option<String> {
-    message.error.as_ref().map(|e| e.to_string())
+fn get_error(rp_code: &[String]) -> Option<String> {
+    classify_rp_code(rp_code).error_message()
 }
 
 fn decode_error(source: &str, e: prost::DecodeError, is_update: bool) -> RithmicResponse {
@@ -1926,7 +2109,9 @@ mod tests {
     }
 
     #[test]
-    fn get_error_returns_some_for_code_7_with_error() {
+    fn get_error_returns_message_only_for_code_7_with_error() {
+        // New shape: `get_error` returns the human message (second rp_code
+        // element), matching `RpCodeClassification::error_message()`.
         assert_eq!(
             super::get_error(&["7".to_string(), "permission denied".to_string()]),
             Some("permission denied".to_string())
@@ -1942,28 +2127,283 @@ mod tests {
     }
 
     #[test]
-    fn get_error_returns_first_element_when_no_second() {
-        assert_eq!(super::get_error(&["5".to_string()]), Some("5".to_string()));
+    fn get_error_returns_empty_string_when_no_second_element() {
+        // Single-element rp_codes (e.g. `["5"]`) produce `RequestRejected`
+        // with an empty `message`. `error_message()` forwards that as
+        // `Some(String::new())`; Display renders the structured form as `[5]`.
+        assert_eq!(super::get_error(&["5".to_string()]), Some(String::new()));
     }
 
+    // Per §3 of the Rithmic Reference Guide, presence of `rq_hndlr_rp_code`
+    // (not any particular value) signals "more frames follow". Our has_multiple
+    // mirrors that: any non-empty slice means more frames follow; an empty
+    // slice means the field wasn't populated (terminal frame, rp_code is what
+    // gets inspected instead).
+
     #[test]
-    fn has_multiple_returns_true_for_zero_code() {
+    fn has_multiple_true_for_zero_only() {
         assert!(super::has_multiple(&["0".to_string()]));
     }
 
     #[test]
-    fn has_multiple_returns_false_for_empty() {
+    fn has_multiple_true_for_non_zero_code() {
+        // Intermediate frames may carry richer status values here; presence
+        // alone means "more frames follow".
+        assert!(super::has_multiple(&["7".to_string()]));
+    }
+
+    #[test]
+    fn has_multiple_true_for_any_present_payload() {
+        assert!(super::has_multiple(&["1".to_string(), "0".to_string()]));
+    }
+
+    #[test]
+    fn has_multiple_false_for_empty() {
         assert!(!super::has_multiple(&[]));
     }
 
+    // =========================================================================
+    // classify_rp_code unit tests
+    // =========================================================================
+
     #[test]
-    fn has_multiple_returns_false_for_non_zero_code() {
-        assert!(!super::has_multiple(&["7".to_string()]));
+    fn classify_rp_code_empty_is_success() {
+        assert_eq!(
+            super::classify_rp_code(&[]),
+            super::RpCodeClassification::Success
+        );
     }
 
     #[test]
-    fn has_multiple_returns_false_for_zero_as_second_element() {
-        assert!(!super::has_multiple(&["1".to_string(), "0".to_string()]));
+    fn classify_rp_code_zero_is_success() {
+        assert_eq!(
+            super::classify_rp_code(&["0".to_string()]),
+            super::RpCodeClassification::Success
+        );
+    }
+
+    #[test]
+    fn classify_rp_code_zero_with_trailing_annotation_is_success() {
+        // Per §2.1.b of the Rithmic Reference Guide, rp_code[0] == "0" is the
+        // authoritative success signal. A server that annotates success with
+        // a trailing message (e.g. ["0", "ok"] or ["0", ""]) must not be
+        // silently reclassified as a rejection.
+        assert_eq!(
+            super::classify_rp_code(&["0".to_string(), "ok".to_string()]),
+            super::RpCodeClassification::Success
+        );
+        assert_eq!(
+            super::classify_rp_code(&["0".to_string(), String::new()]),
+            super::RpCodeClassification::Success
+        );
+    }
+
+    #[test]
+    fn classify_rp_code_seven_no_data_lowercase_is_known_benign_empty() {
+        assert_eq!(
+            super::classify_rp_code(&["7".to_string(), "no data".to_string()]),
+            super::RpCodeClassification::KnownBenignEmpty
+        );
+    }
+
+    #[test]
+    fn classify_rp_code_seven_no_data_mixed_case_is_known_benign_empty() {
+        assert_eq!(
+            super::classify_rp_code(&["7".to_string(), "No Data".to_string()]),
+            super::RpCodeClassification::KnownBenignEmpty
+        );
+    }
+
+    #[test]
+    fn classify_rp_code_seven_no_data_upper_is_known_benign_empty() {
+        assert_eq!(
+            super::classify_rp_code(&["7".to_string(), "NO DATA".to_string()]),
+            super::RpCodeClassification::KnownBenignEmpty
+        );
+    }
+
+    #[test]
+    fn classify_rp_code_seven_other_msg_is_request_rejected() {
+        use crate::error::RithmicRequestError;
+        let rp_code = vec!["7".to_string(), "permission denied".to_string()];
+        assert_eq!(
+            super::classify_rp_code(&rp_code),
+            super::RpCodeClassification::RequestRejected(RithmicRequestError {
+                rp_code: rp_code.clone(),
+                code: Some("7".to_string()),
+                message: "permission denied".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn classify_rp_code_non_zero_two_fields_is_request_rejected() {
+        use crate::error::RithmicRequestError;
+        let rp_code = vec!["3".to_string(), "bad request".to_string()];
+        assert_eq!(
+            super::classify_rp_code(&rp_code),
+            super::RpCodeClassification::RequestRejected(RithmicRequestError {
+                rp_code: rp_code.clone(),
+                code: Some("3".to_string()),
+                message: "bad request".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn classify_rp_code_single_non_zero_has_empty_message() {
+        // When only a single element is provided, the classifier stores it as
+        // `code: Some(..)` with an empty `message`. Display renders `[5]`.
+        use crate::error::RithmicRequestError;
+        let rp_code = vec!["5".to_string()];
+        assert_eq!(
+            super::classify_rp_code(&rp_code),
+            super::RpCodeClassification::RequestRejected(RithmicRequestError {
+                rp_code: rp_code.clone(),
+                code: Some("5".to_string()),
+                message: String::new(),
+            })
+        );
+    }
+
+    #[test]
+    fn classify_rp_code_seven_parse_error_is_request_rejected_not_benign_empty() {
+        // Captured evidence: ResponseOrderSessionConfig can return
+        // rp_code = ["7", "an error occurred while parsing data."]. This shares
+        // the benign-empty code ("7") but is NOT a no-data marker — the
+        // classifier must match exactly on message, not just code.
+        use crate::error::RithmicRequestError;
+        let rp_code = vec![
+            "7".to_string(),
+            "an error occurred while parsing data.".to_string(),
+        ];
+        assert_eq!(
+            super::classify_rp_code(&rp_code),
+            super::RpCodeClassification::RequestRejected(RithmicRequestError {
+                rp_code: rp_code.clone(),
+                code: Some("7".to_string()),
+                message: "an error occurred while parsing data.".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn list_accounts_no_data_decodes_as_ok() {
+        // rp_code = ["7", "no data"] on a ResponseAccountList (list-style response)
+        // should produce Ok with no error, confirming the allowlist normalization
+        // flows end-to-end for list responses as well as replay responses.
+        use crate::rti::ResponseAccountList;
+        let api = RithmicReceiverApi {
+            source: "test".to_string(),
+        };
+        let result = api.buf_to_message(encode_with_header(&ResponseAccountList {
+            template_id: 303,
+            user_msg: vec!["req-1".to_string()],
+            rq_handler_rp_code: vec![],
+            rp_code: vec!["7".to_string(), "no data".to_string()],
+            ..ResponseAccountList::default()
+        }));
+        assert!(
+            result.is_ok(),
+            "expected Ok but got Err: {:?}",
+            result.err()
+        );
+        let response = result.unwrap();
+        assert_eq!(response.error, None);
+        assert!(!response.is_error());
+        assert!(!response.is_connection_issue());
+    }
+
+    #[test]
+    fn response_login_rejection_decodes_with_structured_error() {
+        // Structured rejection must be exposed via `request_rejection()` alongside
+        // the legacy `error: Option<String>` for protocol-level rejections.
+        use crate::error::RithmicRequestError;
+        use crate::rti::ResponseLogin;
+        let api = RithmicReceiverApi {
+            source: "test".to_string(),
+        };
+        let result = api.buf_to_message(encode_with_header(&ResponseLogin {
+            template_id: 11,
+            user_msg: vec!["req-1".to_string()],
+            rp_code: vec!["3".to_string(), "bad request".to_string()],
+            ..ResponseLogin::default()
+        }));
+        let response = match result {
+            Ok(r) => r,
+            Err(r) => r,
+        };
+        assert_eq!(response.error.as_deref(), Some("bad request"));
+        assert_eq!(
+            response.request_rejection(),
+            Some(RithmicRequestError {
+                rp_code: vec!["3".to_string(), "bad request".to_string()],
+                code: Some("3".to_string()),
+                message: "bad request".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn response_order_session_config_parse_error_decodes_with_structured_error() {
+        // Captured fixture: rp_code = ["7", "an error occurred while parsing data."]
+        // must decode as a RequestRejected with the full rp_code payload
+        // preserved. It MUST NOT be swallowed as KnownBenignEmpty.
+        use crate::error::RithmicRequestError;
+        use crate::rti::ResponseOrderSessionConfig;
+        let api = RithmicReceiverApi {
+            source: "test".to_string(),
+        };
+        let result = api.buf_to_message(encode_with_header(&ResponseOrderSessionConfig {
+            template_id: 3503,
+            user_msg: vec!["req-1".to_string()],
+            rp_code: vec![
+                "7".to_string(),
+                "an error occurred while parsing data.".to_string(),
+            ],
+        }));
+        let response = match result {
+            Ok(r) => r,
+            Err(r) => r,
+        };
+        assert_eq!(
+            response.error.as_deref(),
+            Some("an error occurred while parsing data.")
+        );
+        assert_eq!(
+            response.request_rejection(),
+            Some(RithmicRequestError {
+                rp_code: vec![
+                    "7".to_string(),
+                    "an error occurred while parsing data.".to_string(),
+                ],
+                code: Some("7".to_string()),
+                message: "an error occurred while parsing data.".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn response_login_rejection_decodes_with_error() {
+        // Protocol rejection populates `error` and `is_error()` but must NOT
+        // trip `is_connection_issue()` — that would mis-drive reconnection.
+        use crate::rti::ResponseLogin;
+        let api = RithmicReceiverApi {
+            source: "test".to_string(),
+        };
+        let result = api.buf_to_message(encode_with_header(&ResponseLogin {
+            template_id: 11,
+            user_msg: vec!["req-1".to_string()],
+            rp_code: vec!["3".to_string(), "bad request".to_string()],
+            ..ResponseLogin::default()
+        }));
+        let response = match result {
+            Ok(r) => r,
+            Err(r) => r,
+        };
+        assert_eq!(response.error.as_deref(), Some("bad request"));
+        assert!(response.is_error());
+        assert!(!response.is_connection_issue());
     }
 
     #[test]
@@ -1986,6 +2426,130 @@ mod tests {
         );
         assert_eq!(result.unwrap().error, None);
     }
+
+    // =========================================================================
+    // PR 60 ported tests: typed rejection surface and macro-driven rp_code info
+    // =========================================================================
+
+    #[test]
+    fn reject_with_non_zero_rp_code_decodes_as_ok_with_error() {
+        // rp_code-carrying responses must reach Ok(_) with `error` populated;
+        // `buf_to_message` no longer returns `Err(_)` for rp_code rejections.
+        let api = RithmicReceiverApi {
+            source: "test".to_string(),
+        };
+        let result = api.buf_to_message(encode_with_header(&Reject {
+            template_id: 75,
+            user_msg: vec!["req-2".to_string()],
+            rp_code: vec!["5".to_string(), "permission denied".to_string()],
+        }));
+
+        let response = result.expect("reject with rp_code error should still decode");
+        assert!(matches!(response.message, RithmicMessage::Reject(_)));
+        assert_eq!(response.error.as_deref(), Some("permission denied"));
+        assert!(!response.is_connection_issue());
+    }
+
+    #[test]
+    fn response_request_error_maps_code_6_to_request_rejected_with_full_text() {
+        use crate::error::{RithmicError, RithmicRequestError};
+        use crate::rti::ResponseListAcceptedAgreements;
+        let response = decode_with_api(&ResponseListAcceptedAgreements {
+            template_id: 503,
+            user_msg: vec!["req-4".to_string()],
+            rp_code: vec!["6".to_string(), "agreement already signed".to_string()],
+            ..ResponseListAcceptedAgreements::default()
+        });
+
+        assert_eq!(response.rp_code_first(), Some("6"));
+        assert_eq!(response.rp_code_text(), Some("agreement already signed"));
+        assert!(matches!(
+            response.request_error(),
+            Some(RithmicError::RequestRejected(RithmicRequestError { rp_code, code, message }))
+                if rp_code == vec!["6".to_string(), "agreement already signed".to_string()]
+                    && code.as_deref() == Some("6")
+                    && message == "agreement already signed"
+        ));
+    }
+
+    #[test]
+    fn search_symbols_multipart_uses_rq_handler_field_presence_not_value() {
+        // Per §3 of the Rithmic Reference Guide, presence of `rq_handler_rp_code`
+        // on an intermediate multipart frame means "more frames follow",
+        // regardless of the value inside. The terminal frame carries `rp_code`
+        // instead (the two fields are mutually exclusive on the wire).
+        let api = RithmicReceiverApi {
+            source: "test".to_string(),
+        };
+
+        // Intermediate frame with a non-"0" rq_handler_rp_code — previously
+        // dropped by has_multiple's `[0] == "0"` gate, which would truncate
+        // legitimate multipart responses.
+        let intermediate = api
+            .buf_to_message(encode_with_header(&ResponseSearchSymbols {
+                template_id: 110,
+                user_msg: vec!["multi-1".to_string()],
+                rq_handler_rp_code: vec!["7".to_string()],
+                ..ResponseSearchSymbols::default()
+            }))
+            .expect("intermediate multi-response frame should decode");
+        assert!(
+            intermediate.has_more,
+            "presence of rq_handler_rp_code must mark has_more=true regardless of value"
+        );
+        assert!(intermediate.multi_response);
+        assert!(intermediate.error.is_none());
+
+        // Terminal frame: no rq_handler_rp_code, rp_code set to success.
+        let terminal = api
+            .buf_to_message(encode_with_header(&ResponseSearchSymbols {
+                template_id: 110,
+                user_msg: vec!["multi-1".to_string()],
+                rp_code: vec!["0".to_string()],
+                ..ResponseSearchSymbols::default()
+            }))
+            .expect("terminal multi-response frame should decode");
+        assert!(!terminal.has_more);
+        assert!(terminal.multi_response);
+        assert!(terminal.error.is_none());
+    }
+
+    #[test]
+    fn response_rp_code_info_returns_variant_name_and_payload() {
+        let message = RithmicMessage::ResponseSearchSymbols(ResponseSearchSymbols {
+            rp_code: vec!["5".to_string(), "permission denied".to_string()],
+            ..ResponseSearchSymbols::default()
+        });
+
+        let (template_name, rp_code) =
+            super::response_rp_code_info(&message).expect("response should expose rp_code");
+
+        assert_eq!(template_name, "ResponseSearchSymbols");
+        assert_eq!(rp_code, &["5".to_string(), "permission denied".to_string()]);
+    }
+
+    // Symmetric with the `define_response_rp_code_info` expansion — driven off
+    // the same `rp_code_response_variants!` list, so removing a variant from
+    // the macro without updating this test is a compile error, and any listed
+    // variant whose inner proto lacks the expected shape fails the assertion.
+    macro_rules! define_rp_code_info_exhaustiveness_test {
+        ($($variant:ident),* $(,)?) => {
+            #[test]
+            fn response_rp_code_info_covers_every_listed_variant() {
+                $(
+                    let msg = RithmicMessage::$variant($variant::default());
+                    let (name, rp_code) = super::response_rp_code_info(&msg)
+                        .unwrap_or_else(|| panic!(
+                            "response_rp_code_info returned None for listed variant {}",
+                            stringify!($variant),
+                        ));
+                    assert_eq!(name, stringify!($variant));
+                    assert!(rp_code.is_empty(), "default rp_code should be empty");
+                )*
+            }
+        };
+    }
+    rp_code_response_variants!(define_rp_code_info_exhaustiveness_test);
 
     // =========================================================================
     // Mutual exclusivity tests - verify categories don't overlap unexpectedly

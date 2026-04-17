@@ -576,27 +576,27 @@ impl RithmicHistoryPlantHandle {
             .next()
             .ok_or(RithmicError::EmptyResponse)?;
 
-        if let Some(err) = response.error {
+        if let Some(err) = response.request_error() {
             error!("history_plant: login failed {:?}", err);
-            Err(RithmicError::ServerError(err))
-        } else {
-            let _ = self.sender.send(HistoryPlantCommand::SetLogin).await;
+            return Err(err);
+        }
 
-            if let RithmicMessage::ResponseLogin(resp) = &response.message {
-                if let Some(hb) = resp.heartbeat_interval {
-                    let secs = hb.max(HEARTBEAT_SECS as f64) as u64;
-                    self.update_heartbeat(secs).await;
-                }
+        let _ = self.sender.send(HistoryPlantCommand::SetLogin).await;
 
-                if let Some(session_id) = &resp.unique_user_id {
-                    info!("history_plant: session id: {}", session_id);
-                }
+        if let RithmicMessage::ResponseLogin(resp) = &response.message {
+            if let Some(hb) = resp.heartbeat_interval {
+                let secs = hb.max(HEARTBEAT_SECS as f64) as u64;
+                self.update_heartbeat(secs).await;
             }
 
-            info!("history_plant: logged in");
-
-            Ok(response)
+            if let Some(session_id) = &resp.unique_user_id {
+                info!("history_plant: session id: {}", session_id);
+            }
         }
+
+        info!("history_plant: logged in");
+
+        Ok(response)
     }
 
     async fn update_heartbeat(&self, seconds: u64) {
