@@ -1488,15 +1488,14 @@ fn decode_error(source: &str, e: prost::DecodeError, is_update: bool) -> Rithmic
 #[cfg(test)]
 mod tests {
     use super::*;
-    use prost::Message;
-    use prost::bytes::Bytes;
     use crate::error::{RithmicError, RithmicRequestError};
     use crate::rti::{
-        Reject, ResponseAccountList, ResponseListAcceptedAgreements,
-        ResponseLogin, ResponseOrderSessionConfig, ResponseReplayExecutions,
-        ResponseSearchSymbols, TradeRoute, UpdateEasyToBorrowList,
-        messages::RithmicMessage,
+        Reject, ResponseAccountList, ResponseListAcceptedAgreements, ResponseLogin,
+        ResponseOrderSessionConfig, ResponseReplayExecutions, ResponseSearchSymbols, TradeRoute,
+        UpdateEasyToBorrowList, messages::RithmicMessage,
     };
+    use prost::Message;
+    use prost::bytes::Bytes;
 
     fn encode_with_header<T: Message>(message: &T) -> Bytes {
         let mut payload = Vec::new();

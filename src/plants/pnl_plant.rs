@@ -252,10 +252,8 @@ impl PlantActor for PnlPlant {
                     if matches!(cmd, PnlPlantCommand::Abort) {
                         info!("pnl_plant: abort requested, shutting down immediately");
 
-                        self.core.fail_connection_and_drain(
-                            "",
-                            RithmicError::ConnectionClosed,
-                        );
+                        self.core
+                            .fail_connection_and_drain("", RithmicError::ConnectionClosed);
                         true
                     } else {
                         self.handle_command(cmd).await;

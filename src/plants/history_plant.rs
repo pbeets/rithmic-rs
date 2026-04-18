@@ -317,10 +317,8 @@ impl PlantActor for HistoryPlant {
                     if matches!(cmd, HistoryPlantCommand::Abort) {
                         info!("history_plant: abort requested, shutting down immediately");
 
-                        self.core.fail_connection_and_drain(
-                            "",
-                            RithmicError::ConnectionClosed,
-                        );
+                        self.core
+                            .fail_connection_and_drain("", RithmicError::ConnectionClosed);
 
                         true
                     } else {

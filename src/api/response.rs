@@ -144,11 +144,9 @@ impl RithmicResponse {
 mod tests {
     use super::*;
     use crate::rti::{
-        AccountPnLPositionUpdate, BestBidOffer, BracketUpdates, DepthByOrder,
-        DepthByOrderEndEvent, ExchangeOrderNotification, ForcedLogout,
-        InstrumentPnLPositionUpdate, LastTrade, OrderBook,
-        RithmicOrderNotification,
-        messages::RithmicMessage,
+        AccountPnLPositionUpdate, BestBidOffer, BracketUpdates, DepthByOrder, DepthByOrderEndEvent,
+        ExchangeOrderNotification, ForcedLogout, InstrumentPnLPositionUpdate, LastTrade, OrderBook,
+        RithmicOrderNotification, messages::RithmicMessage,
     };
 
     /// Helper to create a test response with a specific message type
@@ -308,8 +306,7 @@ mod tests {
 
     #[test]
     fn error_field_forced_logout_is_connection_issue() {
-        let mut response =
-            make_response(RithmicMessage::ForcedLogout(ForcedLogout::default()));
+        let mut response = make_response(RithmicMessage::ForcedLogout(ForcedLogout::default()));
         response.error = Some(RithmicError::ForcedLogout("server shutdown".into()));
 
         let err = response.error.as_ref().expect("error should be set");

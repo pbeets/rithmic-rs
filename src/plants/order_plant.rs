@@ -454,10 +454,8 @@ impl PlantActor for OrderPlant {
                     if matches!(cmd, OrderPlantCommand::Abort) {
                         info!("order_plant: abort requested, shutting down immediately");
 
-                        self.core.fail_connection_and_drain(
-                            "",
-                            RithmicError::ConnectionClosed,
-                        );
+                        self.core
+                            .fail_connection_and_drain("", RithmicError::ConnectionClosed);
                         true
                     } else {
                         self.handle_command(cmd).await;

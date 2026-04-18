@@ -117,11 +117,7 @@ impl<S> PlantCore<S>
 where
     S: Sink<Message, Error = Error> + Unpin,
 {
-    pub(crate) fn emit_connection_health_event(
-        &self,
-        request_id: &str,
-        error: RithmicError,
-    ) {
+    pub(crate) fn emit_connection_health_event(&self, request_id: &str, error: RithmicError) {
         let message = error.as_connection_message();
         let error_response = RithmicResponse {
             request_id: request_id.to_string(),
@@ -136,11 +132,7 @@ where
         let _ = self.subscription_sender.send(error_response);
     }
 
-    pub(crate) fn fail_connection_and_drain(
-        &mut self,
-        request_id: &str,
-        error: RithmicError,
-    ) {
+    pub(crate) fn fail_connection_and_drain(&mut self, request_id: &str, error: RithmicError) {
         self.emit_connection_health_event(request_id, error);
         self.request_handler.drain_and_drop();
     }
@@ -354,10 +346,7 @@ where
                 if self.close_requested {
                     self.request_handler.drain_and_drop();
                 } else {
-                    self.fail_connection_and_drain(
-                        "",
-                        RithmicError::ConnectionClosed,
-                    );
+                    self.fail_connection_and_drain("", RithmicError::ConnectionClosed);
                 }
 
                 stop = true;
@@ -411,19 +400,13 @@ where
             Err(Error::ConnectionClosed) => {
                 let source = self.rithmic_receiver_api.source.clone();
                 error!("{}: connection closed", source);
-                self.fail_connection_and_drain(
-                    "",
-                    RithmicError::ConnectionClosed,
-                );
+                self.fail_connection_and_drain("", RithmicError::ConnectionClosed);
                 stop = true;
             }
             Err(Error::AlreadyClosed) => {
                 let source = self.rithmic_receiver_api.source.clone();
                 error!("{}: connection already closed", source);
-                self.fail_connection_and_drain(
-                    "",
-                    RithmicError::ConnectionClosed,
-                );
+                self.fail_connection_and_drain("", RithmicError::ConnectionClosed);
                 stop = true;
             }
             Err(Error::Io(ref io_err)) => {
@@ -438,28 +421,19 @@ where
             Err(Error::Protocol(ProtocolError::ResetWithoutClosingHandshake)) => {
                 let source = self.rithmic_receiver_api.source.clone();
                 error!("{}: connection reset without closing handshake", source);
-                self.fail_connection_and_drain(
-                    "",
-                    RithmicError::ConnectionClosed,
-                );
+                self.fail_connection_and_drain("", RithmicError::ConnectionClosed);
                 stop = true;
             }
             Err(Error::Protocol(ProtocolError::SendAfterClosing)) => {
                 let source = self.rithmic_receiver_api.source.clone();
                 error!("{}: attempted to send after closing", source);
-                self.fail_connection_and_drain(
-                    "",
-                    RithmicError::ConnectionClosed,
-                );
+                self.fail_connection_and_drain("", RithmicError::ConnectionClosed);
                 stop = true;
             }
             Err(Error::Protocol(ProtocolError::ReceivedAfterClosing)) => {
                 let source = self.rithmic_receiver_api.source.clone();
                 error!("{}: received data after closing", source);
-                self.fail_connection_and_drain(
-                    "",
-                    RithmicError::ConnectionClosed,
-                );
+                self.fail_connection_and_drain("", RithmicError::ConnectionClosed);
                 stop = true;
             }
             Err(e) => {
@@ -489,10 +463,7 @@ where
     pub(crate) fn handle_stream_closed(&mut self) -> bool {
         let source = &self.rithmic_receiver_api.source;
         error!("{}: WebSocket stream closed unexpectedly (EOF)", source);
-        self.fail_connection_and_drain(
-            "",
-            RithmicError::ConnectionClosed,
-        );
+        self.fail_connection_and_drain("", RithmicError::ConnectionClosed);
         true
     }
 }
@@ -780,10 +751,7 @@ mod tests {
         let (mut core, mut sub_rx) = make_test_core(MockMessageSink::ready(), reader);
         let mut rx1 = register_request(&mut core, "req-1");
 
-        core.fail_connection_and_drain(
-            "",
-            RithmicError::ProtocolError("test error".to_string()),
-        );
+        core.fail_connection_and_drain("", RithmicError::ProtocolError("test error".to_string()));
 
         // Subscription broadcast received the event
         let broadcast_msg = sub_rx.try_recv().unwrap();
@@ -806,10 +774,7 @@ mod tests {
         let reader = make_dormant_ws_reader().await;
         let (mut core, mut sub_rx) = make_test_core(MockMessageSink::ready(), reader);
 
-        core.fail_connection_and_drain(
-            "",
-            RithmicError::ProtocolError("no requests".to_string()),
-        );
+        core.fail_connection_and_drain("", RithmicError::ProtocolError("no requests".to_string()));
 
         let broadcast_msg = sub_rx.try_recv().unwrap();
         assert!(matches!(

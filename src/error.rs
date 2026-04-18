@@ -338,7 +338,10 @@ mod tests {
 
     #[test]
     fn heartbeat_timeout_display() {
-        assert_eq!(RithmicError::HeartbeatTimeout.to_string(), "heartbeat timeout");
+        assert_eq!(
+            RithmicError::HeartbeatTimeout.to_string(),
+            "heartbeat timeout"
+        );
     }
 
     #[test]
