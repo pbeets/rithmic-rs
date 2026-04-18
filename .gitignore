@@ -19,3 +19,16 @@ src/raw-proto/
 
 .claude/
 .cursor/
+
+# IDE / editor / OS dotfiles
+.idea/
+.vscode/
+.bash_profile
+.bashrc
+.gitconfig
+.gitmodules
+.mcp.json
+.profile
+.ripgreprc
+.zprofile
+.zshrc
