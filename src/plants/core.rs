@@ -155,7 +155,6 @@ where
         .await
         {
             Ok(()) => {}
-
             Err(WebSocketSendError::Transport(error)) => {
                 error!(
                     "{}: WebSocket send failed for request {}: {}",
@@ -168,7 +167,6 @@ where
                 self.request_handler
                     .fail_request(request_id, RithmicError::SendFailed);
             }
-
             Err(WebSocketSendError::Timeout) => {
                 error!(
                     "{}: WebSocket send timed out for request {} — sink poisoned",
@@ -209,7 +207,6 @@ where
 
                 false
             }
-
             Err(WebSocketSendError::Transport(error)) => {
                 error!(
                     "{}: WebSocket ping send failed — connection dead: {}",
@@ -225,7 +222,6 @@ where
 
                 true
             }
-
             Err(WebSocketSendError::Timeout) => {
                 error!(
                     "{}: WebSocket ping send timed out",
@@ -260,7 +256,6 @@ where
         .await
         {
             Ok(()) => false,
-
             Err(WebSocketSendError::Transport(error)) => {
                 error!(
                     "{}: heartbeat send failed — connection dead: {}",
@@ -276,7 +271,6 @@ where
 
                 true
             }
-
             Err(WebSocketSendError::Timeout) => {
                 error!(
                     "{}: heartbeat send timed out",
@@ -302,14 +296,12 @@ where
         .await
         {
             Ok(()) => {}
-
             Err(WebSocketSendError::Transport(error)) => {
                 warn!(
                     "{}: close send failed: {}",
                     self.rithmic_receiver_api.source, error
                 );
             }
-
             Err(WebSocketSendError::Timeout) => {
                 warn!("{}: close send timed out", self.rithmic_receiver_api.source);
             }
@@ -375,23 +367,19 @@ where
 
                 stop = true;
             }
-
             Ok(Message::Pong(_)) => {
                 self.ping_manager.received();
             }
-
             Ok(Message::Binary(data)) => {
                 let source = self.rithmic_receiver_api.source.clone();
                 match self.rithmic_receiver_api.buf_to_message(data) {
                     Ok(response) => self.forward_response(&source, response),
-
                     Err(err_response) => {
                         error!("{}: decode failure: {:?}", source, err_response);
                         self.forward_response(&source, err_response);
                     }
                 }
             }
-
             Ok(Message::Ping(data)) => {
                 // RFC 6455 §5.5.3: a Ping must be answered with a Pong carrying
                 // the same payload.  With a split sink/stream the tungstenite
@@ -406,7 +394,6 @@ where
                 .await
                 {
                     Ok(()) => {}
-
                     Err(e) => {
                         // Surfaced as ConnectionError (not HeartbeatTimeout): a
                         // pong is a reply to a server-initiated ping, not part
@@ -425,7 +412,6 @@ where
                     }
                 }
             }
-
             Err(Error::ConnectionClosed) => {
                 let source = self.rithmic_receiver_api.source.clone();
                 error!("{}: connection closed", source);
@@ -436,7 +422,6 @@ where
                 );
                 stop = true;
             }
-
             Err(Error::AlreadyClosed) => {
                 let source = self.rithmic_receiver_api.source.clone();
                 error!("{}: connection already closed", source);
@@ -447,7 +432,6 @@ where
                 );
                 stop = true;
             }
-
             Err(Error::Io(ref io_err)) => {
                 let source = self.rithmic_receiver_api.source.clone();
                 error!("{}: I/O error: {}", source, io_err);
@@ -458,7 +442,6 @@ where
                 );
                 stop = true;
             }
-
             Err(Error::Protocol(ProtocolError::ResetWithoutClosingHandshake)) => {
                 let source = self.rithmic_receiver_api.source.clone();
                 error!("{}: connection reset without closing handshake", source);
@@ -469,7 +452,6 @@ where
                 );
                 stop = true;
             }
-
             Err(Error::Protocol(ProtocolError::SendAfterClosing)) => {
                 let source = self.rithmic_receiver_api.source.clone();
                 error!("{}: attempted to send after closing", source);
@@ -480,7 +462,6 @@ where
                 );
                 stop = true;
             }
-
             Err(Error::Protocol(ProtocolError::ReceivedAfterClosing)) => {
                 let source = self.rithmic_receiver_api.source.clone();
                 error!("{}: received data after closing", source);
@@ -491,7 +472,6 @@ where
                 );
                 stop = true;
             }
-
             Err(e) => {
                 let source = self.rithmic_receiver_api.source.clone();
                 error!("{}: unhandled WebSocket error, closing: {}", source, e);
@@ -502,7 +482,6 @@ where
                 );
                 stop = true;
             }
-
             Ok(_) => {
                 warn!(
                     "{}: received unhandled message type",

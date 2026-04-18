@@ -445,7 +445,6 @@ impl PlantActor for OrderPlant {
             let stop = match result {
                 SelectResult::HeartbeatFired => self.core.send_heartbeat().await,
                 SelectResult::PingFired => self.core.send_ping().await,
-
                 SelectResult::PingTimeout => {
                     if self.core.ping_manager.check_timeout() {
                         if self.core.close_requested {
@@ -466,7 +465,6 @@ impl PlantActor for OrderPlant {
                         false
                     }
                 }
-
                 SelectResult::Command(cmd) => {
                     if matches!(cmd, OrderPlantCommand::Abort) {
                         info!("order_plant: abort requested, shutting down immediately");
@@ -482,7 +480,6 @@ impl PlantActor for OrderPlant {
                         false
                     }
                 }
-
                 SelectResult::RithmicMessage(msg) => self.core.handle_rithmic_message(msg).await,
                 SelectResult::StreamClosed => self.core.handle_stream_closed(),
             };
@@ -1166,7 +1163,6 @@ impl PlantActor for OrderPlant {
                     .send_or_fail(Message::Binary(req_buf.into()), &id)
                     .await;
             }
-
             OrderPlantCommand::Abort => {
                 unreachable!("Abort is handled in run() before handle_command");
             }

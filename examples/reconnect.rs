@@ -64,7 +64,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     loop {
         let plant = match RithmicTickerPlant::connect(&config, ConnectStrategy::Retry).await {
             Ok(p) => p,
-
             Err(e) => {
                 error!("Connect failed: {e}");
 
@@ -86,7 +85,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                     continue;
                 }
-
                 RithmicError::RequestRejected(err) => {
                     let code = err.code.as_deref().unwrap_or("?");
                     let msg = err.message.as_deref().unwrap_or("");
@@ -101,7 +99,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                     return Err(format!("login rejected: {code} / {msg}").into());
                 }
-
                 RithmicError::ProtocolError(msg) => {
                     error!("Login protocol error (fatal): {msg}");
 
@@ -110,7 +107,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                     return Err(format!("login protocol error: {msg}").into());
                 }
-
                 _ => {
                     error!("Login failed: {e}");
 
@@ -129,7 +125,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         for (symbol, exchange) in &subscriptions {
             match handle.subscribe(symbol, exchange).await {
                 Ok(_) => info!("Subscribed to {symbol} on {exchange}"),
-
                 Err(RithmicError::ConnectionClosed | RithmicError::SendFailed) => {
                     warn!("Subscribe failed (connection lost), reconnecting…");
 
@@ -137,7 +132,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                     break;
                 }
-
                 Err(RithmicError::RequestRejected(err)) => {
                     warn!(
                         "Subscribe rejected for {symbol}/{exchange}: code={} msg={} — skipping",
@@ -145,7 +139,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         err.message.as_deref().unwrap_or(""),
                     );
                 }
-
                 Err(e) => warn!("Subscribe error for {symbol}/{exchange}: {e}"),
             }
         }
@@ -175,7 +168,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                         break;
                     }
-
                     RithmicMessage::LastTrade(t) => {
                         received_data = true;
 
@@ -185,10 +177,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             t.trade_price.unwrap_or(0.0)
                         );
                     }
-
                     _ => {}
                 },
-
                 Err(RecvError::Lagged(skipped)) => {
                     warn!(
                         "Subscription lagged ({} messages dropped) — reconnecting to \
@@ -198,7 +188,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                     break;
                 }
-
                 Err(RecvError::Closed) => {
                     warn!("Subscription channel closed — reconnecting");
 
