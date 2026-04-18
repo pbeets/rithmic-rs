@@ -32,3 +32,4 @@ src/raw-proto/
 .ripgreprc
 .zprofile
 .zshrc
+.opencode/
