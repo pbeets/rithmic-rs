@@ -136,7 +136,7 @@
 //! For inspecting a `RithmicResponse` directly, use `response.request_error()` to
 //! obtain a typed [`RithmicError`] (rp_code rejection → `RequestRejected`, other
 //! non-transport failures → `ProtocolError`). The raw rp_code payload is available
-//! via `response.rp_code()`, `response.rp_code_first()`, and `response.rp_code_text()`.
+//! via `response.rp_code()`, `response.rp_code_num()`, and `response.rp_code_text()`.
 //!
 //! A graceful `disconnect().await` is separate from that reconnect path: it
 //! shuts the plant down without sending synthetic `HeartbeatTimeout` or

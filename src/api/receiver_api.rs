@@ -122,7 +122,7 @@ pub struct RithmicResponse {
     /// and non-rp_code failures as
     /// [`RithmicError::ProtocolError`](crate::error::RithmicError::ProtocolError).
     /// Raw rp_code payloads are exposed via [`RithmicResponse::rp_code`] /
-    /// [`RithmicResponse::rp_code_first`] / [`RithmicResponse::rp_code_text`].
+    /// [`RithmicResponse::rp_code_num`] / [`RithmicResponse::rp_code_text`].
     ///
     /// `Some("")` is possible: a single-element rp_code (e.g. `["5"]`) has no
     /// trailing message and renders as an empty display string. Don't branch
@@ -160,8 +160,8 @@ impl RithmicResponse {
         response_rp_code_info(&self.message).map(|(_, rp_code)| rp_code)
     }
 
-    /// First element of rp_code (the numeric code), if present.
-    pub fn rp_code_first(&self) -> Option<&str> {
+    /// Numeric portion of rp_code, if present.
+    pub fn rp_code_num(&self) -> Option<&str> {
         self.rp_code().and_then(|c| c.first().map(String::as_str))
     }
 
@@ -2493,7 +2493,7 @@ mod tests {
             ..ResponseListAcceptedAgreements::default()
         });
 
-        assert_eq!(response.rp_code_first(), Some("6"));
+        assert_eq!(response.rp_code_num(), Some("6"));
         assert_eq!(response.rp_code_text(), Some("agreement already signed"));
         assert!(matches!(
             response.request_error(),
