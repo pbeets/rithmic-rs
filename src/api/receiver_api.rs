@@ -77,8 +77,7 @@ use crate::rti::{
 ///
 /// ## Example: Handling Errors
 ///
-/// `response.error` is display-only — prefer the typed accessors below so a
-/// single-element rp_code (e.g. `["5"]`) doesn't surface as an empty string.
+/// `response.error` is display-only — see the `error` field docs for caveats.
 ///
 /// ```no_run
 /// # use rithmic_rs::RithmicResponse;
@@ -115,18 +114,17 @@ pub struct RithmicResponse {
     pub has_more: bool,
     pub multi_response: bool,
 
-    /// Display-only view of a protocol-level rejection or non-transport
-    /// failure. For typed access use [`RithmicResponse::request_error`]
-    /// — it classifies rp_code rejections as
+    /// Display-only string for a protocol-level rejection. For typed access use
+    /// [`RithmicResponse::request_error`] — it classifies rp_code rejections as
     /// [`RithmicError::RequestRejected`](crate::error::RithmicError::RequestRejected)
     /// and non-rp_code failures as
     /// [`RithmicError::ProtocolError`](crate::error::RithmicError::ProtocolError).
-    /// Raw rp_code payloads are exposed via [`RithmicResponse::rp_code`] /
+    /// Raw rp_code payloads are available via [`RithmicResponse::rp_code`] /
     /// [`RithmicResponse::rp_code_num`] / [`RithmicResponse::rp_code_text`].
     ///
     /// `Some("")` is possible: a single-element rp_code (e.g. `["5"]`) has no
-    /// trailing message and renders as an empty display string. Don't branch
-    /// on `error.is_some()` — use [`RithmicResponse::request_error`].
+    /// trailing message. Don't branch on `error.is_some()` — use
+    /// [`RithmicResponse::request_error`].
     pub error: Option<String>,
     pub source: String,
 }
@@ -1823,11 +1821,9 @@ rp_code_response_variants!(define_response_rp_code_info);
 // decode test — e.g. `["7", "an error occurred while parsing data."]` shares
 // code "7" but is a real error.
 fn classify_rp_code(rp_code: &[String]) -> RpCodeClassification {
-    // Per §2.1.b of the Rithmic Reference Guide, `rp_code[0] == "0"` is the
-    // authoritative "success" signal regardless of whether a trailing message
-    // is present. `[]` is also success (e.g. an intermediate multipart frame
-    // that doesn't carry rp_code at all wouldn't reach here anyway, but be
-    // conservative).
+    // Per §2.1.b, `rp_code[0] == "0"` is the authoritative success signal.
+    // Empty rp_code = success (defensive — multipart intermediates don't carry
+    // rp_code and short-circuit earlier, but this covers any edge case).
     if rp_code.is_empty() || rp_code[0] == "0" {
         return RpCodeClassification::Success;
     }
@@ -2459,7 +2455,7 @@ mod tests {
     }
 
     // =========================================================================
-    // PR 60 ported tests: typed rejection surface and macro-driven rp_code info
+    // Typed rejection surface and macro-driven rp_code info
     // =========================================================================
 
     #[test]

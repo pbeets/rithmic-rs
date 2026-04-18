@@ -26,9 +26,9 @@ pub struct RithmicRequestError {
 }
 
 /// Filter ASCII/Unicode control characters from server-supplied strings before
-/// they reach a log sink or terminal. Protects against log-injection (newlines,
-/// `\r`) and ANSI-escape attacks (`ESC`) when the Rithmic wire payload is
-/// rendered via `Display`.
+/// they reach a log sink or terminal. Protects against log injection (newlines,
+/// `\r`) and ANSI-escape attacks when the Rithmic wire payload is rendered via
+/// `Display`.
 fn sanitize_for_display(s: &str) -> String {
     s.chars().filter(|c| !c.is_control()).collect()
 }
@@ -82,14 +82,11 @@ pub enum RithmicError {
     ConnectionClosed,
     /// WebSocket send failed or timed out after the request was registered.
     ///
-    /// Treat this as a connection-health failure for the current request path and
-    /// trigger your reconnection logic if the request is required for continued
-    /// trading. This error alone does not prove that the actor has already shut
-    /// down; keep-alive failure detection can still emit a synthetic
+    /// Treat as a connection-health failure. This error alone does not prove the
+    /// actor has shut down; keep-alive failure detection can still emit
     /// [`crate::rti::messages::RithmicMessage::HeartbeatTimeout`] or
-    /// [`crate::rti::messages::RithmicMessage::ConnectionError`] update if the
-    /// connection is actually dead. A successful `disconnect()` on a plant
-    /// handle does not emit those synthetic health events.
+    /// [`crate::rti::messages::RithmicMessage::ConnectionError`] if the
+    /// connection is actually dead.
     SendFailed,
     /// Server returned an empty response where at least one was expected.
     EmptyResponse,
