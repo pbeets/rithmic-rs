@@ -305,8 +305,7 @@ impl PlantActor for HistoryPlant {
                         } else {
                             self.core.fail_connection_and_drain(
                                 "websocket_ping_timeout",
-                                RithmicMessage::HeartbeatTimeout,
-                                "WebSocket ping timeout - connection dead",
+                                RithmicError::HeartbeatTimeout,
                             );
                         }
                         true
@@ -320,8 +319,7 @@ impl PlantActor for HistoryPlant {
 
                         self.core.fail_connection_and_drain(
                             "",
-                            RithmicMessage::ConnectionError,
-                            "Plant aborted",
+                            RithmicError::ConnectionClosed,
                         );
 
                         true
@@ -629,7 +627,7 @@ impl RithmicHistoryPlantHandle {
             .next()
             .ok_or(RithmicError::EmptyResponse)?;
 
-        if let Some(err) = response.request_error() {
+        if let Some(err) = response.error.clone() {
             error!("history_plant: login failed {:?}", err);
 
             return Err(err);

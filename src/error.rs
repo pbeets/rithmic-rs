@@ -100,6 +100,37 @@ pub enum RithmicError {
     /// A caller-supplied argument is invalid (the message describes which argument
     /// and why).
     InvalidArgument(String),
+    /// Keep-alive detected the connection is dead.
+    HeartbeatTimeout,
+    /// Server terminated the session with a reason string.
+    ForcedLogout(String),
+}
+
+impl RithmicError {
+    /// Returns true when this error reflects a transport/connection-health failure
+    /// rather than a protocol-level rejection.
+    pub fn is_connection_issue(&self) -> bool {
+        matches!(
+            self,
+            Self::ConnectionFailed(_)
+                | Self::ConnectionClosed
+                | Self::SendFailed
+                | Self::HeartbeatTimeout
+                | Self::ForcedLogout(_)
+        )
+    }
+
+    /// Maps this error to the synthetic subscription [`RithmicMessage`] that a
+    /// connection-health broadcast should carry. `HeartbeatTimeout` preserves
+    /// the keep-alive signal; every other variant surfaces as `ConnectionError`.
+    ///
+    /// [`RithmicMessage`]: crate::rti::messages::RithmicMessage
+    pub fn as_connection_message(&self) -> crate::rti::messages::RithmicMessage {
+        match self {
+            Self::HeartbeatTimeout => crate::rti::messages::RithmicMessage::HeartbeatTimeout,
+            _ => crate::rti::messages::RithmicMessage::ConnectionError,
+        }
+    }
 }
 
 impl fmt::Display for RithmicError {
@@ -112,6 +143,10 @@ impl fmt::Display for RithmicError {
             RithmicError::RequestRejected(err) => write!(f, "request rejected: {err}"),
             RithmicError::ProtocolError(msg) => write!(f, "protocol error: {msg}"),
             RithmicError::InvalidArgument(msg) => write!(f, "invalid argument: {msg}"),
+            RithmicError::HeartbeatTimeout => write!(f, "heartbeat timeout"),
+            RithmicError::ForcedLogout(reason) => {
+                write!(f, "forced logout: {}", sanitize_for_display(reason))
+            }
         }
     }
 }
@@ -247,9 +282,8 @@ mod tests {
 
     #[test]
     fn plant_rejection_mapping_produces_request_rejected() {
-        // Plant login helpers call `response.request_error()`; for an rp_code
-        // rejection the new mapping yields `RithmicError::RequestRejected`
-        // carrying the full structured payload.
+        // For an rp_code rejection, `response.error` is populated with
+        // `RithmicError::RequestRejected` carrying the full structured payload.
         let err = RithmicRequestError {
             rp_code: vec!["3".to_string(), "bad request".to_string()],
             code: Some("3".to_string()),
@@ -300,5 +334,62 @@ mod tests {
         let err = RithmicError::ProtocolError("decode failed".to_string());
 
         assert_eq!(err.to_string(), "protocol error: decode failed");
+    }
+
+    #[test]
+    fn heartbeat_timeout_display() {
+        assert_eq!(RithmicError::HeartbeatTimeout.to_string(), "heartbeat timeout");
+    }
+
+    #[test]
+    fn forced_logout_display() {
+        assert_eq!(
+            RithmicError::ForcedLogout("srv reason".into()).to_string(),
+            "forced logout: srv reason"
+        );
+    }
+
+    #[test]
+    fn forced_logout_sanitizes_control_chars() {
+        let err = RithmicError::ForcedLogout("bad\nreason".into());
+        assert_eq!(err.to_string(), "forced logout: badreason");
+    }
+
+    #[test]
+    fn is_connection_issue_true_for_transport_variants() {
+        assert!(RithmicError::ConnectionFailed("x".into()).is_connection_issue());
+        assert!(RithmicError::ConnectionClosed.is_connection_issue());
+        assert!(RithmicError::SendFailed.is_connection_issue());
+        assert!(RithmicError::HeartbeatTimeout.is_connection_issue());
+        assert!(RithmicError::ForcedLogout("x".into()).is_connection_issue());
+    }
+
+    #[test]
+    fn is_connection_issue_false_for_protocol_variants() {
+        let req = RithmicRequestError {
+            rp_code: vec!["3".into(), "x".into()],
+            code: Some("3".into()),
+            message: Some("x".into()),
+        };
+        assert!(!RithmicError::RequestRejected(req).is_connection_issue());
+        assert!(!RithmicError::ProtocolError("x".into()).is_connection_issue());
+        assert!(!RithmicError::InvalidArgument("x".into()).is_connection_issue());
+        assert!(!RithmicError::EmptyResponse.is_connection_issue());
+    }
+
+    #[test]
+    fn as_connection_message_heartbeat_timeout() {
+        assert!(matches!(
+            RithmicError::HeartbeatTimeout.as_connection_message(),
+            crate::rti::messages::RithmicMessage::HeartbeatTimeout
+        ));
+    }
+
+    #[test]
+    fn as_connection_message_connection_failed() {
+        assert!(matches!(
+            RithmicError::ConnectionFailed("x".into()).as_connection_message(),
+            crate::rti::messages::RithmicMessage::ConnectionError
+        ));
     }
 }

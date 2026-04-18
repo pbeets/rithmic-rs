@@ -16,7 +16,9 @@
 //! - [`RithmicResponse`]: Wrapper for all messages from Rithmic plants
 
 pub(crate) mod receiver_api;
+pub(crate) mod response;
 pub(crate) mod rithmic_command_types;
+pub(crate) mod rp_code;
 pub(crate) mod sender_api;
 
 // Re-export commonly used types

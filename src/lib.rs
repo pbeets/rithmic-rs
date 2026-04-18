@@ -38,9 +38,10 @@
 //!         match handle.subscription_receiver.recv().await {
 //!             Ok(update) => {
 //!                 // Check for connection health issues
-//!                 if let Some(error) = &update.error {
-//!                     eprintln!("Error: {}", error);
-//!                     break;
+//!                 if let Some(err) = &update.error {
+//!                     eprintln!("Error: {}", err);
+//!                     if err.is_connection_issue() { break; }
+//!                     continue;
 //!                 }
 //!
 //!                 // Process market data
@@ -133,10 +134,12 @@
 //! }
 //! ```
 //!
-//! For inspecting a `RithmicResponse` directly, use `response.request_error()` to
-//! obtain a typed [`RithmicError`] (rp_code rejection → `RequestRejected`, other
-//! non-transport failures → `ProtocolError`). The raw rp_code payload is available
-//! via `response.rp_code()`, `response.rp_code_num()`, and `response.rp_code_text()`.
+//! For inspecting a `RithmicResponse` directly, match on `response.error` — it
+//! is `Option<RithmicError>` with `RequestRejected` for rp_code rejections and
+//! `ProtocolError` for other non-transport failures. Use
+//! [`RithmicError::is_connection_issue`] to distinguish transport-level events
+//! that warrant reconnection. The raw rp_code payload is available via
+//! `response.rp_code()`, `response.rp_code_num()`, and `response.rp_code_text()`.
 //!
 //! A graceful `disconnect().await` is separate from that reconnect path: it
 //! shuts the plant down without sending synthetic `HeartbeatTimeout` or

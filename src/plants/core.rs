@@ -120,16 +120,16 @@ where
     pub(crate) fn emit_connection_health_event(
         &self,
         request_id: &str,
-        message: RithmicMessage,
-        error_message: impl Into<String>,
+        error: RithmicError,
     ) {
+        let message = error.as_connection_message();
         let error_response = RithmicResponse {
             request_id: request_id.to_string(),
             message,
             is_update: true,
             has_more: false,
             multi_response: false,
-            error: Some(error_message.into()),
+            error: Some(error),
             source: self.rithmic_receiver_api.source.clone(),
         };
 
@@ -139,10 +139,9 @@ where
     pub(crate) fn fail_connection_and_drain(
         &mut self,
         request_id: &str,
-        message: RithmicMessage,
-        error_message: impl Into<String>,
+        error: RithmicError,
     ) {
-        self.emit_connection_health_event(request_id, message, error_message);
+        self.emit_connection_health_event(request_id, error);
         self.request_handler.drain_and_drop();
     }
 
@@ -180,8 +179,9 @@ where
                 // The next ping/heartbeat tick will stop the actor loop.
                 self.fail_connection_and_drain(
                     request_id,
-                    RithmicMessage::ConnectionError,
-                    "WebSocket send timed out — sink poisoned",
+                    RithmicError::ConnectionFailed(
+                        "WebSocket send timed out — sink poisoned".to_string(),
+                    ),
                 );
             }
         }
@@ -216,8 +216,7 @@ where
                 // see the same signal as a true ping timeout.
                 self.fail_connection_and_drain(
                     "websocket_ping_send_failed",
-                    RithmicMessage::HeartbeatTimeout,
-                    format!("WebSocket ping send failed — connection dead: {error}"),
+                    RithmicError::HeartbeatTimeout,
                 );
 
                 true
@@ -229,8 +228,7 @@ where
                 );
                 self.fail_connection_and_drain(
                     "websocket_ping_timeout",
-                    RithmicMessage::HeartbeatTimeout,
-                    "WebSocket ping send timed out - connection dead",
+                    RithmicError::HeartbeatTimeout,
                 );
 
                 true
@@ -265,8 +263,7 @@ where
                 // true heartbeat timeout).
                 self.fail_connection_and_drain(
                     "heartbeat_send_failed",
-                    RithmicMessage::HeartbeatTimeout,
-                    format!("Heartbeat send failed — connection dead: {error}"),
+                    RithmicError::HeartbeatTimeout,
                 );
 
                 true
@@ -278,8 +275,7 @@ where
                 );
                 self.fail_connection_and_drain(
                     "heartbeat_send_timeout",
-                    RithmicMessage::HeartbeatTimeout,
-                    "Heartbeat send timed out - connection dead",
+                    RithmicError::HeartbeatTimeout,
                 );
 
                 true
@@ -360,8 +356,7 @@ where
                 } else {
                     self.fail_connection_and_drain(
                         "",
-                        RithmicMessage::ConnectionError,
-                        format!("WebSocket close frame received: {:?}", frame),
+                        RithmicError::ConnectionClosed,
                     );
                 }
 
@@ -405,8 +400,9 @@ where
                         warn!("{}: failed to send pong: {:?}", source, e);
                         self.fail_connection_and_drain(
                             "",
-                            RithmicMessage::ConnectionError,
-                            "Failed to send pong — sink dead",
+                            RithmicError::ConnectionFailed(
+                                "Failed to send pong — sink dead".to_string(),
+                            ),
                         );
                         stop = true;
                     }
@@ -417,8 +413,7 @@ where
                 error!("{}: connection closed", source);
                 self.fail_connection_and_drain(
                     "",
-                    RithmicMessage::ConnectionError,
-                    "WebSocket connection closed",
+                    RithmicError::ConnectionClosed,
                 );
                 stop = true;
             }
@@ -427,8 +422,7 @@ where
                 error!("{}: connection already closed", source);
                 self.fail_connection_and_drain(
                     "",
-                    RithmicMessage::ConnectionError,
-                    "WebSocket connection already closed",
+                    RithmicError::ConnectionClosed,
                 );
                 stop = true;
             }
@@ -437,8 +431,7 @@ where
                 error!("{}: I/O error: {}", source, io_err);
                 self.fail_connection_and_drain(
                     "",
-                    RithmicMessage::ConnectionError,
-                    format!("WebSocket I/O error: {}", io_err),
+                    RithmicError::ConnectionFailed(format!("WebSocket I/O error: {}", io_err)),
                 );
                 stop = true;
             }
@@ -447,8 +440,7 @@ where
                 error!("{}: connection reset without closing handshake", source);
                 self.fail_connection_and_drain(
                     "",
-                    RithmicMessage::ConnectionError,
-                    "WebSocket connection reset without closing handshake",
+                    RithmicError::ConnectionClosed,
                 );
                 stop = true;
             }
@@ -457,8 +449,7 @@ where
                 error!("{}: attempted to send after closing", source);
                 self.fail_connection_and_drain(
                     "",
-                    RithmicMessage::ConnectionError,
-                    "WebSocket attempted to send after closing",
+                    RithmicError::ConnectionClosed,
                 );
                 stop = true;
             }
@@ -467,8 +458,7 @@ where
                 error!("{}: received data after closing", source);
                 self.fail_connection_and_drain(
                     "",
-                    RithmicMessage::ConnectionError,
-                    "WebSocket received data after closing",
+                    RithmicError::ConnectionClosed,
                 );
                 stop = true;
             }
@@ -477,8 +467,7 @@ where
                 error!("{}: unhandled WebSocket error, closing: {}", source, e);
                 self.fail_connection_and_drain(
                     "",
-                    RithmicMessage::ConnectionError,
-                    format!("WebSocket error: {e}"),
+                    RithmicError::ConnectionFailed(format!("WebSocket error: {e}")),
                 );
                 stop = true;
             }
@@ -502,8 +491,7 @@ where
         error!("{}: WebSocket stream closed unexpectedly (EOF)", source);
         self.fail_connection_and_drain(
             "",
-            RithmicMessage::ConnectionError,
-            "WebSocket stream closed unexpectedly",
+            RithmicError::ConnectionClosed,
         );
         true
     }
@@ -792,7 +780,10 @@ mod tests {
         let (mut core, mut sub_rx) = make_test_core(MockMessageSink::ready(), reader);
         let mut rx1 = register_request(&mut core, "req-1");
 
-        core.fail_connection_and_drain("", RithmicMessage::ConnectionError, "test error");
+        core.fail_connection_and_drain(
+            "",
+            RithmicError::ProtocolError("test error".to_string()),
+        );
 
         // Subscription broadcast received the event
         let broadcast_msg = sub_rx.try_recv().unwrap();
@@ -800,7 +791,10 @@ mod tests {
             broadcast_msg.message,
             RithmicMessage::ConnectionError
         ));
-        assert_eq!(broadcast_msg.error.as_deref(), Some("test error"));
+        assert!(matches!(
+            &broadcast_msg.error,
+            Some(RithmicError::ProtocolError(s)) if s == "test error"
+        ));
 
         // Pending request was drained with ConnectionClosed
         let result = rx1.try_recv().unwrap();
@@ -812,7 +806,10 @@ mod tests {
         let reader = make_dormant_ws_reader().await;
         let (mut core, mut sub_rx) = make_test_core(MockMessageSink::ready(), reader);
 
-        core.fail_connection_and_drain("", RithmicMessage::ConnectionError, "no requests");
+        core.fail_connection_and_drain(
+            "",
+            RithmicError::ProtocolError("no requests".to_string()),
+        );
 
         let broadcast_msg = sub_rx.try_recv().unwrap();
         assert!(matches!(
@@ -875,7 +872,13 @@ mod tests {
             "send_or_fail timeout should broadcast ConnectionError, got {:?}",
             broadcast_msg.message
         );
-        assert!(broadcast_msg.is_connection_issue());
+        assert!(
+            broadcast_msg
+                .error
+                .as_ref()
+                .expect("error should be set")
+                .is_connection_issue()
+        );
     }
 
     #[tokio::test]
@@ -923,7 +926,13 @@ mod tests {
             broadcast_msg.message
         );
         // Still satisfies is_connection_issue() for reconnect-driving callers.
-        assert!(broadcast_msg.is_connection_issue());
+        assert!(
+            broadcast_msg
+                .error
+                .as_ref()
+                .expect("error should be set")
+                .is_connection_issue()
+        );
     }
 
     #[tokio::test]
@@ -997,7 +1006,13 @@ mod tests {
             broadcast_msg.message
         );
         // Still satisfies is_connection_issue() for reconnect-driving callers.
-        assert!(broadcast_msg.is_connection_issue());
+        assert!(
+            broadcast_msg
+                .error
+                .as_ref()
+                .expect("error should be set")
+                .is_connection_issue()
+        );
     }
 
     #[tokio::test]
@@ -1243,7 +1258,10 @@ mod tests {
 
         let result = rx1.try_recv().unwrap().unwrap();
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0].error.as_deref(), Some("some rejection"));
+        assert!(matches!(
+            &result[0].error,
+            Some(RithmicError::RequestRejected(e)) if e.message.as_deref() == Some("some rejection")
+        ));
 
         assert!(matches!(
             rx2.try_recv(),
@@ -1344,8 +1362,10 @@ mod tests {
             broadcast_msg.message,
             RithmicMessage::HeartbeatTimeout
         ));
-        assert_eq!(broadcast_msg.error.as_deref(), Some("heartbeat rejected"));
-        assert!(broadcast_msg.is_connection_issue());
+        assert!(matches!(
+            &broadcast_msg.error,
+            Some(RithmicError::RequestRejected(e)) if e.message.as_deref() == Some("heartbeat rejected")
+        ));
 
         // Oneshot still resolves with the original ResponseHeartbeat frame so
         // callers awaiting a ping/heartbeat request don't hang.
@@ -1355,7 +1375,10 @@ mod tests {
             result[0].message,
             RithmicMessage::ResponseHeartbeat(_)
         ));
-        assert_eq!(result[0].error.as_deref(), Some("heartbeat rejected"));
+        assert!(matches!(
+            &result[0].error,
+            Some(RithmicError::RequestRejected(e)) if e.message.as_deref() == Some("heartbeat rejected")
+        ));
     }
 
     /// Multi-part request flow: an intermediate frame (has_more = true) is
@@ -1418,6 +1441,9 @@ mod tests {
         let result = rx.try_recv().unwrap().unwrap();
         assert_eq!(result.len(), 2, "both accumulated frames must be flushed");
         assert!(result[0].error.is_none());
-        assert_eq!(result[1].error.as_deref(), Some("bad"));
+        assert!(matches!(
+            &result[1].error,
+            Some(RithmicError::RequestRejected(e)) if e.message.as_deref() == Some("bad")
+        ));
     }
 }

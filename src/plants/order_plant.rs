@@ -276,30 +276,16 @@ pub(crate) enum OrderPlantCommand {
 ///         match handle.subscription_receiver.recv().await {
 ///             Ok(update) => {
 ///                 // Check for errors on all messages
-///                 if let Some(error) = &update.error {
-///                     eprintln!("Error from {}: {}", update.source, error);
+///                 if let Some(err) = &update.error {
+///                     eprintln!("Error from {}: {}", update.source, err);
+///                     if err.is_connection_issue() {
+///                         eprintln!("Connection health issue - reconnection needed");
+///                         break;
+///                     }
+///                     continue;
 ///                 }
 ///
-///                 // Handle connection health issues
 ///                 match update.message {
-///                     RithmicMessage::HeartbeatTimeout => {
-///                         eprintln!("Connection timeout - reconnection needed");
-///
-///                         break;
-///                     }
-///
-///                     RithmicMessage::ForcedLogout(_) => {
-///                         eprintln!("Forced logout - reconnection needed");
-///
-///                         break;
-///                     }
-///
-///                     RithmicMessage::ConnectionError => {
-///                         eprintln!("Connection error - reconnection needed");
-///
-///                         break;
-///                     }
-///
 ///                     RithmicMessage::RithmicOrderNotification(order) => {
 ///                         println!("Order notification: {:?}", order);
 ///                     }
@@ -456,8 +442,7 @@ impl PlantActor for OrderPlant {
                         } else {
                             self.core.fail_connection_and_drain(
                                 "websocket_ping_timeout",
-                                RithmicMessage::HeartbeatTimeout,
-                                "WebSocket ping timeout - connection dead",
+                                RithmicError::HeartbeatTimeout,
                             );
                         }
                         true
@@ -471,8 +456,7 @@ impl PlantActor for OrderPlant {
 
                         self.core.fail_connection_and_drain(
                             "",
-                            RithmicMessage::ConnectionError,
-                            "Plant aborted",
+                            RithmicError::ConnectionClosed,
                         );
                         true
                     } else {
@@ -1256,7 +1240,7 @@ impl RithmicOrderPlantHandle {
             .next()
             .ok_or(RithmicError::EmptyResponse)?;
 
-        if let Some(err) = response.request_error() {
+        if let Some(err) = response.error.clone() {
             error!("order_plant: login failed {:?}", err);
 
             return Err(err);

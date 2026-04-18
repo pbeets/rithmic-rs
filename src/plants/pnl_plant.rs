@@ -240,8 +240,7 @@ impl PlantActor for PnlPlant {
                         } else {
                             self.core.fail_connection_and_drain(
                                 "websocket_ping_timeout",
-                                RithmicMessage::HeartbeatTimeout,
-                                "WebSocket ping timeout - connection dead",
+                                RithmicError::HeartbeatTimeout,
                             );
                         }
                         true
@@ -255,8 +254,7 @@ impl PlantActor for PnlPlant {
 
                         self.core.fail_connection_and_drain(
                             "",
-                            RithmicMessage::ConnectionError,
-                            "Plant aborted",
+                            RithmicError::ConnectionClosed,
                         );
                         true
                     } else {
@@ -447,7 +445,7 @@ impl RithmicPnlPlantHandle {
             .next()
             .ok_or(RithmicError::EmptyResponse)?;
 
-        if let Some(err) = response.request_error() {
+        if let Some(err) = response.error.clone() {
             error!("pnl_plant: login failed {:?}", err);
 
             return Err(err);

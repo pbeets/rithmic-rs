@@ -237,11 +237,9 @@ impl TickerPlantCommand {
 ///         match handle.subscription_receiver.recv().await {
 ///             Ok(update) => {
 ///                 // Check for connection errors
-///                 if let Some(error) = &update.error {
-///                     eprintln!("Error from {}: {}", update.source, error);
-///
-///                     // Ping timeout or heartbeat error - connection may be dead
-///                     if matches!(update.message, RithmicMessage::HeartbeatTimeout) {
+///                 if let Some(err) = &update.error {
+///                     eprintln!("Error from {}: {}", update.source, err);
+///                     if err.is_connection_issue() {
 ///                         eprintln!("Connection health issue - reconnection needed");
 ///                         break;
 ///                     }
@@ -413,8 +411,7 @@ impl PlantActor for TickerPlant {
                         } else {
                             self.core.fail_connection_and_drain(
                                 "websocket_ping_timeout",
-                                RithmicMessage::HeartbeatTimeout,
-                                "WebSocket ping timeout - connection dead",
+                                RithmicError::HeartbeatTimeout,
                             );
                         }
                         true
@@ -428,8 +425,7 @@ impl PlantActor for TickerPlant {
 
                         self.core.fail_connection_and_drain(
                             "",
-                            RithmicMessage::ConnectionError,
-                            "Plant aborted",
+                            RithmicError::ConnectionClosed,
                         );
                         true
                     } else {
@@ -881,7 +877,7 @@ impl RithmicTickerPlantHandle {
             .next()
             .ok_or(RithmicError::EmptyResponse)?;
 
-        if let Some(err) = response.request_error() {
+        if let Some(err) = response.error.clone() {
             error!("ticker_plant: login failed {:?}", err);
 
             return Err(err);
