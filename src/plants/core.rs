@@ -87,7 +87,6 @@ impl PlantCore<WsSink> {
             .map_err(|e| RithmicError::ConnectionFailed(e.to_string()))?;
 
         let (rithmic_sender, rithmic_reader) = ws_stream.split();
-
         let rithmic_sender_api = RithmicSenderApi::new(config);
         let rithmic_receiver_api = RithmicReceiverApi {
             source: source.to_string(),
@@ -156,6 +155,7 @@ where
         .await
         {
             Ok(()) => {}
+
             Err(WebSocketSendError::Transport(error)) => {
                 error!(
                     "{}: WebSocket send failed for request {}: {}",
@@ -168,6 +168,7 @@ where
                 self.request_handler
                     .fail_request(request_id, RithmicError::SendFailed);
             }
+
             Err(WebSocketSendError::Timeout) => {
                 error!(
                     "{}: WebSocket send timed out for request {} — sink poisoned",
@@ -205,8 +206,10 @@ where
         {
             Ok(()) => {
                 self.ping_manager.sent();
+
                 false
             }
+
             Err(WebSocketSendError::Transport(error)) => {
                 error!(
                     "{}: WebSocket ping send failed — connection dead: {}",
@@ -219,8 +222,10 @@ where
                     RithmicMessage::HeartbeatTimeout,
                     format!("WebSocket ping send failed — connection dead: {error}"),
                 );
+
                 true
             }
+
             Err(WebSocketSendError::Timeout) => {
                 error!(
                     "{}: WebSocket ping send timed out",
@@ -231,6 +236,7 @@ where
                     RithmicMessage::HeartbeatTimeout,
                     "WebSocket ping send timed out - connection dead",
                 );
+
                 true
             }
         }
@@ -254,6 +260,7 @@ where
         .await
         {
             Ok(()) => false,
+
             Err(WebSocketSendError::Transport(error)) => {
                 error!(
                     "{}: heartbeat send failed — connection dead: {}",
@@ -266,8 +273,10 @@ where
                     RithmicMessage::HeartbeatTimeout,
                     format!("Heartbeat send failed — connection dead: {error}"),
                 );
+
                 true
             }
+
             Err(WebSocketSendError::Timeout) => {
                 error!(
                     "{}: heartbeat send timed out",
@@ -278,6 +287,7 @@ where
                     RithmicMessage::HeartbeatTimeout,
                     "Heartbeat send timed out - connection dead",
                 );
+
                 true
             }
         }
@@ -292,12 +302,14 @@ where
         .await
         {
             Ok(()) => {}
+
             Err(WebSocketSendError::Transport(error)) => {
                 warn!(
                     "{}: close send failed: {}",
                     self.rithmic_receiver_api.source, error
                 );
             }
+
             Err(WebSocketSendError::Timeout) => {
                 warn!("{}: close send timed out", self.rithmic_receiver_api.source);
             }
@@ -328,6 +340,7 @@ where
                 };
                 let _ = self.subscription_sender.send(synthetic);
             }
+
             self.request_handler.handle_response(response);
             return;
         }
@@ -349,6 +362,7 @@ where
             Ok(Message::Close(frame)) => {
                 let source = self.rithmic_receiver_api.source.clone();
                 info!("{}: received close frame: {:?}", source, frame);
+
                 if self.close_requested {
                     self.request_handler.drain_and_drop();
                 } else {
@@ -358,21 +372,26 @@ where
                         format!("WebSocket close frame received: {:?}", frame),
                     );
                 }
+
                 stop = true;
             }
+
             Ok(Message::Pong(_)) => {
                 self.ping_manager.received();
             }
+
             Ok(Message::Binary(data)) => {
                 let source = self.rithmic_receiver_api.source.clone();
                 match self.rithmic_receiver_api.buf_to_message(data) {
                     Ok(response) => self.forward_response(&source, response),
+
                     Err(err_response) => {
                         error!("{}: decode failure: {:?}", source, err_response);
                         self.forward_response(&source, err_response);
                     }
                 }
             }
+
             Ok(Message::Ping(data)) => {
                 // RFC 6455 §5.5.3: a Ping must be answered with a Pong carrying
                 // the same payload.  With a split sink/stream the tungstenite
@@ -387,6 +406,7 @@ where
                 .await
                 {
                     Ok(()) => {}
+
                     Err(e) => {
                         // Surfaced as ConnectionError (not HeartbeatTimeout): a
                         // pong is a reply to a server-initiated ping, not part
@@ -405,6 +425,7 @@ where
                     }
                 }
             }
+
             Err(Error::ConnectionClosed) => {
                 let source = self.rithmic_receiver_api.source.clone();
                 error!("{}: connection closed", source);
@@ -415,6 +436,7 @@ where
                 );
                 stop = true;
             }
+
             Err(Error::AlreadyClosed) => {
                 let source = self.rithmic_receiver_api.source.clone();
                 error!("{}: connection already closed", source);
@@ -425,6 +447,7 @@ where
                 );
                 stop = true;
             }
+
             Err(Error::Io(ref io_err)) => {
                 let source = self.rithmic_receiver_api.source.clone();
                 error!("{}: I/O error: {}", source, io_err);
@@ -435,6 +458,7 @@ where
                 );
                 stop = true;
             }
+
             Err(Error::Protocol(ProtocolError::ResetWithoutClosingHandshake)) => {
                 let source = self.rithmic_receiver_api.source.clone();
                 error!("{}: connection reset without closing handshake", source);
@@ -445,6 +469,7 @@ where
                 );
                 stop = true;
             }
+
             Err(Error::Protocol(ProtocolError::SendAfterClosing)) => {
                 let source = self.rithmic_receiver_api.source.clone();
                 error!("{}: attempted to send after closing", source);
@@ -455,6 +480,7 @@ where
                 );
                 stop = true;
             }
+
             Err(Error::Protocol(ProtocolError::ReceivedAfterClosing)) => {
                 let source = self.rithmic_receiver_api.source.clone();
                 error!("{}: received data after closing", source);
@@ -465,6 +491,7 @@ where
                 );
                 stop = true;
             }
+
             Err(e) => {
                 let source = self.rithmic_receiver_api.source.clone();
                 error!("{}: unhandled WebSocket error, closing: {}", source, e);
@@ -475,6 +502,7 @@ where
                 );
                 stop = true;
             }
+
             Ok(_) => {
                 warn!(
                     "{}: received unhandled message type",
@@ -783,7 +811,6 @@ mod tests {
     async fn fail_connection_and_drain_broadcasts_and_drains_pending() {
         let reader = make_dormant_ws_reader().await;
         let (mut core, mut sub_rx) = make_test_core(MockMessageSink::ready(), reader);
-
         let mut rx1 = register_request(&mut core, "req-1");
 
         core.fail_connection_and_drain("", RithmicMessage::ConnectionError, "test error");
@@ -819,7 +846,6 @@ mod tests {
     async fn send_or_fail_transport_error_fails_only_that_request() {
         let reader = make_dormant_ws_reader().await;
         let (mut core, _sub_rx) = make_test_core(MockMessageSink::error(), reader);
-
         let mut rx1 = register_request(&mut core, "req-1");
         let mut rx2 = register_request(&mut core, "req-2");
 
@@ -843,7 +869,6 @@ mod tests {
         // ConnectionError on Timeout, not just fail the one request.
         let reader = make_dormant_ws_reader().await;
         let (mut core, mut sub_rx) = make_test_core(MockMessageSink::pending(), reader);
-
         let mut rx1 = register_request(&mut core, "req-1");
         let mut rx2 = register_request(&mut core, "req-2");
 
@@ -896,7 +921,6 @@ mod tests {
     async fn send_ping_success_marks_ping_manager() {
         let reader = make_dormant_ws_reader().await;
         let (mut core, _sub_rx) = make_test_core(MockMessageSink::ready(), reader);
-
         let stop = core.send_ping().await;
 
         assert!(!stop, "send_ping should return false on success");
@@ -910,7 +934,6 @@ mod tests {
     async fn ping_send_transport_failure_broadcasts_heartbeat_timeout() {
         let reader = make_dormant_ws_reader().await;
         let (mut core, mut sub_rx) = make_test_core(MockMessageSink::error(), reader);
-
         let stop = core.send_ping().await;
 
         assert!(stop, "send_ping should return true on transport error");
@@ -1025,7 +1048,6 @@ mod tests {
 
         core.close_requested = true;
         let mut rx1 = register_request(&mut core, "req-1");
-
         let stop = core.handle_rithmic_message(Ok(Message::Close(None))).await;
 
         assert!(stop, "should stop when close frame received");
@@ -1046,7 +1068,6 @@ mod tests {
 
         // close_requested defaults to false
         let mut rx1 = register_request(&mut core, "req-1");
-
         let stop = core.handle_rithmic_message(Ok(Message::Close(None))).await;
 
         assert!(stop, "should stop when unexpected close frame received");
@@ -1156,7 +1177,6 @@ mod tests {
     async fn handle_rithmic_message_already_closed_stops_actor() {
         let reader = make_dormant_ws_reader().await;
         let (mut core, mut sub_rx) = make_test_core(MockMessageSink::ready(), reader);
-
         let stop = core.handle_rithmic_message(Err(Error::AlreadyClosed)).await;
 
         assert!(stop, "AlreadyClosed error should stop actor");
@@ -1216,7 +1236,6 @@ mod tests {
 
         let reader = make_dormant_ws_reader().await;
         let (mut core, mut sub_rx) = make_test_core(MockMessageSink::ready(), reader);
-
         let mut rx1 = register_request(&mut core, "req-1");
 
         let resp = ResponseLogin {
@@ -1257,9 +1276,7 @@ mod tests {
     async fn handle_stream_closed_stops_and_emits_connection_error() {
         let reader = make_dormant_ws_reader().await;
         let (mut core, mut sub_rx) = make_test_core(MockMessageSink::ready(), reader);
-
         let mut rx1 = register_request(&mut core, "req-1");
-
         let stop = core.handle_stream_closed();
 
         assert!(stop, "handle_stream_closed should return true");
@@ -1282,7 +1299,6 @@ mod tests {
 
         let reader = make_dormant_ws_reader().await;
         let (mut core, mut sub_rx) = make_test_core(MockMessageSink::ready(), reader);
-
         let mut rx = register_request(&mut core, "hb-1");
 
         let resp = ResponseHeartbeat {
@@ -1324,7 +1340,6 @@ mod tests {
 
         let reader = make_dormant_ws_reader().await;
         let (mut core, mut sub_rx) = make_test_core(MockMessageSink::ready(), reader);
-
         let mut rx = register_request(&mut core, "hb-err");
 
         let resp = ResponseHeartbeat {
@@ -1375,7 +1390,6 @@ mod tests {
 
         let reader = make_dormant_ws_reader().await;
         let (mut core, mut sub_rx) = make_test_core(MockMessageSink::ready(), reader);
-
         let mut rx = register_request(&mut core, "multi-1");
 
         // Intermediate frame: rq_handler_rp_code = ["0"] → has_more = true,

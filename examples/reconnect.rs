@@ -16,15 +16,14 @@
 //!
 //! Run with: `cargo run --example reconnect`
 
-use tokio::sync::broadcast::error::RecvError;
-use tokio::time::sleep;
-use tracing::{error, info, warn};
-
 use std::{
     collections::HashSet,
     env,
     time::{Duration, SystemTime},
 };
+
+use tokio::{sync::broadcast::error::RecvError, time::sleep};
+use tracing::{error, info, warn};
 
 use rithmic_rs::{
     ConnectStrategy, RithmicConfig, RithmicEnv, RithmicError, RithmicTickerPlant,
@@ -43,6 +42,7 @@ fn seed_jitter_rng() -> u64 {
         .duration_since(SystemTime::UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos() as u64;
+
     nanos ^ (u64::from(std::process::id()).rotate_left(17))
 }
 
@@ -52,10 +52,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt().init();
 
     let config = RithmicConfig::from_env(RithmicEnv::Demo)?;
-
     let mut subscriptions: HashSet<(String, String)> = HashSet::new();
     let symbol = env::var("SYMBOL").unwrap_or_else(|_| "ESM6".to_string());
     let exchange = env::var("EXCHANGE").unwrap_or_else(|_| "CME".to_string());
+
     subscriptions.insert((symbol, exchange));
 
     let mut backoff = BACKOFF_MIN;
@@ -64,9 +64,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     loop {
         let plant = match RithmicTickerPlant::connect(&config, ConnectStrategy::Retry).await {
             Ok(p) => p,
+
             Err(e) => {
                 error!("Connect failed: {e}");
+
                 sleep_with_backoff(&mut backoff, &mut rng_state).await;
+
                 continue;
             }
         };
@@ -77,31 +80,43 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             match &e {
                 RithmicError::ConnectionClosed | RithmicError::SendFailed => {
                     warn!("Login failed (connection issue): {e}");
+
                     shutdown_plant(&handle, plant).await;
                     sleep_with_backoff(&mut backoff, &mut rng_state).await;
+
                     continue;
                 }
+
                 RithmicError::RequestRejected(err) => {
                     let code = err.code.as_deref().unwrap_or("?");
                     let msg = err.message.as_deref().unwrap_or("");
+
                     error!(
                         "Login rejected by server (fatal): code={} msg={}",
                         code, msg
                     );
+
                     let _ = handle.disconnect().await;
                     let _ = plant.await_shutdown().await;
+
                     return Err(format!("login rejected: {code} / {msg}").into());
                 }
+
                 RithmicError::ProtocolError(msg) => {
                     error!("Login protocol error (fatal): {msg}");
+
                     let _ = handle.disconnect().await;
                     let _ = plant.await_shutdown().await;
+
                     return Err(format!("login protocol error: {msg}").into());
                 }
+
                 _ => {
                     error!("Login failed: {e}");
+
                     shutdown_plant(&handle, plant).await;
                     sleep_with_backoff(&mut backoff, &mut rng_state).await;
+
                     continue;
                 }
             }
@@ -114,11 +129,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         for (symbol, exchange) in &subscriptions {
             match handle.subscribe(symbol, exchange).await {
                 Ok(_) => info!("Subscribed to {symbol} on {exchange}"),
+
                 Err(RithmicError::ConnectionClosed | RithmicError::SendFailed) => {
                     warn!("Subscribe failed (connection lost), reconnecting…");
+
                     connection_lost = true;
+
                     break;
                 }
+
                 Err(RithmicError::RequestRejected(err)) => {
                     warn!(
                         "Subscribe rejected for {symbol}/{exchange}: code={} msg={} — skipping",
@@ -126,6 +145,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         err.message.as_deref().unwrap_or(""),
                     );
                 }
+
                 Err(e) => warn!("Subscribe error for {symbol}/{exchange}: {e}"),
             }
         }
@@ -133,6 +153,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         if connection_lost {
             shutdown_plant(&handle, plant).await;
             sleep_with_backoff(&mut backoff, &mut rng_state).await;
+
             continue;
         }
 
@@ -151,28 +172,36 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     | RithmicMessage::ForcedLogout(_)
                     | RithmicMessage::ConnectionError => {
                         warn!("Session lost ({:?}), reconnecting…", update.message);
+
                         break;
                     }
+
                     RithmicMessage::LastTrade(t) => {
                         received_data = true;
+
                         info!(
                             "Trade: {} @ {}",
                             t.trade_size.unwrap_or(0),
                             t.trade_price.unwrap_or(0.0)
                         );
                     }
+
                     _ => {}
                 },
+
                 Err(RecvError::Lagged(skipped)) => {
                     warn!(
                         "Subscription lagged ({} messages dropped) — reconnecting to \
                          resync; a connection-health frame may have been lost",
                         skipped
                     );
+
                     break;
                 }
+
                 Err(RecvError::Closed) => {
                     warn!("Subscription channel closed — reconnecting");
+
                     break;
                 }
             }
@@ -209,14 +238,17 @@ async fn shutdown_plant(handle: &rithmic_rs::RithmicTickerPlantHandle, plant: Ri
 async fn sleep_with_backoff(backoff: &mut Duration, rng_state: &mut u64) {
     let jitter_ns = (backoff.as_nanos() as i128) / 4;
     let r = next_rand(rng_state) as i128;
+
     let offset_ns = if jitter_ns > 0 {
         (r.rem_euclid(2 * jitter_ns + 1)) - jitter_ns
     } else {
         0
     };
+
     let sleep_for = Duration::from_nanos(((backoff.as_nanos() as i128) + offset_ns).max(0) as u64);
 
     info!("Reconnecting in {:?}…", sleep_for);
+
     sleep(sleep_for).await;
 
     *backoff = (*backoff * 2).min(BACKOFF_MAX);

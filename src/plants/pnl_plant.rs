@@ -1,4 +1,7 @@
 use std::sync::Arc;
+
+use futures_util::StreamExt;
+use tokio_tungstenite::tungstenite::Message;
 use tracing::{error, info, warn};
 
 use crate::{
@@ -15,14 +18,10 @@ use crate::{
     ws::{HEARTBEAT_SECS, PlantActor},
 };
 
-use futures_util::StreamExt;
-
 use tokio::{
     sync::{broadcast, mpsc, oneshot},
     time::sleep_until,
 };
-
-use tokio_tungstenite::tungstenite::Message;
 
 pub(crate) enum PnlPlantCommand {
     Close,
@@ -138,7 +137,6 @@ impl RithmicPnlPlant {
     ) -> Result<RithmicPnlPlant, RithmicError> {
         let (req_tx, req_rx) = mpsc::channel::<PnlPlantCommand>(64);
         let (sub_tx, _sub_rx) = broadcast::channel(10_000);
-
         let mut pnl_plant = PnlPlant::new(req_rx, sub_tx.clone(), config, strategy).await?;
 
         let connection_handle = tokio::spawn(async move {
@@ -192,6 +190,7 @@ impl PnlPlant {
         strategy: ConnectStrategy,
     ) -> Result<PnlPlant, RithmicError> {
         let core = PlantCore::new(subscription_sender, config, strategy, "pnl_plant").await?;
+
         Ok(PnlPlant {
             core,
             request_receiver,
@@ -236,6 +235,7 @@ impl PlantActor for PnlPlant {
                             warn!(
                                 "pnl_plant: ping timed out while waiting for server close echo — terminating"
                             );
+
                             self.core.request_handler.drain_and_drop();
                         } else {
                             self.core.fail_connection_and_drain(
@@ -252,6 +252,7 @@ impl PlantActor for PnlPlant {
                 SelectResult::Command(cmd) => {
                     if matches!(cmd, PnlPlantCommand::Abort) {
                         info!("pnl_plant: abort requested, shutting down immediately");
+
                         self.core.fail_connection_and_drain(
                             "",
                             RithmicMessage::ConnectionError,
@@ -428,8 +429,8 @@ impl RithmicPnlPlantHandle {
         info!("pnl_plant: logging in");
 
         let (tx, rx) = oneshot::channel::<Result<Vec<RithmicResponse>, RithmicError>>();
-
         let mut config = config;
+
         config.aggregated_quotes = None;
 
         let command = PnlPlantCommand::Login {
@@ -447,6 +448,7 @@ impl RithmicPnlPlantHandle {
 
         if let Some(err) = response.request_error() {
             error!("pnl_plant: login failed {:?}", err);
+
             return Err(err);
         }
 

@@ -1,3 +1,5 @@
+use futures_util::StreamExt;
+use tokio_tungstenite::tungstenite::Message;
 use tracing::{error, info, warn};
 
 use crate::{
@@ -14,15 +16,11 @@ use crate::{
     ws::{HEARTBEAT_SECS, PlantActor},
 };
 
-use futures_util::StreamExt;
-
 use tokio::{
     sync::{broadcast, mpsc, oneshot},
     task::JoinHandle,
     time::sleep_until,
 };
-
-use tokio_tungstenite::tungstenite::Message;
 
 pub(crate) enum HistoryPlantCommand {
     Close,
@@ -208,7 +206,6 @@ impl RithmicHistoryPlant {
     ) -> Result<RithmicHistoryPlant, RithmicError> {
         let (req_tx, req_rx) = mpsc::channel::<HistoryPlantCommand>(32);
         let (sub_tx, _sub_rx) = broadcast::channel::<RithmicResponse>(20_000);
-
         let mut history_plant = HistoryPlant::new(req_rx, sub_tx.clone(), config, strategy).await?;
 
         let connection_handle = tokio::spawn(async move {
@@ -256,6 +253,7 @@ impl HistoryPlant {
         strategy: ConnectStrategy,
     ) -> Result<HistoryPlant, RithmicError> {
         let core = PlantCore::new(subscription_sender, config, strategy, "history_plant").await?;
+
         Ok(HistoryPlant {
             core,
             request_receiver,
@@ -302,6 +300,7 @@ impl PlantActor for HistoryPlant {
                             warn!(
                                 "history_plant: ping timed out while waiting for server close echo — terminating"
                             );
+
                             self.core.request_handler.drain_and_drop();
                         } else {
                             self.core.fail_connection_and_drain(
@@ -613,8 +612,8 @@ impl RithmicHistoryPlantHandle {
         info!("history_plant: logging in ");
 
         let (tx, rx) = oneshot::channel::<Result<Vec<RithmicResponse>, RithmicError>>();
-
         let mut config = config;
+
         config.aggregated_quotes = None;
 
         let command = HistoryPlantCommand::Login {
@@ -632,6 +631,7 @@ impl RithmicHistoryPlantHandle {
 
         if let Some(err) = response.request_error() {
             error!("history_plant: login failed {:?}", err);
+
             return Err(err);
         }
 

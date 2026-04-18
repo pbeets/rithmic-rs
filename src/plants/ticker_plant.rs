@@ -1,3 +1,5 @@
+use futures_util::StreamExt;
+use tokio_tungstenite::tungstenite::Message;
 use tracing::{error, info, warn};
 
 use crate::{
@@ -16,10 +18,6 @@ use crate::{
     },
     ws::{HEARTBEAT_SECS, PlantActor},
 };
-
-use tokio_tungstenite::tungstenite::Message;
-
-use futures_util::StreamExt;
 
 use tokio::{
     sync::{broadcast, mpsc, oneshot},
@@ -317,7 +315,6 @@ impl RithmicTickerPlant {
     ) -> Result<RithmicTickerPlant, RithmicError> {
         let (req_tx, req_rx) = mpsc::channel::<TickerPlantCommand>(64);
         let (sub_tx, _sub_rx) = broadcast::channel(10_000);
-
         let mut ticker_plant = TickerPlant::new(req_rx, sub_tx.clone(), config, strategy).await?;
 
         let connection_handle = tokio::spawn(async move {
@@ -365,6 +362,7 @@ impl TickerPlant {
         strategy: ConnectStrategy,
     ) -> Result<TickerPlant, RithmicError> {
         let core = PlantCore::new(subscription_sender, config, strategy, "ticker_plant").await?;
+
         Ok(TickerPlant {
             core,
             request_receiver,
@@ -410,6 +408,7 @@ impl PlantActor for TickerPlant {
                             warn!(
                                 "ticker_plant: ping timed out while waiting for server close echo — terminating"
                             );
+
                             self.core.request_handler.drain_and_drop();
                         } else {
                             self.core.fail_connection_and_drain(
@@ -426,6 +425,7 @@ impl PlantActor for TickerPlant {
                 SelectResult::Command(cmd) => {
                     if matches!(cmd, TickerPlantCommand::Abort) {
                         info!("ticker_plant: abort requested, shutting down immediately");
+
                         self.core.fail_connection_and_drain(
                             "",
                             RithmicMessage::ConnectionError,
@@ -458,6 +458,7 @@ impl PlantActor for TickerPlant {
             match command.into_response_sender_or_command() {
                 Ok(tx) => {
                     let _ = tx.send(Err(RithmicError::ConnectionClosed));
+
                     return;
                 }
                 Err(cmd) => cmd,
@@ -861,6 +862,7 @@ impl RithmicTickerPlantHandle {
 
         // Default aggregated_quotes to false for ticker plant
         let mut config = config;
+
         if config.aggregated_quotes.is_none() {
             config.aggregated_quotes = Some(false);
         }
@@ -880,6 +882,7 @@ impl RithmicTickerPlantHandle {
 
         if let Some(err) = response.request_error() {
             error!("ticker_plant: login failed {:?}", err);
+
             return Err(err);
         }
 
@@ -916,7 +919,6 @@ impl RithmicTickerPlantHandle {
         let r = rx.await.map_err(|_| RithmicError::ConnectionClosed)??;
         let _ = self.sender.send(TickerPlantCommand::Close).await;
         let response = r.into_iter().next().ok_or(RithmicError::EmptyResponse)?;
-
         let _ = self.subscription_sender.send(response.clone());
 
         Ok(response)

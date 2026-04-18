@@ -40,6 +40,7 @@ impl fmt::Display for RithmicRequestError {
         match self.code.as_deref() {
             Some(code) if !code.is_empty() => {
                 let code = sanitize_for_display(code);
+
                 match message {
                     Some(m) if !m.is_empty() => write!(f, "[{code}] {m}"),
                     _ => write!(f, "[{code}]"),
@@ -130,6 +131,7 @@ impl std::error::Error for RithmicError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::error::Error;
 
     #[test]
     fn request_error_display_formats_code_and_message() {
@@ -141,6 +143,7 @@ mod tests {
             code: Some("1039".to_string()),
             message: Some("FCM Id field is not received.".to_string()),
         };
+
         assert_eq!(err.to_string(), "[1039] FCM Id field is not received.");
     }
 
@@ -151,6 +154,7 @@ mod tests {
             code: None,
             message: Some("something happened".to_string()),
         };
+
         assert_eq!(err.to_string(), "something happened");
     }
 
@@ -163,6 +167,7 @@ mod tests {
             code: Some("5".to_string()),
             message: None,
         };
+
         assert_eq!(err.to_string(), "[5]");
     }
 
@@ -181,6 +186,7 @@ mod tests {
             code: Some("3\n".to_string()),
             message: Some("bad\x1b[31mredinjection\r\ndropped".to_string()),
         };
+
         assert_eq!(err.to_string(), "[3] bad[31mredinjectiondropped");
     }
 
@@ -191,16 +197,19 @@ mod tests {
             code: Some("3".to_string()),
             message: Some("bad request".to_string()),
         };
+
         let b = RithmicRequestError {
             rp_code: vec!["3".to_string(), "bad request".to_string()],
             code: Some("3".to_string()),
             message: Some("bad request".to_string()),
         };
+
         let c = RithmicRequestError {
             rp_code: vec!["4".to_string(), "bad request".to_string()],
             code: Some("4".to_string()),
             message: Some("bad request".to_string()),
         };
+
         assert_eq!(a, b);
         assert_ne!(a, c);
     }
@@ -219,16 +228,18 @@ mod tests {
     #[test]
     fn rithmic_error_source_chain_exposes_inner_request_error() {
         // `anyhow`/`eyre` and stdlib chain walkers rely on `source()`.
-        use std::error::Error;
+
         let inner = RithmicRequestError {
             rp_code: vec!["3".to_string(), "bad".to_string()],
             code: Some("3".to_string()),
             message: Some("bad".to_string()),
         };
+
         let err = RithmicError::RequestRejected(inner.clone());
         let src = err
             .source()
             .expect("source should be Some for RequestRejected");
+
         assert_eq!(src.to_string(), inner.to_string());
 
         assert!(
@@ -266,6 +277,7 @@ mod tests {
         // Display for the RithmicError wrapper prefixes "request rejected: "
         // and delegates to `RithmicRequestError::Display`.
         let display = RithmicError::RequestRejected(err).to_string();
+
         assert_eq!(display, "request rejected: [3] bad request");
     }
 
@@ -279,6 +291,7 @@ mod tests {
             code: Some("7".to_string()),
             message: Some("an error occurred while parsing data.".to_string()),
         });
+
         assert_eq!(
             err.to_string(),
             "request rejected: [7] an error occurred while parsing data."
@@ -288,6 +301,7 @@ mod tests {
     #[test]
     fn rithmic_error_protocol_error_display() {
         let err = RithmicError::ProtocolError("decode failed".to_string());
+
         assert_eq!(err.to_string(), "protocol error: decode failed");
     }
 }

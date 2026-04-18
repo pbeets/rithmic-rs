@@ -303,6 +303,7 @@ impl RithmicReceiverApi {
                     e,
                     data.len()
                 );
+
                 return Err(RithmicResponse {
                     request_id: "".to_string(),
                     message: RithmicMessage::Unknown,
@@ -331,6 +332,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             13 => {
                 let resp = ResponseLogout::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, false))?;
@@ -346,6 +348,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             15 => {
                 let resp = ResponseReferenceData::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, false))?;
@@ -361,6 +364,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             17 => {
                 let resp = ResponseRithmicSystemInfo::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, false))?;
@@ -376,6 +380,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             19 => {
                 let resp = ResponseHeartbeat::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, true))?;
@@ -391,6 +396,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             21 => {
                 let resp = ResponseRithmicSystemGatewayInfo::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, false))?;
@@ -406,6 +412,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             75 => {
                 let resp =
                     Reject::decode(payload).map_err(|e| decode_error(&self.source, e, false))?;
@@ -421,6 +428,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             76 => {
                 let resp = UserAccountUpdate::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, true))?;
@@ -435,6 +443,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             77 => {
                 let resp = ForcedLogout::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, true))?;
@@ -449,6 +458,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             101 => {
                 let resp = ResponseMarketDataUpdate::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, false))?;
@@ -464,6 +474,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             103 => {
                 let resp = ResponseGetInstrumentByUnderlying::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, false))?;
@@ -480,6 +491,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             104 => {
                 let resp = ResponseGetInstrumentByUnderlyingKeys::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, false))?;
@@ -495,6 +507,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             106 => {
                 let resp = ResponseMarketDataUpdateByUnderlying::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, false))?;
@@ -510,6 +523,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             108 => {
                 let resp = ResponseGiveTickSizeTypeTable::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, false))?;
@@ -526,6 +540,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             110 => {
                 let resp = ResponseSearchSymbols::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, false))?;
@@ -542,6 +557,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             112 => {
                 let resp = ResponseProductCodes::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, false))?;
@@ -558,6 +574,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             114 => {
                 let resp = ResponseFrontMonthContract::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, false))?;
@@ -573,6 +590,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             116 => {
                 let resp = ResponseDepthByOrderSnapshot::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, false))?;
@@ -589,6 +607,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             118 => {
                 let resp = ResponseDepthByOrderUpdates::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, false))?;
@@ -604,6 +623,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             120 => {
                 let resp = ResponseGetVolumeAtPrice::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, false))?;
@@ -620,6 +640,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             122 => {
                 let resp = ResponseAuxilliaryReferenceData::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, false))?;
@@ -635,6 +656,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             150 => {
                 let resp =
                     LastTrade::decode(payload).map_err(|e| decode_error(&self.source, e, true))?;
@@ -649,6 +671,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             151 => {
                 let resp = BestBidOffer::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, true))?;
@@ -663,6 +686,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             152 => {
                 let resp = TradeStatistics::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, true))?;
@@ -677,6 +701,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             153 => {
                 let resp = QuoteStatistics::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, true))?;
@@ -691,6 +716,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             154 => {
                 let resp = IndicatorPrices::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, true))?;
@@ -705,6 +731,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             155 => {
                 let resp = EndOfDayPrices::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, true))?;
@@ -719,6 +746,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             156 => {
                 let resp =
                     OrderBook::decode(payload).map_err(|e| decode_error(&self.source, e, true))?;
@@ -733,6 +761,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             157 => {
                 let resp =
                     MarketMode::decode(payload).map_err(|e| decode_error(&self.source, e, true))?;
@@ -747,6 +776,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             158 => {
                 let resp = OpenInterest::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, true))?;
@@ -761,6 +791,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             159 => {
                 let resp = FrontMonthContractUpdate::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, true))?;
@@ -775,6 +806,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             160 => {
                 let resp = DepthByOrder::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, true))?;
@@ -789,6 +821,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             161 => {
                 let resp = DepthByOrderEndEvent::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, true))?;
@@ -803,6 +836,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             162 => {
                 let resp = SymbolMarginRate::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, true))?;
@@ -817,6 +851,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             163 => {
                 let resp = OrderPriceLimits::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, true))?;
@@ -831,6 +866,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             201 => {
                 let resp = ResponseTimeBarUpdate::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, false))?;
@@ -846,6 +882,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             203 => {
                 let resp = ResponseTimeBarReplay::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, false))?;
@@ -862,6 +899,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             205 => {
                 let resp = ResponseTickBarUpdate::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, false))?;
@@ -877,6 +915,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             207 => {
                 let resp = ResponseTickBarReplay::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, false))?;
@@ -893,6 +932,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             209 => {
                 let resp = ResponseVolumeProfileMinuteBars::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, false))?;
@@ -909,6 +949,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             211 => {
                 let resp = ResponseResumeBars::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, false))?;
@@ -924,6 +965,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             250 => {
                 let resp =
                     TimeBar::decode(payload).map_err(|e| decode_error(&self.source, e, true))?;
@@ -938,6 +980,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             251 => {
                 let resp =
                     TickBar::decode(payload).map_err(|e| decode_error(&self.source, e, true))?;
@@ -952,6 +995,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             301 => {
                 let resp = ResponseLoginInfo::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, false))?;
@@ -967,6 +1011,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             303 => {
                 let resp = ResponseAccountList::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, false))?;
@@ -983,6 +1028,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             305 => {
                 let resp = ResponseAccountRmsInfo::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, false))?;
@@ -999,6 +1045,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             307 => {
                 let resp = ResponseProductRmsInfo::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, false))?;
@@ -1015,6 +1062,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             309 => {
                 let resp = ResponseSubscribeForOrderUpdates::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, false))?;
@@ -1030,6 +1078,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             311 => {
                 let resp = ResponseTradeRoutes::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, false))?;
@@ -1046,6 +1095,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             313 => {
                 let resp = ResponseNewOrder::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, false))?;
@@ -1062,6 +1112,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             315 => {
                 let resp = ResponseModifyOrder::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, false))?;
@@ -1078,6 +1129,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             317 => {
                 let resp = ResponseCancelOrder::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, false))?;
@@ -1094,6 +1146,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             319 => {
                 let resp = ResponseShowOrderHistoryDates::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, false))?;
@@ -1110,6 +1163,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             321 => {
                 let resp = ResponseShowOrders::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, false))?;
@@ -1125,6 +1179,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             323 => {
                 let resp = ResponseShowOrderHistory::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, false))?;
@@ -1140,6 +1195,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             325 => {
                 let resp = ResponseShowOrderHistorySummary::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, false))?;
@@ -1155,6 +1211,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             327 => {
                 let resp = ResponseShowOrderHistoryDetail::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, false))?;
@@ -1170,6 +1227,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             329 => {
                 let resp = ResponseOcoOrder::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, false))?;
@@ -1186,6 +1244,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             331 => {
                 let resp = ResponseBracketOrder::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, false))?;
@@ -1202,6 +1261,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             333 => {
                 let resp = ResponseUpdateTargetBracketLevel::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, false))?;
@@ -1217,6 +1277,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             335 => {
                 let resp = ResponseUpdateStopBracketLevel::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, false))?;
@@ -1232,6 +1293,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             337 => {
                 let resp = ResponseSubscribeToBracketUpdates::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, false))?;
@@ -1247,6 +1309,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             339 => {
                 let resp = ResponseShowBrackets::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, false))?;
@@ -1263,6 +1326,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             341 => {
                 let resp = ResponseShowBracketStops::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, false))?;
@@ -1279,6 +1343,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             343 => {
                 let resp = ResponseListExchangePermissions::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, false))?;
@@ -1295,6 +1360,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             345 => {
                 let resp = ResponseLinkOrders::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, false))?;
@@ -1310,6 +1376,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             347 => {
                 let resp = ResponseCancelAllOrders::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, false))?;
@@ -1325,6 +1392,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             349 => {
                 let resp = ResponseEasyToBorrowList::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, false))?;
@@ -1341,6 +1409,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             350 => {
                 let resp =
                     TradeRoute::decode(payload).map_err(|e| decode_error(&self.source, e, true))?;
@@ -1355,6 +1424,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             351 => {
                 let resp = RithmicOrderNotification::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, true))?;
@@ -1369,6 +1439,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             352 => {
                 let resp = ExchangeOrderNotification::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, true))?;
@@ -1383,6 +1454,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             353 => {
                 let resp = BracketUpdates::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, true))?;
@@ -1397,6 +1469,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             354 => {
                 let resp = AccountListUpdates::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, true))?;
@@ -1411,6 +1484,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             355 => {
                 let resp = UpdateEasyToBorrowList::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, true))?;
@@ -1425,6 +1499,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             356 => {
                 let resp = AccountRmsUpdates::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, true))?;
@@ -1439,6 +1514,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             401 => {
                 let resp = ResponsePnLPositionUpdates::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, false))?;
@@ -1454,6 +1530,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             403 => {
                 let resp = ResponsePnLPositionSnapshot::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, false))?;
@@ -1469,6 +1546,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             450 => {
                 let resp = InstrumentPnLPositionUpdate::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, true))?;
@@ -1483,6 +1561,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             451 => {
                 let resp = AccountPnLPositionUpdate::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, true))?;
@@ -1497,6 +1576,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             501 => {
                 let resp = ResponseListUnacceptedAgreements::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, false))?;
@@ -1513,6 +1593,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             503 => {
                 let resp = ResponseListAcceptedAgreements::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, false))?;
@@ -1529,6 +1610,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             505 => {
                 let resp = ResponseAcceptAgreement::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, false))?;
@@ -1544,6 +1626,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             507 => {
                 let resp = ResponseShowAgreement::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, false))?;
@@ -1560,6 +1643,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             509 => {
                 let resp = ResponseSetRithmicMrktDataSelfCertStatus::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, false))?;
@@ -1575,6 +1659,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             3501 => {
                 let resp = ResponseModifyOrderReferenceData::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, false))?;
@@ -1590,6 +1675,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             3503 => {
                 let resp = ResponseOrderSessionConfig::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, false))?;
@@ -1605,6 +1691,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             3505 => {
                 let resp = ResponseExitPosition::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, false))?;
@@ -1621,6 +1708,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             3507 => {
                 let resp = ResponseReplayExecutions::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, false))?;
@@ -1636,6 +1724,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             3509 => {
                 let resp = ResponseAccountRmsUpdates::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, false))?;
@@ -1651,6 +1740,7 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+
             _ => {
                 error!(
                     "Unknown message type received - template_id: {}, data_size: {} bytes",
@@ -1890,9 +1980,11 @@ mod tests {
 
     fn encode_with_header<T: Message>(message: &T) -> Bytes {
         let mut payload = Vec::new();
+
         message.encode(&mut payload).unwrap();
 
         let mut framed = (payload.len() as u32).to_be_bytes().to_vec();
+
         framed.extend(payload);
 
         Bytes::from(framed)
@@ -1917,6 +2009,7 @@ mod tests {
             RithmicMessage::ResponseHeartbeat(ResponseHeartbeat::default()),
             "some error",
         );
+
         assert!(response.is_error());
     }
 
@@ -1924,6 +2017,7 @@ mod tests {
     fn is_error_true_for_connection_issues_without_error_field() {
         // Connection issues should be errors even without error field set
         let response = make_response(RithmicMessage::ConnectionError);
+
         assert!(response.is_error());
         assert!(response.error.is_none()); // Verify error field is not set
     }
@@ -1933,6 +2027,7 @@ mod tests {
         let response = make_response(RithmicMessage::ResponseHeartbeat(
             ResponseHeartbeat::default(),
         ));
+
         assert!(!response.is_error());
     }
 
@@ -1956,6 +2051,7 @@ mod tests {
     fn is_connection_issue_false_for_reject() {
         // Reject is an error but NOT a connection issue
         let response = make_response(RithmicMessage::Reject(Reject::default()));
+
         assert!(!response.is_connection_issue());
     }
 
@@ -2022,6 +2118,7 @@ mod tests {
         let response = make_response(RithmicMessage::RithmicOrderNotification(
             RithmicOrderNotification::default(),
         ));
+
         assert!(!response.is_market_data());
     }
 
@@ -2048,6 +2145,7 @@ mod tests {
     fn is_order_update_false_for_market_data() {
         // Market data is NOT an order update
         let response = make_response(RithmicMessage::BestBidOffer(BestBidOffer::default()));
+
         assert!(!response.is_order_update());
     }
 
@@ -2074,6 +2172,7 @@ mod tests {
         let response = make_response(RithmicMessage::RithmicOrderNotification(
             RithmicOrderNotification::default(),
         ));
+
         assert!(!response.is_pnl_update());
     }
 
@@ -2096,12 +2195,14 @@ mod tests {
         // rp_code = ["7", "no data"] means "successful query, zero results" across all
         // Rithmic list/replay/search responses — must not be treated as an error.
         let rp_code = vec!["7".to_string(), "no data".to_string()];
+
         assert_eq!(get_error(&rp_code), None);
     }
 
     #[test]
     fn get_error_returns_none_for_no_data_case_insensitive() {
         let rp_code = vec!["7".to_string(), "No Data".to_string()];
+
         assert_eq!(get_error(&rp_code), None);
     }
 
@@ -2109,6 +2210,7 @@ mod tests {
     fn get_error_returns_some_for_other_code_7_messages() {
         // code "7" with a different message is still an error
         let rp_code = vec!["7".to_string(), "permission denied".to_string()];
+
         assert!(get_error(&rp_code).is_some());
     }
 
@@ -2230,6 +2332,7 @@ mod tests {
     fn classify_rp_code_seven_other_msg_is_request_rejected() {
         use crate::error::RithmicRequestError;
         let rp_code = vec!["7".to_string(), "permission denied".to_string()];
+
         assert_eq!(
             super::classify_rp_code(&rp_code),
             super::RpCodeClassification::RequestRejected(RithmicRequestError {
@@ -2244,6 +2347,7 @@ mod tests {
     fn classify_rp_code_non_zero_two_fields_is_request_rejected() {
         use crate::error::RithmicRequestError;
         let rp_code = vec!["3".to_string(), "bad request".to_string()];
+
         assert_eq!(
             super::classify_rp_code(&rp_code),
             super::RpCodeClassification::RequestRejected(RithmicRequestError {
@@ -2260,6 +2364,7 @@ mod tests {
         // `code: Some(..)` with `message: None`. Display renders `[5]`.
         use crate::error::RithmicRequestError;
         let rp_code = vec!["5".to_string()];
+
         assert_eq!(
             super::classify_rp_code(&rp_code),
             super::RpCodeClassification::RequestRejected(RithmicRequestError {
@@ -2281,6 +2386,7 @@ mod tests {
             "7".to_string(),
             "an error occurred while parsing data.".to_string(),
         ];
+
         assert_eq!(
             super::classify_rp_code(&rp_code),
             super::RpCodeClassification::RequestRejected(RithmicRequestError {
@@ -2307,12 +2413,14 @@ mod tests {
             rp_code: vec!["7".to_string(), "no data".to_string()],
             ..ResponseAccountList::default()
         }));
+
         assert!(
             result.is_ok(),
             "expected Ok but got Err: {:?}",
             result.err()
         );
         let response = result.unwrap();
+
         assert_eq!(response.error, None);
         assert!(!response.is_error());
         assert!(!response.is_connection_issue());
@@ -2337,6 +2445,7 @@ mod tests {
             Ok(r) => r,
             Err(r) => r,
         };
+
         assert_eq!(response.error.as_deref(), Some("bad request"));
         assert_eq!(
             response.request_rejection(),
@@ -2370,6 +2479,7 @@ mod tests {
             Ok(r) => r,
             Err(r) => r,
         };
+
         assert_eq!(
             response.error.as_deref(),
             Some("an error occurred while parsing data.")
@@ -2405,6 +2515,7 @@ mod tests {
             Ok(r) => r,
             Err(r) => r,
         };
+
         assert_eq!(response.error.as_deref(), Some("bad request"));
         assert!(response.is_error());
         assert!(!response.is_connection_issue());
@@ -2423,6 +2534,7 @@ mod tests {
             user_msg: vec!["req-1".to_string()],
             rp_code: vec!["7".to_string(), "no data".to_string()],
         }));
+
         assert!(
             result.is_ok(),
             "expected Ok but got Err: {:?}",
@@ -2449,6 +2561,7 @@ mod tests {
         }));
 
         let response = result.expect("reject with rp_code error should still decode");
+
         assert!(matches!(response.message, RithmicMessage::Reject(_)));
         assert_eq!(response.error.as_deref(), Some("permission denied"));
         assert!(!response.is_connection_issue());
@@ -2497,6 +2610,7 @@ mod tests {
                 ..ResponseSearchSymbols::default()
             }))
             .expect("intermediate multi-response frame should decode");
+
         assert!(
             intermediate.has_more,
             "presence of rq_handler_rp_code must mark has_more=true regardless of value"
@@ -2513,6 +2627,7 @@ mod tests {
                 ..ResponseSearchSymbols::default()
             }))
             .expect("terminal multi-response frame should decode");
+
         assert!(!terminal.has_more);
         assert!(terminal.multi_response);
         assert!(terminal.error.is_none());
@@ -2563,6 +2678,7 @@ mod tests {
     fn categories_are_mutually_exclusive() {
         // Market data should not be flagged as order update or pnl
         let market_data = make_response(RithmicMessage::BestBidOffer(BestBidOffer::default()));
+
         assert!(market_data.is_market_data());
         assert!(!market_data.is_order_update());
         assert!(!market_data.is_pnl_update());
@@ -2572,6 +2688,7 @@ mod tests {
         let order = make_response(RithmicMessage::RithmicOrderNotification(
             RithmicOrderNotification::default(),
         ));
+
         assert!(order.is_order_update());
         assert!(!order.is_market_data());
         assert!(!order.is_pnl_update());
@@ -2581,6 +2698,7 @@ mod tests {
         let pnl = make_response(RithmicMessage::AccountPnLPositionUpdate(
             AccountPnLPositionUpdate::default(),
         ));
+
         assert!(pnl.is_pnl_update());
         assert!(!pnl.is_market_data());
         assert!(!pnl.is_order_update());
@@ -2588,6 +2706,7 @@ mod tests {
 
         // Connection issue should not be in any other category
         let conn_err = make_response(RithmicMessage::ConnectionError);
+
         assert!(conn_err.is_connection_issue());
         assert!(!conn_err.is_market_data());
         assert!(!conn_err.is_order_update());
