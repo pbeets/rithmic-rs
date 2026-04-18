@@ -565,6 +565,14 @@ where
         &mut self,
         response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
     ) {
+        // Flip `close_requested` before handing control to any later async step.
+        // The actor processes commands sequentially, so any command queued by a
+        // cloned handle *after* we dequeued `Logout` will find `close_requested`
+        // set and be rejected by `handle_command`'s guard. This closes the
+        // disconnect race where a concurrent `subscribe()` could slip between
+        // the Logout oneshot resolving and the Close command being sent.
+        self.close_requested = true;
+
         let (logout_buf, id) = self.rithmic_sender_api.request_logout();
 
         self.request_handler.register_request(RithmicRequest {
@@ -1051,6 +1059,28 @@ mod tests {
             broadcast_msg.message,
             RithmicMessage::ConnectionError
         ));
+    }
+
+    #[tokio::test]
+    async fn handle_logout_sets_close_requested_before_sending() {
+        // Regression guard for the disconnect race: `close_requested` must be
+        // set as soon as the Logout command is dequeued so that any request
+        // enqueued by a cloned handle after Logout is rejected by the
+        // `handle_command` guard instead of hitting Rithmic after logout.
+        let reader = make_dormant_ws_reader().await;
+        let (mut core, _sub_rx) = make_test_core(MockMessageSink::ready(), reader);
+        assert!(
+            !core.close_requested,
+            "fresh core starts with close_requested=false"
+        );
+
+        let (tx, _rx) = oneshot::channel();
+        core.handle_logout(tx).await;
+
+        assert!(
+            core.close_requested,
+            "handle_logout must flip close_requested=true to close the disconnect race"
+        );
     }
 
     #[tokio::test]

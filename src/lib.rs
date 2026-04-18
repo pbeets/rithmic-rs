@@ -123,7 +123,7 @@
 //!         eprintln!(
 //!             "Server rejected: code={} msg={}",
 //!             err.code.as_deref().unwrap_or("?"),
-//!             err.message,
+//!             err.message.as_deref().unwrap_or(""),
 //!         );
 //!     }
 //!     Err(RithmicError::ProtocolError(msg)) => {

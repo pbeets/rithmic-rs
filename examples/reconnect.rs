@@ -35,6 +35,17 @@ const BACKOFF_MIN: Duration = Duration::from_millis(500);
 const BACKOFF_MAX: Duration = Duration::from_secs(60);
 const STABLE_SESSION_THRESHOLD: Duration = Duration::from_secs(30);
 
+/// Per-process PRNG seed. Mixing `process::id()` with wall-clock nanos ensures
+/// two clients that fail within the same sub-second window get different
+/// jitter — preserving thundering-herd mitigation across a fleet.
+fn seed_jitter_rng() -> u64 {
+    let nanos = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos() as u64;
+    nanos ^ (u64::from(std::process::id()).rotate_left(17))
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenvy::dotenv().ok();
@@ -48,13 +59,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     subscriptions.insert((symbol, exchange));
 
     let mut backoff = BACKOFF_MIN;
+    let mut rng_state = seed_jitter_rng();
 
     loop {
         let plant = match RithmicTickerPlant::connect(&config, ConnectStrategy::Retry).await {
             Ok(p) => p,
             Err(e) => {
                 error!("Connect failed: {e}");
-                sleep_with_backoff(&mut backoff).await;
+                sleep_with_backoff(&mut backoff, &mut rng_state).await;
                 continue;
             }
         };
@@ -65,26 +77,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             match &e {
                 RithmicError::ConnectionClosed | RithmicError::SendFailed => {
                     warn!("Login failed (connection issue): {e}");
-                    sleep_with_backoff(&mut backoff).await;
+                    shutdown_plant(&handle, plant).await;
+                    sleep_with_backoff(&mut backoff, &mut rng_state).await;
                     continue;
                 }
                 RithmicError::RequestRejected(err) => {
                     let code = err.code.as_deref().unwrap_or("?");
+                    let msg = err.message.as_deref().unwrap_or("");
                     error!(
                         "Login rejected by server (fatal): code={} msg={}",
-                        code, err.message
+                        code, msg
                     );
                     let _ = handle.disconnect().await;
-                    return Err(format!("login rejected: {} / {}", code, err.message).into());
+                    let _ = plant.await_shutdown().await;
+                    return Err(format!("login rejected: {code} / {msg}").into());
                 }
                 RithmicError::ProtocolError(msg) => {
                     error!("Login protocol error (fatal): {msg}");
                     let _ = handle.disconnect().await;
+                    let _ = plant.await_shutdown().await;
                     return Err(format!("login protocol error: {msg}").into());
                 }
                 _ => {
                     error!("Login failed: {e}");
-                    sleep_with_backoff(&mut backoff).await;
+                    shutdown_plant(&handle, plant).await;
+                    sleep_with_backoff(&mut backoff, &mut rng_state).await;
                     continue;
                 }
             }
@@ -106,7 +123,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     warn!(
                         "Subscribe rejected for {symbol}/{exchange}: code={} msg={} — skipping",
                         err.code.as_deref().unwrap_or("?"),
-                        err.message
+                        err.message.as_deref().unwrap_or(""),
                     );
                 }
                 Err(e) => warn!("Subscribe error for {symbol}/{exchange}: {e}"),
@@ -114,7 +131,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         if connection_lost {
-            sleep_with_backoff(&mut backoff).await;
+            shutdown_plant(&handle, plant).await;
+            sleep_with_backoff(&mut backoff, &mut rng_state).await;
             continue;
         }
 
@@ -164,22 +182,51 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         if received_data && uptime >= STABLE_SESSION_THRESHOLD {
             backoff = BACKOFF_MIN;
         }
+
+        // Tokio's `JoinHandle::drop` detaches the task — it does NOT abort it.
+        // Without an explicit abort + await_shutdown, the old actor would stay
+        // alive alongside the next connection, producing a short-lived dual
+        // session against the same credentials.
+        shutdown_plant(&handle, plant).await;
     }
+}
+
+/// Abort the plant's background actor and await its join handle so we don't
+/// leave an orphaned task holding a TCP/WebSocket session while the next
+/// reconnect attempt opens a new one.
+async fn shutdown_plant(handle: &rithmic_rs::RithmicTickerPlantHandle, plant: RithmicTickerPlant) {
+    handle.abort();
+
+    let _ = plant.await_shutdown().await;
 }
 
 /// Sleep for the current backoff with ±25% jitter, then double (capped).
 /// Jitter avoids thundering-herd when many clients reconnect in lockstep.
-async fn sleep_with_backoff(backoff: &mut Duration) {
+///
+/// Uses a per-process splitmix64 step rather than a clock-derived value so that
+/// two clients that fail within the same sub-second window do not compute the
+/// same offset (which would defeat the jitter's purpose across a fleet).
+async fn sleep_with_backoff(backoff: &mut Duration, rng_state: &mut u64) {
     let jitter_ns = (backoff.as_nanos() as i128) / 4;
-    let nanos_since_epoch = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap_or_default()
-        .subsec_nanos() as i128;
-    let offset_ns = (nanos_since_epoch % (2 * jitter_ns + 1)) - jitter_ns;
+    let r = next_rand(rng_state) as i128;
+    let offset_ns = if jitter_ns > 0 {
+        (r.rem_euclid(2 * jitter_ns + 1)) - jitter_ns
+    } else {
+        0
+    };
     let sleep_for = Duration::from_nanos(((backoff.as_nanos() as i128) + offset_ns).max(0) as u64);
 
     info!("Reconnecting in {:?}…", sleep_for);
     sleep(sleep_for).await;
 
     *backoff = (*backoff * 2).min(BACKOFF_MAX);
+}
+
+/// Splitmix64 step — small, dependency-free PRNG suitable for jitter.
+fn next_rand(state: &mut u64) -> u64 {
+    *state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    let mut z = *state;
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
 }

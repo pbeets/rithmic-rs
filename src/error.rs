@@ -18,15 +18,34 @@ pub struct RithmicRequestError {
     pub rp_code: Vec<String>,
     /// First rp_code element when present.
     pub code: Option<String>,
-    /// Second rp_code element when present; otherwise empty.
-    pub message: String,
+    /// Second rp_code element when present.
+    ///
+    /// `None` when the server emitted a single-element rp_code (e.g. `["5"]`).
+    /// Symmetric with [`Self::code`].
+    pub message: Option<String>,
+}
+
+/// Filter ASCII/Unicode control characters from server-supplied strings before
+/// they reach a log sink or terminal. Protects against log-injection (newlines,
+/// `\r`) and ANSI-escape attacks (`ESC`) when the Rithmic wire payload is
+/// rendered via `Display`.
+fn sanitize_for_display(s: &str) -> String {
+    s.chars().filter(|c| !c.is_control()).collect()
 }
 
 impl fmt::Display for RithmicRequestError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let message = self.message.as_deref().map(sanitize_for_display);
+
         match self.code.as_deref() {
-            Some(code) if !code.is_empty() => write!(f, "[{code}] {}", self.message),
-            _ => write!(f, "{}", self.message),
+            Some(code) if !code.is_empty() => {
+                let code = sanitize_for_display(code);
+                match message {
+                    Some(m) if !m.is_empty() => write!(f, "[{code}] {m}"),
+                    _ => write!(f, "[{code}]"),
+                }
+            }
+            _ => write!(f, "{}", message.unwrap_or_default()),
         }
     }
 }
@@ -47,13 +66,13 @@ impl std::error::Error for RithmicRequestError {}
 ///         eprintln!(
 ///             "rejected code={} msg={}",
 ///             err.code.as_deref().unwrap_or("?"),
-///             err.message
+///             err.message.as_deref().unwrap_or(""),
 ///         );
 ///     }
 ///     Err(e) => eprintln!("{e}"),
 /// }
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum RithmicError {
     /// WebSocket connection could not be established.
@@ -99,7 +118,14 @@ impl fmt::Display for RithmicError {
     }
 }
 
-impl std::error::Error for RithmicError {}
+impl std::error::Error for RithmicError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            RithmicError::RequestRejected(inner) => Some(inner),
+            _ => None,
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -113,7 +139,7 @@ mod tests {
                 "FCM Id field is not received.".to_string(),
             ],
             code: Some("1039".to_string()),
-            message: "FCM Id field is not received.".to_string(),
+            message: Some("FCM Id field is not received.".to_string()),
         };
         assert_eq!(err.to_string(), "[1039] FCM Id field is not received.");
     }
@@ -123,9 +149,39 @@ mod tests {
         let err = RithmicRequestError {
             rp_code: vec![],
             code: None,
-            message: "something happened".to_string(),
+            message: Some("something happened".to_string()),
         };
         assert_eq!(err.to_string(), "something happened");
+    }
+
+    #[test]
+    fn request_error_display_single_element_omits_trailing_slash() {
+        // rp_code = ["5"] produces code=Some("5"), message=None.
+        // Display renders "[5]" rather than "[5] ".
+        let err = RithmicRequestError {
+            rp_code: vec!["5".to_string()],
+            code: Some("5".to_string()),
+            message: None,
+        };
+        assert_eq!(err.to_string(), "[5]");
+    }
+
+    #[test]
+    fn request_error_display_sanitizes_control_chars() {
+        // A malicious or malformed server message must not leak newlines
+        // (log-injection) or ANSI escapes (terminal-control) into `Display`.
+        // The sanitizer strips control characters — the ESC byte of an ANSI
+        // sequence is removed, which breaks the escape and prevents terminal
+        // interpretation (even though the printable `[31m` text remains).
+        let err = RithmicRequestError {
+            rp_code: vec![
+                "3\n".to_string(),
+                "bad\x1b[31mredinjection\r\ndropped".to_string(),
+            ],
+            code: Some("3\n".to_string()),
+            message: Some("bad\x1b[31mredinjection\r\ndropped".to_string()),
+        };
+        assert_eq!(err.to_string(), "[3] bad[31mredinjectiondropped");
     }
 
     #[test]
@@ -133,20 +189,52 @@ mod tests {
         let a = RithmicRequestError {
             rp_code: vec!["3".to_string(), "bad request".to_string()],
             code: Some("3".to_string()),
-            message: "bad request".to_string(),
+            message: Some("bad request".to_string()),
         };
         let b = RithmicRequestError {
             rp_code: vec!["3".to_string(), "bad request".to_string()],
             code: Some("3".to_string()),
-            message: "bad request".to_string(),
+            message: Some("bad request".to_string()),
         };
         let c = RithmicRequestError {
             rp_code: vec!["4".to_string(), "bad request".to_string()],
             code: Some("4".to_string()),
-            message: "bad request".to_string(),
+            message: Some("bad request".to_string()),
         };
         assert_eq!(a, b);
         assert_ne!(a, c);
+    }
+
+    #[test]
+    fn rithmic_error_equality_for_unit_variants() {
+        // `PartialEq` on `RithmicError` lets consumers write
+        // `assert_eq!(result, Err(RithmicError::ConnectionClosed))` in tests.
+        assert_eq!(
+            RithmicError::ConnectionClosed,
+            RithmicError::ConnectionClosed
+        );
+        assert_ne!(RithmicError::ConnectionClosed, RithmicError::SendFailed);
+    }
+
+    #[test]
+    fn rithmic_error_source_chain_exposes_inner_request_error() {
+        // `anyhow`/`eyre` and stdlib chain walkers rely on `source()`.
+        use std::error::Error;
+        let inner = RithmicRequestError {
+            rp_code: vec!["3".to_string(), "bad".to_string()],
+            code: Some("3".to_string()),
+            message: Some("bad".to_string()),
+        };
+        let err = RithmicError::RequestRejected(inner.clone());
+        let src = err
+            .source()
+            .expect("source should be Some for RequestRejected");
+        assert_eq!(src.to_string(), inner.to_string());
+
+        assert!(
+            RithmicError::ConnectionClosed.source().is_none(),
+            "unit variants should have no source"
+        );
     }
 
     #[test]
@@ -157,7 +245,7 @@ mod tests {
         let err = RithmicRequestError {
             rp_code: vec!["3".to_string(), "bad request".to_string()],
             code: Some("3".to_string()),
-            message: "bad request".to_string(),
+            message: Some("bad request".to_string()),
         };
 
         let mapped = RithmicError::RequestRejected(err.clone());
@@ -166,7 +254,7 @@ mod tests {
             RithmicError::RequestRejected(inner) => {
                 assert_eq!(inner, err);
                 assert_eq!(inner.code.as_deref(), Some("3"));
-                assert_eq!(inner.message, "bad request");
+                assert_eq!(inner.message.as_deref(), Some("bad request"));
                 assert_eq!(
                     inner.rp_code,
                     vec!["3".to_string(), "bad request".to_string()]
@@ -189,7 +277,7 @@ mod tests {
                 "an error occurred while parsing data.".to_string(),
             ],
             code: Some("7".to_string()),
-            message: "an error occurred while parsing data.".to_string(),
+            message: Some("an error occurred while parsing data.".to_string()),
         });
         assert_eq!(
             err.to_string(),

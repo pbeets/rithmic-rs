@@ -92,6 +92,46 @@ pub(crate) enum HistoryPlantCommand {
     },
 }
 
+impl HistoryPlantCommand {
+    /// If the command carries a response sender, extract it; otherwise return
+    /// the command back to the caller unchanged.
+    ///
+    /// Used by the `close_requested` guard in `handle_command` to fail queued
+    /// requests fast once a disconnect is in flight.
+    fn into_response_sender_or_command(
+        self,
+    ) -> Result<oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>, Self> {
+        match self {
+            Self::ListSystemInfo { response_sender }
+            | Self::Login {
+                response_sender, ..
+            }
+            | Self::Logout { response_sender }
+            | Self::LoadTicks {
+                response_sender, ..
+            }
+            | Self::LoadTimeBars {
+                response_sender, ..
+            }
+            | Self::LoadVolumeProfileMinuteBars {
+                response_sender, ..
+            }
+            | Self::ResumeBars {
+                response_sender, ..
+            }
+            | Self::SubscribeTimeBarUpdates {
+                response_sender, ..
+            }
+            | Self::SubscribeTickBarUpdates {
+                response_sender, ..
+            } => Ok(response_sender),
+            other @ (Self::Close | Self::SetLogin | Self::UpdateHeartbeat { .. } | Self::Abort) => {
+                Err(other)
+            }
+        }
+    }
+}
+
 /// The RithmicHistoryPlant provides access to historical market data through the Rithmic API.
 ///
 /// It allows applications to retrieve historical tick data and time bar data for specific instruments and time ranges
@@ -303,6 +343,20 @@ impl PlantActor for HistoryPlant {
     }
 
     async fn handle_command(&mut self, command: HistoryPlantCommand) {
+        // Disconnect race guard — see `TickerPlant::handle_command` for the
+        // rationale.
+        let command = if self.core.close_requested {
+            match command.into_response_sender_or_command() {
+                Ok(tx) => {
+                    let _ = tx.send(Err(RithmicError::ConnectionClosed));
+
+                    return;
+                }
+                Err(cmd) => cmd,
+            }
+        } else {
+            command
+        };
         match command {
             HistoryPlantCommand::Close => {
                 self.core.handle_close().await;
@@ -917,5 +971,61 @@ impl Clone for RithmicHistoryPlantHandle {
             subscription_receiver: self.subscription_sender.subscribe(),
             subscription_sender: self.subscription_sender.clone(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{HistoryPlantCommand, *};
+    use crate::error::RithmicError;
+
+    /// See the analogous ticker_plant test: the disconnect race guard in
+    /// `handle_command` depends on this contract.
+    #[test]
+    fn responder_bearing_variants_surface_sender() {
+        let (tx, _rx) = oneshot::channel();
+        let cmd = HistoryPlantCommand::LoadTicks {
+            bar_type_specifier: "1".to_string(),
+            end_time_sec: 1000,
+            exchange: "CME".to_string(),
+            response_sender: tx,
+            start_time_sec: 0,
+            symbol: "ESH6".to_string(),
+        };
+        assert!(cmd.into_response_sender_or_command().is_ok());
+    }
+
+    #[test]
+    fn fire_and_forget_variants_are_preserved() {
+        assert!(matches!(
+            HistoryPlantCommand::Close.into_response_sender_or_command(),
+            Err(HistoryPlantCommand::Close)
+        ));
+        assert!(matches!(
+            HistoryPlantCommand::Abort.into_response_sender_or_command(),
+            Err(HistoryPlantCommand::Abort)
+        ));
+    }
+
+    #[tokio::test]
+    async fn responder_drained_with_connection_closed() {
+        let (tx, rx) = oneshot::channel::<Result<Vec<RithmicResponse>, RithmicError>>();
+        let cmd = HistoryPlantCommand::LoadTicks {
+            bar_type_specifier: "1".to_string(),
+            end_time_sec: 1000,
+            exchange: "CME".to_string(),
+            response_sender: tx,
+            start_time_sec: 0,
+            symbol: "ESH6".to_string(),
+        };
+        if let Ok(sender) = cmd.into_response_sender_or_command() {
+            let _ = sender.send(Err(RithmicError::ConnectionClosed));
+        } else {
+            panic!("LoadTicks must carry a responder");
+        }
+        assert!(matches!(
+            rx.await.unwrap(),
+            Err(RithmicError::ConnectionClosed)
+        ));
     }
 }

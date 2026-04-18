@@ -1711,10 +1711,16 @@ enum RpCodeClassification {
 impl RpCodeClassification {
     /// Returns the human-readable rejection message, or `None` for
     /// `Success` / `KnownBenignEmpty`.
+    ///
+    /// For a single-element `rp_code` like `["5"]` the inner
+    /// `message` is `None`; callers of the legacy [`RithmicResponse::error`]
+    /// field expect a `Some(_)` to gate on "is this a rejection", so we map
+    /// that case to `Some(String::new())` here. New code should use
+    /// [`RithmicResponse::request_error`] which exposes the typed `Option`.
     fn error_message(&self) -> Option<String> {
         match self {
             Self::Success | Self::KnownBenignEmpty => None,
-            Self::RequestRejected(err) => Some(err.message.clone()),
+            Self::RequestRejected(err) => Some(err.message.clone().unwrap_or_default()),
         }
     }
 }
@@ -1828,11 +1834,10 @@ fn classify_rp_code(rp_code: &[String]) -> RpCodeClassification {
     }
 
     let code = rp_code.first().cloned();
-    // `message` is strictly the second element, else empty — matches the prior
-    // `rp_code.get(1).cloned().unwrap_or_default()` behavior for legacy
-    // `response.error`. Single-element rp_codes (e.g. ["5"]) produce an empty
-    // message; Display then renders `[5]` without a dangling duplicate.
-    let message = rp_code.get(1).cloned().unwrap_or_default();
+    // `message` is strictly the second element, else `None`. Symmetric with
+    // `code`. Single-element rp_codes (e.g. `["5"]`) therefore produce
+    // `message = None`; consumers see no spurious empty string.
+    let message = rp_code.get(1).cloned();
 
     RpCodeClassification::RequestRejected(crate::error::RithmicRequestError {
         rp_code: rp_code.to_vec(),
@@ -2230,7 +2235,7 @@ mod tests {
             super::RpCodeClassification::RequestRejected(RithmicRequestError {
                 rp_code: rp_code.clone(),
                 code: Some("7".to_string()),
-                message: "permission denied".to_string(),
+                message: Some("permission denied".to_string()),
             })
         );
     }
@@ -2244,15 +2249,15 @@ mod tests {
             super::RpCodeClassification::RequestRejected(RithmicRequestError {
                 rp_code: rp_code.clone(),
                 code: Some("3".to_string()),
-                message: "bad request".to_string(),
+                message: Some("bad request".to_string()),
             })
         );
     }
 
     #[test]
-    fn classify_rp_code_single_non_zero_has_empty_message() {
+    fn classify_rp_code_single_non_zero_has_none_message() {
         // When only a single element is provided, the classifier stores it as
-        // `code: Some(..)` with an empty `message`. Display renders `[5]`.
+        // `code: Some(..)` with `message: None`. Display renders `[5]`.
         use crate::error::RithmicRequestError;
         let rp_code = vec!["5".to_string()];
         assert_eq!(
@@ -2260,7 +2265,7 @@ mod tests {
             super::RpCodeClassification::RequestRejected(RithmicRequestError {
                 rp_code: rp_code.clone(),
                 code: Some("5".to_string()),
-                message: String::new(),
+                message: None,
             })
         );
     }
@@ -2281,7 +2286,7 @@ mod tests {
             super::RpCodeClassification::RequestRejected(RithmicRequestError {
                 rp_code: rp_code.clone(),
                 code: Some("7".to_string()),
-                message: "an error occurred while parsing data.".to_string(),
+                message: Some("an error occurred while parsing data.".to_string()),
             })
         );
     }
@@ -2338,7 +2343,7 @@ mod tests {
             Some(RithmicRequestError {
                 rp_code: vec!["3".to_string(), "bad request".to_string()],
                 code: Some("3".to_string()),
-                message: "bad request".to_string(),
+                message: Some("bad request".to_string()),
             })
         );
     }
@@ -2377,7 +2382,7 @@ mod tests {
                     "an error occurred while parsing data.".to_string(),
                 ],
                 code: Some("7".to_string()),
-                message: "an error occurred while parsing data.".to_string(),
+                message: Some("an error occurred while parsing data.".to_string()),
             })
         );
     }
@@ -2467,7 +2472,7 @@ mod tests {
             Some(RithmicError::RequestRejected(RithmicRequestError { rp_code, code, message }))
                 if rp_code == vec!["6".to_string(), "agreement already signed".to_string()]
                     && code.as_deref() == Some("6")
-                    && message == "agreement already signed"
+                    && message.as_deref() == Some("agreement already signed")
         ));
     }
 

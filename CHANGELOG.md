@@ -12,13 +12,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `response.request_error()` or the new rp_code accessors
   (`rp_code()`, `rp_code_first()`, `rp_code_text()`) instead.
 - **`RithmicRequestError` shape changed.** `code: String` → `code: Option<String>`;
+  `message: String` → `message: Option<String>` (symmetric with `code`;
+  single-element rp_codes like `["5"]` now produce `message = None`);
   new `rp_code: Vec<String>` field preserves the full raw payload; struct is
-  now `#[non_exhaustive]`. Accesses via `err.code` must update to
-  `err.code.as_deref().unwrap_or("?")`.
+  now `#[non_exhaustive]`. Accesses via `err.code` / `err.message` must update
+  to `err.code.as_deref().unwrap_or("?")` and
+  `err.message.as_deref().unwrap_or("")`.
 - **`buf_to_message` no longer returns `Err(RithmicResponse)` for rp_code
   rejections.** Protocol-level outcomes now always come out as `Ok(response)`
   with `response.error` populated and `response.request_error()` available.
   `Err(RithmicResponse)` now exclusively means decode failure.
+- **`RithmicError::ServerError(String)` removed.** Replaced by two variants
+  that preserve the server/transport distinction. `RithmicError` now derives
+  `PartialEq`, and `source()` returns the inner `RithmicRequestError` for
+  `RequestRejected`.
+
+#### Migrating from `RithmicError::ServerError`
+Before (≤ 1.x):
+```rust
+match handle.subscribe("ESH6", "CME").await {
+    Ok(_) => { /* ... */ }
+    Err(RithmicError::ServerError(msg)) => {
+        eprintln!("server error: {msg}");
+        // unclear whether this is a rejection or a decode failure —
+        // callers often used the message text to guess
+    }
+    Err(e) => eprintln!("{e}"),
+}
+```
+
+After:
+```rust
+match handle.subscribe("ESH6", "CME").await {
+    Ok(_) => { /* ... */ }
+    Err(RithmicError::RequestRejected(err)) => {
+        // Structured rp_code rejection — do NOT reconnect.
+        eprintln!(
+            "rejected code={} msg={}",
+            err.code.as_deref().unwrap_or("?"),
+            err.message.as_deref().unwrap_or(""),
+        );
+    }
+    Err(RithmicError::ProtocolError(msg)) => {
+        // Decode or non-rp_code protocol failure — do NOT reconnect.
+        eprintln!("protocol error: {msg}");
+    }
+    Err(RithmicError::ConnectionClosed | RithmicError::SendFailed) => {
+        // Transport failure — reconnect.
+    }
+    Err(e) => eprintln!("{e}"),
+}
+```
 
 ### Added
 - **`RithmicError::ProtocolError(String)`** — non-transport failures that don't
