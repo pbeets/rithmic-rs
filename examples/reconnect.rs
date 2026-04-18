@@ -184,6 +184,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         let uptime = session_started.elapsed().unwrap_or_default();
+
         if received_data && uptime >= STABLE_SESSION_THRESHOLD {
             backoff = BACKOFF_MIN;
         }

@@ -114,6 +114,7 @@ pub struct RithmicResponse {
     pub is_update: bool,
     pub has_more: bool,
     pub multi_response: bool,
+
     /// Display-only view of a protocol-level rejection or non-transport
     /// failure. For typed access use [`RithmicResponse::request_error`]
     /// — it classifies rp_code rejections as
@@ -177,6 +178,7 @@ impl RithmicResponse {
         if self.is_connection_issue() {
             return None;
         }
+
         match self.rp_code().map(classify_rp_code) {
             Some(RpCodeClassification::RequestRejected(err)) => Some(err),
             _ => None,
@@ -192,9 +194,11 @@ impl RithmicResponse {
         if let Some(err) = self.request_rejection() {
             return Some(crate::error::RithmicError::RequestRejected(err));
         }
+
         if self.is_connection_issue() {
             return None;
         }
+
         self.error
             .clone()
             .map(crate::error::RithmicError::ProtocolError)

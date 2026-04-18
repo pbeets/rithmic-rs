@@ -440,6 +440,7 @@ impl PlantActor for TickerPlant {
                 SelectResult::RithmicMessage(msg) => self.core.handle_rithmic_message(msg).await,
                 SelectResult::StreamClosed => self.core.handle_stream_closed(),
             };
+
             if stop {
                 break;
             }
@@ -1967,11 +1968,13 @@ mod tests {
             request_type: Request::Subscribe,
             response_sender: tx,
         };
+
         if let Ok(sender) = cmd.into_response_sender_or_command() {
             let _ = sender.send(Err(RithmicError::ConnectionClosed));
         } else {
             panic!("Subscribe must carry a responder");
         }
+
         assert!(matches!(
             rx.await.unwrap(),
             Err(RithmicError::ConnectionClosed)

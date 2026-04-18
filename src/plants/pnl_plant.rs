@@ -267,6 +267,7 @@ impl PlantActor for PnlPlant {
                 SelectResult::RithmicMessage(msg) => self.core.handle_rithmic_message(msg).await,
                 SelectResult::StreamClosed => self.core.handle_stream_closed(),
             };
+
             if stop {
                 break;
             }

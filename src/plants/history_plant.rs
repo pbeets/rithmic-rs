@@ -1018,11 +1018,13 @@ mod tests {
             start_time_sec: 0,
             symbol: "ESH6".to_string(),
         };
+
         if let Ok(sender) = cmd.into_response_sender_or_command() {
             let _ = sender.send(Err(RithmicError::ConnectionClosed));
         } else {
             panic!("LoadTicks must carry a responder");
         }
+
         assert!(matches!(
             rx.await.unwrap(),
             Err(RithmicError::ConnectionClosed)
