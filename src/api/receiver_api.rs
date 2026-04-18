@@ -1722,8 +1722,7 @@ impl RpCodeClassification {
 // INVARIANT: every variant in this list must have an rp_code field on its
 // inner proto. If you add a Response* variant to RithmicMessage whose
 // proto carries rp_code, add it here AND add a decode-time
-// `get_error(&resp.rp_code)` call in the matching decoder arm. See
-// docs/rp-code-audit.md for rationale.
+// `get_error(&resp.rp_code)` call in the matching decoder arm.
 macro_rules! rp_code_response_variants {
     ($macro:ident) => {
         $macro! {
@@ -1810,8 +1809,8 @@ rp_code_response_variants!(define_response_rp_code_info);
 
 // Single extension point for benign `rp_code` normalizations. Any new mapping
 // MUST match exactly on both code AND message and ship with a captured-fixture
-// decode test — see docs/rp_code_observations.tsv (e.g. `["7", "an error
-// occurred while parsing data."]` shares code "7" but is a real error).
+// decode test — e.g. `["7", "an error occurred while parsing data."]` shares
+// code "7" but is a real error.
 fn classify_rp_code(rp_code: &[String]) -> RpCodeClassification {
     // Per §2.1.b of the Rithmic Reference Guide, `rp_code[0] == "0"` is the
     // authoritative "success" signal regardless of whether a trailing message
