@@ -2,7 +2,7 @@
 //!
 //! Sketches a production-shaped connection supervisor:
 //!
-//! - Transport failures reconnect with exponential backoff + jitter (capped at 60s).
+//! - Transport failures reconnect with exponential backoff (capped at 60s).
 //! - `RequestRejected` on **login** is terminal (bad credentials / entitlements) —
 //!   retrying risks account lockout, so we log, disconnect, and exit.
 //! - `RequestRejected` on **subscribe** is per-symbol (e.g. unknown instrument) —
@@ -34,18 +34,6 @@ const BACKOFF_MIN: Duration = Duration::from_millis(500);
 const BACKOFF_MAX: Duration = Duration::from_secs(60);
 const STABLE_SESSION_THRESHOLD: Duration = Duration::from_secs(30);
 
-/// Per-process PRNG seed. Mixing `process::id()` with wall-clock nanos ensures
-/// two clients that fail within the same sub-second window get different
-/// jitter — preserving thundering-herd mitigation across a fleet.
-fn seed_jitter_rng() -> u64 {
-    let nanos = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos() as u64;
-
-    nanos ^ (u64::from(std::process::id()).rotate_left(17))
-}
-
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenvy::dotenv().ok();
@@ -59,7 +47,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     subscriptions.insert((symbol, exchange));
 
     let mut backoff = BACKOFF_MIN;
-    let mut rng_state = seed_jitter_rng();
 
     loop {
         let plant = match RithmicTickerPlant::connect(&config, ConnectStrategy::Retry).await {
@@ -67,7 +54,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Err(e) => {
                 error!("Connect failed: {e}");
 
-                sleep_with_backoff(&mut backoff, &mut rng_state).await;
+                sleep_with_backoff(&mut backoff).await;
 
                 continue;
             }
@@ -81,7 +68,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     warn!("Login failed (connection issue): {e}");
 
                     shutdown_plant(&handle, plant).await;
-                    sleep_with_backoff(&mut backoff, &mut rng_state).await;
+                    sleep_with_backoff(&mut backoff).await;
 
                     continue;
                 }
@@ -111,7 +98,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     error!("Login failed: {e}");
 
                     shutdown_plant(&handle, plant).await;
-                    sleep_with_backoff(&mut backoff, &mut rng_state).await;
+                    sleep_with_backoff(&mut backoff).await;
 
                     continue;
                 }
@@ -145,7 +132,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         if connection_lost {
             shutdown_plant(&handle, plant).await;
-            sleep_with_backoff(&mut backoff, &mut rng_state).await;
+            sleep_with_backoff(&mut backoff).await;
 
             continue;
         }
@@ -218,36 +205,11 @@ async fn shutdown_plant(handle: &rithmic_rs::RithmicTickerPlantHandle, plant: Ri
     let _ = plant.await_shutdown().await;
 }
 
-/// Sleep for the current backoff with ±25% jitter, then double (capped).
-/// Jitter avoids thundering-herd when many clients reconnect in lockstep.
-///
-/// Uses a per-process splitmix64 step rather than a clock-derived value so that
-/// two clients that fail within the same sub-second window do not compute the
-/// same offset (which would defeat the jitter's purpose across a fleet).
-async fn sleep_with_backoff(backoff: &mut Duration, rng_state: &mut u64) {
-    let jitter_ns = (backoff.as_nanos() as i128) / 4;
-    let r = next_rand(rng_state) as i128;
+/// Sleep for the current backoff, then double it (capped at BACKOFF_MAX).
+async fn sleep_with_backoff(backoff: &mut Duration) {
+    info!("Reconnecting in {:?}…", backoff);
 
-    let offset_ns = if jitter_ns > 0 {
-        (r.rem_euclid(2 * jitter_ns + 1)) - jitter_ns
-    } else {
-        0
-    };
-
-    let sleep_for = Duration::from_nanos(((backoff.as_nanos() as i128) + offset_ns).max(0) as u64);
-
-    info!("Reconnecting in {:?}…", sleep_for);
-
-    sleep(sleep_for).await;
+    sleep(*backoff).await;
 
     *backoff = (*backoff * 2).min(BACKOFF_MAX);
-}
-
-/// Splitmix64 step — small, dependency-free PRNG suitable for jitter.
-fn next_rand(state: &mut u64) -> u64 {
-    *state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
-    let mut z = *state;
-    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-    z ^ (z >> 31)
 }
