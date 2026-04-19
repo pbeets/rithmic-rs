@@ -143,13 +143,13 @@ impl RithmicResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use crate::rti::{
         AccountPnLPositionUpdate, BestBidOffer, BracketUpdates, DepthByOrder, DepthByOrderEndEvent,
         ExchangeOrderNotification, ForcedLogout, InstrumentPnLPositionUpdate, LastTrade, OrderBook,
         RithmicOrderNotification, messages::RithmicMessage,
     };
 
-    /// Helper to create a test response with a specific message type
     fn make_response(message: RithmicMessage) -> RithmicResponse {
         RithmicResponse {
             request_id: String::new(),

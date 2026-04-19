@@ -162,8 +162,9 @@ impl std::error::Error for RithmicError {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::error::Error;
+
+    use super::*;
 
     #[test]
     fn request_error_display_formats_code_and_message() {

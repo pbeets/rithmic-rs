@@ -1,4 +1,5 @@
 use std::time::Duration;
+
 use tracing::{error, info, warn};
 
 use futures_util::{
@@ -88,6 +89,7 @@ impl PlantCore<WsSink> {
 
         let (rithmic_sender, rithmic_reader) = ws_stream.split();
         let rithmic_sender_api = RithmicSenderApi::new(config);
+
         let rithmic_receiver_api = RithmicReceiverApi {
             source: source.to_string(),
         };
@@ -119,6 +121,7 @@ where
 {
     pub(crate) fn emit_connection_health_event(&self, request_id: &str, error: RithmicError) {
         let message = error.as_connection_message();
+
         let error_response = RithmicResponse {
             request_id: request_id.to_string(),
             message,
@@ -318,10 +321,12 @@ where
                     error: response.error.clone(),
                     source: self.rithmic_receiver_api.source.clone(),
                 };
+
                 let _ = self.subscription_sender.send(synthetic);
             }
 
             self.request_handler.handle_response(response);
+
             return;
         }
 
@@ -356,6 +361,7 @@ where
             }
             Ok(Message::Binary(data)) => {
                 let source = self.rithmic_receiver_api.source.clone();
+
                 match self.rithmic_receiver_api.buf_to_message(data) {
                     Ok(response) => self.forward_response(&source, response),
                     Err(err_response) => {

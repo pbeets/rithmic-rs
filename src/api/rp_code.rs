@@ -157,8 +157,8 @@ pub(crate) fn classify_rp_code_error(rp_code: &[String]) -> Option<crate::error:
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::error::{RithmicError, RithmicRequestError};
+
     use crate::rti::{
         Reject, ResponseAcceptAgreement, ResponseAccountList, ResponseAccountRmsInfo,
         ResponseAccountRmsUpdates, ResponseAuxilliaryReferenceData, ResponseBracketOrder,
@@ -183,6 +183,8 @@ mod tests {
         ResponseUpdateStopBracketLevel, ResponseUpdateTargetBracketLevel,
         ResponseVolumeProfileMinuteBars, messages::RithmicMessage,
     };
+
+    use super::*;
 
     // =========================================================================
     // classify_rp_code_error() unit tests
