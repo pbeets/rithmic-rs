@@ -374,7 +374,7 @@ impl RithmicReceiverApi {
                     message: RithmicMessage::ResponseDepthByOrderUpdates(resp),
                     is_update: false,
                     has_more: false,
-                    multi_response: true,
+                    multi_response: false,
                     error,
                     source: self.source.clone(),
                 }

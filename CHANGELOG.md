@@ -8,9 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Breaking Changes (Unreleased pre-2.0.0 API churn)
-- **`RithmicResponse::rp_code_error` field removed.** Use
-  `response.request_error()` or the new rp_code accessors
-  (`rp_code()`, `rp_code_first()`, `rp_code_text()`) instead.
+- **`RithmicResponse::rp_code_error` field removed.** Use `response.error`
+  directly, or the new rp_code accessors
+  (`rp_code()`, `rp_code_num()`, `rp_code_text()`) for the raw payload.
 - **`RithmicRequestError` shape changed.** `code: String` → `code: Option<String>`;
   `message: String` → `message: Option<String>` (symmetric with `code`;
   single-element rp_codes like `["5"]` now produce `message = None`);
@@ -20,7 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `err.message.as_deref().unwrap_or("")`.
 - **`buf_to_message` no longer returns `Err(RithmicResponse)` for rp_code
   rejections.** Protocol-level outcomes now always come out as `Ok(response)`
-  with `response.error` populated and `response.request_error()` available.
+  with `response.error` populated.
   `Err(RithmicResponse)` now exclusively means decode failure.
 - **`RithmicError::ServerError(String)` removed.** Replaced by two variants
   that preserve the server/transport distinction. `RithmicError` now derives
@@ -68,18 +68,14 @@ match handle.subscribe("ESH6", "CME").await {
 - **`RithmicError::ProtocolError(String)`** — non-transport failures that don't
   carry `rp_code` (decode errors, missing response).
 - **`RithmicResponse::rp_code() -> Option<&[String]>`** — raw payload slice.
-- **`RithmicResponse::rp_code_first() -> Option<&str>`** — first element.
-- **`RithmicResponse::rp_code_text() -> Option<&str>`** — human message.
-- **`RithmicResponse::request_error() -> Option<RithmicError>`** — typed non-
-  transport error (rejection → `RequestRejected`, non-rp_code error →
-  `ProtocolError`).
+- **`RithmicResponse::rp_code_num() -> Option<&str>`** — numeric code (first element).
+- **`RithmicResponse::rp_code_text() -> Option<&str>`** — human message (second element).
 - **Internal `rp_code_response_variants!` macro** enumerating every
   `RithmicMessage` variant whose inner proto carries `rp_code`. Keep in sync
   when new `Response*` templates are added.
 
 ### Changed
-- **Plant login helpers simplified** — all four plants delegate to
-  `response.request_error()`.
+- **Plant login helpers simplified** — all four plants check `response.error` directly.
 - **Ping/heartbeat SEND transport failures** broadcast as
   `RithmicMessage::HeartbeatTimeout` (same signal as a true heartbeat
   timeout) instead of `ConnectionError`.
@@ -110,7 +106,7 @@ match handle.subscribe("ESH6", "CME").await {
 
 ### Known behaviors
 - `RithmicMessage::ForcedLogout` surfaces via subscription updates and
-  `is_connection_issue()`; `request_error()` returns `None` for it.
+  `is_connection_issue()` returns `true` for it.
 - A protobuf decode failure on a `ResponseHeartbeat` frame is routed to the
   subscription channel as a generic update (not a synthetic
   `HeartbeatTimeout`). Unchanged from prior behavior.

@@ -171,7 +171,9 @@ where
                 // A half-open TCP connection may not surface through the reader,
                 // so drain all pending requests and broadcast ConnectionError
                 // now rather than letting subsequent sends pile into a dead sink.
-                // The next ping/heartbeat tick will stop the actor loop.
+                // The actor loop will stop when the next ping fires (within
+                // PING_INTERVAL_SECS). Heartbeat does not stop it because
+                // send_heartbeat returns early when logged_in=false.
                 self.fail_connection_and_drain(
                     request_id,
                     RithmicError::ConnectionFailed(
