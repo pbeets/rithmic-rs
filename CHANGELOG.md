@@ -7,25 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Breaking Changes (Unreleased pre-2.0.0 API churn)
-- **`RithmicResponse::rp_code_error` field removed.** Use `response.error`
-  directly, or the new rp_code accessors
-  (`rp_code()`, `rp_code_num()`, `rp_code_text()`) for the raw payload.
-- **`RithmicRequestError` shape changed.** `code: String` → `code: Option<String>`;
-  `message: String` → `message: Option<String>` (symmetric with `code`;
-  single-element rp_codes like `["5"]` now produce `message = None`);
-  new `rp_code: Vec<String>` field preserves the full raw payload; struct is
-  now `#[non_exhaustive]`. Accesses via `err.code` / `err.message` must update
-  to `err.code.as_deref().unwrap_or("?")` and
-  `err.message.as_deref().unwrap_or("")`.
-- **`buf_to_message` no longer returns `Err(RithmicResponse)` for rp_code
-  rejections.** Protocol-level outcomes now always come out as `Ok(response)`
-  with `response.error` populated.
-  `Err(RithmicResponse)` now exclusively means decode failure.
-- **`RithmicError::ServerError(String)` removed.** Replaced by two variants
-  that preserve the server/transport distinction. `RithmicError` now derives
-  `PartialEq`, and `source()` returns the inner `RithmicRequestError` for
-  `RequestRejected`.
+## [2.0.0]
+
+### Breaking Changes
+
+- **`RithmicError::ServerError(String)` removed.** Replaced by `RequestRejected` and `ProtocolError` variants that preserve the server/transport distinction. `RithmicError` now derives `PartialEq`, and `source()` returns the inner `RithmicRequestError` for `RequestRejected`.
+- **`RithmicResponse::rp_code_error` field removed.** Use `response.error` directly, or the new rp_code accessors (`rp_code()`, `rp_code_num()`, `rp_code_text()`) for the raw payload.
+- **`RithmicRequestError` shape changed.** `code: String` → `code: Option<String>`; `message: String` → `message: Option<String>` (symmetric with `code`; single-element rp_codes like `["5"]` now produce `message = None`); new `rp_code: Vec<String>` field preserves the full raw payload; struct is now `#[non_exhaustive]`. Accesses via `err.code` / `err.message` must update to `err.code.as_deref().unwrap_or("?")` and `err.message.as_deref().unwrap_or("")`.
+- **`buf_to_message` no longer returns `Err(RithmicResponse)` for rp_code rejections.** Protocol-level outcomes now always come out as `Ok(response)` with `response.error` populated. `Err(RithmicResponse)` now exclusively means decode failure.
+- **`RithmicConfig` no longer includes `account_id`, `fcm_id`, or `ib_id`** — those fields moved to `RithmicAccount`
+- **`RithmicOrderPlant::get_handle()` and `RithmicPnlPlant::get_handle()` now require `&RithmicAccount`**
+  - Create a `RithmicAccount` with `RithmicAccount::from_env(env)` or build one directly
+  - For multi-account workflows, create one `RithmicAccount` per account and call `get_handle(&account)` for each
+- **`subscription_receiver` on order and PnL handles is now `SubscriptionFilter`** instead of `broadcast::Receiver<RithmicResponse>`
 
 #### Migrating from `RithmicError::ServerError`
 Before (≤ 1.x):
@@ -41,7 +35,7 @@ match handle.subscribe("ESH6", "CME").await {
 }
 ```
 
-After:
+After (2.0):
 ```rust
 match handle.subscribe("ESH6", "CME").await {
     Ok(_) => { /* ... */ }
@@ -65,71 +59,18 @@ match handle.subscribe("ESH6", "CME").await {
 ```
 
 ### Added
-- **`RithmicError::ProtocolError(String)`** — non-transport failures that don't
-  carry `rp_code` (decode errors, missing response).
+
+- **`RithmicError::ProtocolError(String)`** — non-transport failures that don't carry `rp_code` (decode errors, missing response).
+- **`RithmicError::InvalidArgument(String)`** variant for rejecting invalid caller-supplied arguments before a request is sent
 - **`RithmicResponse::rp_code() -> Option<&[String]>`** — raw payload slice.
 - **`RithmicResponse::rp_code_num() -> Option<&str>`** — numeric code (first element).
 - **`RithmicResponse::rp_code_text() -> Option<&str>`** — human message (second element).
-- **Internal `rp_code_response_variants!` macro** enumerating every
-  `RithmicMessage` variant whose inner proto carries `rp_code`. Keep in sync
-  when new `Response*` templates are added.
-
-### Changed
-- **Plant login helpers simplified** — all four plants check `response.error` directly.
-- **Ping/heartbeat SEND transport failures** broadcast as
-  `RithmicMessage::HeartbeatTimeout` (same signal as a true heartbeat
-  timeout) instead of `ConnectionError`.
-- **`send_or_fail` timeout now drains all pending requests** and broadcasts
-  `ConnectionError` before the next ping/heartbeat stops the actor.
-  Previously only the single failing request was notified; remaining pending
-  oneshots could hang on a half-open TCP connection since the poisoned sink
-  is not guaranteed to surface through the reader.
-- **`classify_rp_code` accepts `["0", <trailing>]` as success.** Per §2.1.b
-  of the Rithmic R|Protocol Reference Guide, `rp_code[0] == "0"` is the
-  authoritative success signal regardless of whether the server appends a
-  trailing annotation. Previously `["0", "ok"]` was mis-classified as a
-  rejection.
-- **`has_multiple` (multipart framing) now keys on presence, not value.**
-  Per §3 of the Reference Guide, the presence of `rq_handler_rp_code`
-  signals "more frames follow"; the value inside is not the multipart
-  signal. Previously keying on `[0] == "0"` silently truncated multipart
-  responses whose intermediate frames carried a non-`"0"` value.
-- **`examples/reconnect.rs` handles broadcast `RecvError::Lagged`
-  explicitly** — a slow consumer that drops a connection-health frame
-  through buffer wrap now logs and reconnects instead of silently exiting
-  the read loop.
-- **Unknown `template_id` responses route as subscription updates**
-  (`is_update: true`) instead of going to the request handler. Previously
-  they surfaced as "no responder found" noise on the per-request path.
-  Subscribers now observe `RithmicMessage::Unknown` frames with a populated
-  `error` describing the unknown `template_id`.
-
-### Known behaviors
-- `RithmicMessage::ForcedLogout` surfaces via subscription updates and
-  `is_connection_issue()` returns `true` for it.
-- A protobuf decode failure on a `ResponseHeartbeat` frame is routed to the
-  subscription channel as a generic update (not a synthetic
-  `HeartbeatTimeout`). Unchanged from prior behavior.
-
-## [2.0.0]
-
-### Breaking Changes
-
-- **`RithmicConfig` no longer includes `account_id`, `fcm_id`, or `ib_id`** — those fields moved to `RithmicAccount`
-- **`RithmicOrderPlant::get_handle()` and `RithmicPnlPlant::get_handle()` now require `&RithmicAccount`**
-  - Create a `RithmicAccount` with `RithmicAccount::from_env(env)` or build one directly
-  - For multi-account workflows, create one `RithmicAccount` per account and call `get_handle(&account)` for each
-- **`subscription_receiver` on order and PnL handles is now `SubscriptionFilter`** instead of `broadcast::Receiver<RithmicResponse>`
-
-### Added
-
 - **`RithmicAccount`** — account-scoped type for order and PnL operations
   - `RithmicAccount::from_env(RithmicEnv)` loads `RITHMIC_<ENV>_ACCOUNT_ID`, `FCM_ID`, `IB_ID`
 - **`load_tick_bars(symbol, exchange, bar_length, start_time_sec, end_time_sec)`** on `RithmicHistoryPlantHandle`
   - Fetches historical N-tick bars (e.g., 5-tick, 10-tick) for a symbol
   - `bar_length` controls the number of ticks aggregated into each bar
   - Returns `RithmicError::InvalidArgument` when `bar_length` is 0
-- **`RithmicError::InvalidArgument(String)`** variant for rejecting invalid caller-supplied arguments before a request is sent
 - **`RithmicAdvancedBracketOrder`** — full raw bracket order request exposing all venue-native fields
   - Supports triggered entry, break-even, trailing-stop, timed release/cancel, and if-touched entry conditions
   - Re-exported from crate root
@@ -146,16 +87,29 @@ match handle.subscribe("ESH6", "CME").await {
   - `subscribe_end_of_day_prices` / `unsubscribe_end_of_day_prices` — end-of-day price data
   - `subscribe_order_price_limits` / `unsubscribe_order_price_limits` — high/low price limits
   - `subscribe_symbol_margin_rate` / `unsubscribe_symbol_margin_rate` — margin rate updates
+- **Internal `rp_code_response_variants!` macro** enumerating every `RithmicMessage` variant whose inner proto carries `rp_code`. Keep in sync when new `Response*` templates are added.
 
 ### Changed
 
+- **Plant login helpers simplified** — all four plants check `response.error` directly.
+- **Ping/heartbeat SEND transport failures** broadcast as `RithmicMessage::HeartbeatTimeout` (same signal as a true heartbeat timeout) instead of `ConnectionError`.
+- **`send_or_fail` timeout now drains all pending requests** and broadcasts `ConnectionError` before the next ping/heartbeat stops the actor. Previously only the single failing request was notified; remaining pending oneshots could hang on a half-open TCP connection since the poisoned sink is not guaranteed to surface through the reader.
 - **`RithmicError::SendFailed`** now also covers send timeouts — all plant WebSocket sends are bounded to 10 seconds; a hung sink surfaces as `SendFailed` rather than blocking the actor indefinitely
+- **`classify_rp_code` accepts `["0", <trailing>]` as success.** Per §2.1.b of the Rithmic R|Protocol Reference Guide, `rp_code[0] == "0"` is the authoritative success signal regardless of whether the server appends a trailing annotation. Previously `["0", "ok"]` was mis-classified as a rejection.
+- **`has_multiple` (multipart framing) now keys on presence, not value.** Per §3 of the Reference Guide, the presence of `rq_handler_rp_code` signals "more frames follow"; the value inside is not the multipart signal. Previously keying on `[0] == "0"` silently truncated multipart responses whose intermediate frames carried a non-`"0"` value.
 - **`load_ticks`** now delegates to `load_tick_bars` with `bar_length = 1` — no behavioral change for existing callers
 - **`request_tick_bar_replay`** on `RithmicSenderApi` now accepts a `bar_type_specifier` parameter instead of hard-coding `"1"`
+- **`examples/reconnect.rs` handles broadcast `RecvError::Lagged` explicitly** — a slow consumer that drops a connection-health frame through buffer wrap now logs and reconnects instead of silently exiting the read loop.
+- **Unknown `template_id` responses route as subscription updates** (`is_update: true`) instead of going to the request handler. Previously they surfaced as "no responder found" noise on the per-request path. Subscribers now observe `RithmicMessage::Unknown` frames with a populated `error` describing the unknown `template_id`.
 
 ### Fixed
 
 - **`rp_code = ["7", "no data"]`** is now treated as a successful empty result (not an error) across all list/replay/search responses — previously this caused methods like `replay_executions` to return `ServerError("no data")` when the query matched zero records
+
+### Known behaviors
+
+- `RithmicMessage::ForcedLogout` surfaces via subscription updates and `is_connection_issue()` returns `true` for it.
+- A protobuf decode failure on a `ResponseHeartbeat` frame is routed to the subscription channel as a generic update (not a synthetic `HeartbeatTimeout`). Unchanged from prior behavior.
 
 ## [1.0.0]
 
@@ -261,7 +215,7 @@ match handle.subscribe("ESH6", "CME").await {
 #### Optional Serde Support
 - Added `serde` feature flag for serialization/deserialization support
 - `RithmicEnv` derives `Serialize`/`Deserialize` when enabled with lowercase rename
-- Enable with: `rithmic-rs = { version = "1.0", features = ["serde"] }`
+- Enable with: `rithmic-rs = { version = "2.0", features = ["serde"] }`
 
 #### New Example
 - **`bracket_order.rs`**: Demonstrates placing bracket orders with typed enums
@@ -777,7 +731,7 @@ Previous stable release. See git history for earlier changes.
 
 ## Version History Summary
 
-- **2.0.0**: Breaking changes - `RithmicAccount` split from `RithmicConfig`, account-scoped `get_handle()`, `SubscriptionFilter`; advanced bracket orders, semantic ticker subscriptions, bounded WebSocket sends
+- **2.0.0**: Breaking changes - typed `RithmicError::RequestRejected`/`ProtocolError` replace `ServerError`, `RithmicResponse::rp_code_error` removed, `RithmicAccount` split from `RithmicConfig`, account-scoped `get_handle()`, `SubscriptionFilter`; advanced bracket orders, semantic ticker subscriptions, bounded WebSocket sends
 - **1.0.0**: Breaking changes - typed `RithmicError` enum, prost 0.14, async-trait removed, `LoginConfig` for advanced login, `await_shutdown()`, non_exhaustive annotations, MSRV 1.85
 - **0.7.2** (2026-02-07): New RithmicOrder API with trigger prices and trailing stops, ticker plant unsubscribe methods, serde-compatible order types
 - **0.7.1** (2026-01-23): New utility module (InstrumentInfo, OrderStatus, timestamp helpers), RithmicResponse helper methods, optional serde support, improved error handling
