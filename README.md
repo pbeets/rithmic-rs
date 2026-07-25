@@ -133,6 +133,25 @@ handle.exit_position("ESM6", "CME").await?;
 For multi-account workflows, create one [`RithmicAccount`] per account and call
 `get_handle(&account)` for each handle you need.
 
+### Unrecognized message templates
+
+A `template_id` this crate has no definition for arrives as
+`RithmicMessage::UnknownTemplate` with `error: None`, carrying the message body
+as received:
+
+```rust
+if let RithmicMessage::UnknownTemplate(frame) = &update.message {
+    // template_id=358 (84 bytes) a2e135054d45535536aae13503434d45e2ed3506393231342d32faed35096361…+52B
+    tracing::warn!(payload = %frame.payload_hex(), "unmapped template: {frame}");
+
+    // Once you know what it maps to, generate the type from the .proto in your
+    // own crate; `rithmic_rs::prost` is re-exported so versions can't drift.
+    if let Ok(decoded) = frame.decode_as::<my_crate::Template358>() {
+        handle_it_yourself(decoded);
+    }
+}
+```
+
 ### History Plant
 
 ```rust

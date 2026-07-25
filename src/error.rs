@@ -96,6 +96,9 @@ pub enum RithmicError {
     /// Non-transport, non-rp_code response failure (e.g. decode failures or
     /// other protocol-level outcomes that don't carry `rp_code`). Not a
     /// reconnect signal.
+    ///
+    /// An unrecognized `template_id` does not produce this error; it arrives as
+    /// [`RithmicMessage::UnknownTemplate`](crate::rti::messages::RithmicMessage::UnknownTemplate).
     ProtocolError(String),
     /// A caller-supplied argument is invalid (the message describes which argument
     /// and why).

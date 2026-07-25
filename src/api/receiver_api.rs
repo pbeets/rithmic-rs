@@ -1,5 +1,5 @@
 use prost::{Message, bytes::Bytes};
-use tracing::error;
+use tracing::{error, warn};
 
 use crate::rti::{
     AccountListUpdates, AccountPnLPositionUpdate, AccountRmsUpdates, BestBidOffer, BracketUpdates,
@@ -34,6 +34,7 @@ use crate::rti::{
 pub use super::response::RithmicResponse;
 use super::rp_code::classify_rp_code_error;
 use crate::error::RithmicError;
+use crate::util::unknown_message::UnknownTemplateMessage;
 
 #[derive(Debug)]
 pub(crate) struct RithmicReceiverApi {
@@ -1426,27 +1427,52 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
-            _ => {
-                error!(
-                    "Unknown message type received - template_id: {}, data_size: {} bytes",
-                    parsed_message.template_id,
-                    data.len()
-                );
+            // prost doesn't enforce proto2 `required`, so a body with no
+            // template_id decodes as 0. Keep it an error — there is no
+            // template to route it to.
+            id if id <= 0 => {
+                error!("{}: frame carries no template_id", self.source);
 
-                // Unknown templates are unsolicited; route as an update so we
-                // don't spam "no responder found" via the request handler.
                 return Err(RithmicResponse {
                     request_id: "".to_string(),
                     message: RithmicMessage::Unknown,
+                    is_update: false,
+                    has_more: false,
+                    multi_response: false,
+                    error: Some(RithmicError::ProtocolError(
+                        "Frame carries no template_id".to_string(),
+                    )),
+                    source: self.source.clone(),
+                });
+            }
+            _ => {
+                // Not a recognized message template.
+                let unknown = UnknownTemplateMessage {
+                    template_id: parsed_message.template_id,
+                    payload: data.slice(4..),
+                };
+
+                // Payload stays out of the log: it may carry account and order
+                // ids, and the caller receives the frame to log as it sees fit.
+                warn!(
+                    "{}: unmapped Rithmic template {} ({} bytes)",
+                    self.source,
+                    unknown.template_id,
+                    unknown.payload.len()
+                );
+
+                // No request_id can be extracted without a schema, so route as
+                // an update rather than letting the request handler log
+                // "no responder found".
+                RithmicResponse {
+                    request_id: "".to_string(),
+                    message: RithmicMessage::UnknownTemplate(unknown),
                     is_update: true,
                     has_more: false,
                     multi_response: false,
-                    error: Some(RithmicError::ProtocolError(format!(
-                        "Unknown message type: template_id={}",
-                        parsed_message.template_id
-                    ))),
+                    error: None,
                     source: self.source.clone(),
-                });
+                }
             }
         };
 
@@ -1491,11 +1517,10 @@ mod tests {
     use crate::error::{RithmicError, RithmicRequestError};
     use crate::rti::{
         Reject, ResponseAccountList, ResponseListAcceptedAgreements, ResponseLogin,
-        ResponseOrderSessionConfig, ResponseReplayExecutions, ResponseSearchSymbols, TradeRoute,
-        UpdateEasyToBorrowList, messages::RithmicMessage,
+        ResponseOrderSessionConfig, ResponseReplayExecutions, ResponseSearchSymbols,
+        RithmicOrderNotification, TradeRoute, UpdateEasyToBorrowList, messages::RithmicMessage,
     };
-    use prost::Message;
-    use prost::bytes::Bytes;
+    use prost::{Message, bytes::Bytes};
 
     fn encode_with_header<T: Message>(message: &T) -> Bytes {
         let mut payload = Vec::new();
@@ -1551,6 +1576,60 @@ mod tests {
             RithmicMessage::UpdateEasyToBorrowList(_)
         ));
         assert!(response.is_update);
+    }
+
+    #[test]
+    fn unmapped_template_decodes_as_update_without_error() {
+        // 358 has no decoder here, so the frame must survive as an update
+        // rather than an error.
+        let api = RithmicReceiverApi {
+            source: "order_plant".to_string(),
+        };
+        let notification = RithmicOrderNotification {
+            template_id: 358,
+            basket_id: Some("9214-2".to_string()),
+            symbol: Some("MESU6".to_string()),
+            ..RithmicOrderNotification::default()
+        };
+        let result = api.buf_to_message(encode_with_header(&notification));
+
+        let response = result.expect("unmapped templates are not decode failures");
+
+        assert!(response.error.is_none());
+        assert!(response.is_update);
+        assert_eq!(response.request_id, "");
+
+        let RithmicMessage::UnknownTemplate(frame) = &response.message else {
+            panic!("expected UnknownTemplate, got {:?}", response.message);
+        };
+
+        assert_eq!(frame.template_id, 358);
+
+        // Byte-identical to what was framed, length prefix aside.
+        assert_eq!(frame.payload, Bytes::from(notification.encode_to_vec()));
+    }
+
+    #[test]
+    fn frame_without_a_template_id_stays_an_error() {
+        // prost decodes a missing proto2 `required` int32 as 0, so this must
+        // not be mistaken for a template we simply don't map.
+        let api = RithmicReceiverApi {
+            source: "order_plant".to_string(),
+        };
+
+        let mut framed = 2u32.to_be_bytes().to_vec();
+        framed.extend_from_slice(&[0x08, 0x01]); // field 1 — not in MessageType
+
+        let response = api
+            .buf_to_message(Bytes::from(framed))
+            .expect_err("a frame with no template_id is malformed");
+
+        assert!(matches!(response.message, RithmicMessage::Unknown));
+        assert!(matches!(
+            response.error,
+            Some(RithmicError::ProtocolError(_))
+        ));
+        assert!(!response.is_update);
     }
 
     // =========================================================================

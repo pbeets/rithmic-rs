@@ -218,6 +218,12 @@ pub mod util;
 /// WebSocket connectivity layer
 pub mod ws;
 
+/// The `prost` this crate's protobuf types are generated against, re-exported so
+/// downstream code can decode an [`UnknownTemplateMessage`] payload without
+/// risking a version mismatch. prost is a public dependency, so a major bump of
+/// it is a breaking change of this crate.
+pub use prost;
+
 // Re-export plant types for easier access
 pub use plants::history_plant::{RithmicHistoryPlant, RithmicHistoryPlantHandle};
 pub use plants::order_plant::{RithmicOrderPlant, RithmicOrderPlantHandle};
@@ -244,8 +250,8 @@ pub use api::{
 
 // Re-export utility types for convenience
 pub use util::{
-    InstrumentInfo, InstrumentInfoError, OrderStatus, rithmic_to_unix_nanos,
-    rithmic_to_unix_nanos_precise,
+    InstrumentInfo, InstrumentInfoError, OrderStatus, UnknownTemplateMessage,
+    rithmic_to_unix_nanos, rithmic_to_unix_nanos_precise,
 };
 
 // Re-export high-level trading types

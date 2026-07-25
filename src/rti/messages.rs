@@ -25,6 +25,7 @@ use super::{
     ResponseVolumeProfileMinuteBars, RithmicOrderNotification, SymbolMarginRate, TickBar, TimeBar,
     TradeRoute, TradeStatistics, UpdateEasyToBorrowList, UserAccountUpdate,
 };
+use crate::util::unknown_message::UnknownTemplateMessage;
 
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone)]
@@ -166,11 +167,22 @@ pub enum RithmicMessage {
     /// ```
     HeartbeatTimeout,
 
-    /// A message type that this library doesn't recognize.
+    /// A frame whose `template_id` has no message definition in this crate.
+    ///
+    /// The header parsed and carried a `template_id`, but no decoder is
+    /// registered for it, so the body is delivered as received with
+    /// `error: None` rather than as a decode failure. It can be logged,
+    /// archived, or decoded by the caller.
+    ///
+    /// The library logs only the template id and size; the payload may carry
+    /// account and order ids, so what to log is left to the caller.
+    UnknownTemplate(UnknownTemplateMessage),
+
+    /// A frame that could not be decoded.
     ///
     /// *Note: This is a synthetic message from rithmic-rs, not from Rithmic servers.*
     ///
-    /// This shouldn't happen in normal usage. If you see this, it may indicate
-    /// a newer Rithmic protocol version with message types not yet supported.
+    /// Always accompanied by a `ProtocolError`. A `template_id` this crate
+    /// doesn't map arrives as [`UnknownTemplate`](Self::UnknownTemplate).
     Unknown,
 }

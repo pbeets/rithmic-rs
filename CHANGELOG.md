@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Additive: no public API is removed or changed, so this lands in a 2.x minor release.
+
+### Added
+
+- **`RithmicMessage::UnknownTemplate(UnknownTemplateMessage)`** — a frame whose `template_id` has no message definition in this crate. Delivered with `error: None` and the message body kept as received. `RithmicMessage` is `#[non_exhaustive]`, so the new variant does not break existing matches.
+- **`UnknownTemplateMessage::decode_as<M>()`** — decode the payload into a caller-supplied `prost` type, so an unmapped template can be handled downstream without a change here. `Ok` is not proof the type was guessed right: protobuf skips undeclared fields, so an unrelated payload usually decodes into a mostly-empty value.
+- **`UnknownTemplateMessage::payload_hex()` / `from_payload_hex()`** — the untruncated payload as hex and its inverse. `Display` elides; `payload_hex` doesn't, so a frame captured in production can be attached to a bug report and replayed in a test.
+- **`rithmic_rs::prost`** — the `prost` this crate's types are generated against, re-exported so downstream types are compatible with `decode_as` and with `UnknownTemplateMessage::payload`. prost is a public dependency, so a major bump of it remains a breaking change of this crate.
+
+### Changed
+
+- **An unrecognized `template_id` is no longer reported as a decode failure.** It previously produced `Err(RithmicResponse)` with `RithmicError::ProtocolError("Unknown message type: template_id=…")`, logged at `error` level with the payload discarded. It now returns `Ok` with `RithmicMessage::UnknownTemplate`, `error: None`, and a `warn` carrying the template id and size. Routing is unchanged — it was, and remains, delivered on the subscription channel as an update.
+
+  This is a behavioural change, not a source-breaking one: code matching `RithmicMessage::Unknown` still compiles, but will no longer see unrecognized templates. Match `UnknownTemplate` for those; `Unknown` now means only that a frame failed to decode.
+- A frame carrying no `template_id` is still an error: prost does not enforce proto2 `required` on decode, so the missing field arrives as `0`, leaving no template to route it to.
+
 ## [2.0.0]
 
 ### Breaking Changes

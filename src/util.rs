@@ -3,7 +3,9 @@
 pub mod instrument;
 pub mod order_status;
 pub mod time;
+pub mod unknown_message;
 
 pub use instrument::{InstrumentInfo, InstrumentInfoError};
 pub use order_status::OrderStatus;
 pub use time::{rithmic_to_unix_nanos, rithmic_to_unix_nanos_precise};
+pub use unknown_message::UnknownTemplateMessage;
