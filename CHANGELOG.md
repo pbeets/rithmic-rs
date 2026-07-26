@@ -61,6 +61,19 @@ Public struct fields and a method signature change, so this lands in a major rel
   Rithmic to reject the trailing stop with rp_code 1112).
 - **`request_account_rms_updates` sent `update_bits: None`**, so `auto_liq_threshold_current_value`
   never streamed even when subscribed.
+- **Connection-health events broadcast between `connect()` and the first `get_handle()` are no
+  longer dropped.** Every plant created its broadcast channel with
+  `let (sub_tx, _sub_rx) = channel(..)`, dropping the initial receiver, so until a handle existed
+  the receiver count was zero and every `send` returned `SendError` with the value discarded rather
+  than buffered. A socket that died in that window left the consumer waiting on a stream that would
+  never produce anything. Each plant now parks that receiver and hands it to the first
+  `get_handle()` caller, which sees everything broadcast since `connect()`. Order and exchange
+  notifications are not affected either way: `login()` is a handle method, so a handle already
+  exists before any can arrive. Handles after the first still start at the stream tail, so an
+  application using several accounts should take every handle before calling `login()`. Backlog
+  stays bounded by the requested channel capacity rounded up to a power of two; an over-capacity
+  backlog surfaces as `RecvError::Lagged` on the first receive, as it does for any lagging
+  subscriber.
 
 ## [2.0.0]
 

@@ -11,7 +11,7 @@ use crate::{
     error::RithmicError,
     plants::{
         core::{PlantCore, SelectResult},
-        subscription::SubscriptionFilter,
+        subscription::{InitialReceiver, SubscriptionFilter},
     },
     request_handler::RithmicRequest,
     rti::{messages::RithmicMessage, request_login::SysInfraType, request_pn_l_position_updates},
@@ -117,6 +117,7 @@ pub struct RithmicPnlPlant {
     pub(crate) connection_handle: tokio::task::JoinHandle<()>,
     sender: mpsc::Sender<PnlPlantCommand>,
     subscription_sender: broadcast::Sender<RithmicResponse>,
+    initial_receiver: InitialReceiver,
 }
 
 impl RithmicPnlPlant {
@@ -136,7 +137,7 @@ impl RithmicPnlPlant {
         strategy: ConnectStrategy,
     ) -> Result<RithmicPnlPlant, RithmicError> {
         let (req_tx, req_rx) = mpsc::channel::<PnlPlantCommand>(64);
-        let (sub_tx, _sub_rx) = broadcast::channel(10_000);
+        let (sub_tx, sub_rx) = broadcast::channel(10_000);
         let mut pnl_plant = PnlPlant::new(req_rx, sub_tx.clone(), config, strategy).await?;
 
         let connection_handle = tokio::spawn(async move {
@@ -147,6 +148,7 @@ impl RithmicPnlPlant {
             connection_handle,
             sender: req_tx,
             subscription_sender: sub_tx,
+            initial_receiver: InitialReceiver::new(sub_rx),
         })
     }
 }
@@ -161,6 +163,16 @@ impl RithmicPnlPlant {
     ///
     /// The handle provides methods to subscribe to PnL updates and retrieve position snapshots.
     /// Multiple handles can be created from the same plant for different accounts.
+    ///
+    /// # Take every handle before logging in
+    ///
+    /// Only the first handle carries the backlog broadcast since
+    /// [`connect`](Self::connect); every later handle starts at the current end
+    /// of the stream, and the first handle filters that backlog down to its own
+    /// account. An application tracking several accounts must therefore call
+    /// `get_handle` for all of them before `login()`, otherwise the accounts
+    /// whose handles are taken later miss every update broadcast up to that
+    /// point.
     pub fn get_handle(&self, account: &RithmicAccount) -> RithmicPnlPlantHandle {
         let account = Arc::new(account.clone());
         let account_for_filter = Arc::clone(&account);
@@ -170,7 +182,8 @@ impl RithmicPnlPlant {
             sender: self.sender.clone(),
             subscription_receiver: SubscriptionFilter::new(
                 account_for_filter,
-                self.subscription_sender.subscribe(),
+                self.initial_receiver
+                    .take_or_subscribe(&self.subscription_sender),
             ),
         }
     }
@@ -561,5 +574,76 @@ impl RithmicPnlPlantHandle {
             .into_iter()
             .next()
             .ok_or(RithmicError::EmptyResponse)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn health_event(request_id: &str) -> RithmicResponse {
+        RithmicResponse {
+            request_id: request_id.to_string(),
+            message: RithmicMessage::HeartbeatTimeout,
+            error: None,
+            is_update: true,
+            has_more: false,
+            multi_response: false,
+            source: "pnl_plant".to_string(),
+        }
+    }
+
+    /// Every message asserted on below is already buffered by the time the
+    /// assertion runs, so a wait means it was dropped. The timeout turns that
+    /// into a failure instead of a hung suite.
+    async fn next_soon(filter: &mut SubscriptionFilter) -> RithmicResponse {
+        tokio::time::timeout(std::time::Duration::from_secs(5), filter.recv())
+            .await
+            .expect("the message must already be buffered")
+            .expect("the subscription stream must stay open")
+    }
+
+    #[tokio::test]
+    async fn first_handle_receives_updates_broadcast_before_it_existed() {
+        let (sender, command_receiver) = mpsc::channel(4);
+        let (sub_tx, sub_rx) = broadcast::channel(16);
+
+        let plant = RithmicPnlPlant {
+            connection_handle: tokio::spawn(async move {
+                let _keep_open = command_receiver;
+            }),
+            sender,
+            subscription_sender: sub_tx.clone(),
+            initial_receiver: InitialReceiver::new(sub_rx),
+        };
+        let account = RithmicAccount::new("FCM_A", "IB_A", "ACCOUNT_A");
+
+        // Emitted during the window between connect() and the first get_handle().
+        sub_tx
+            .send(health_event("early"))
+            .expect("send must reach the parked receiver");
+
+        let mut first = plant.get_handle(&account);
+        let mut second = plant.get_handle(&account);
+
+        sub_tx.send(health_event("late")).unwrap();
+
+        assert_eq!(
+            next_soon(&mut first.subscription_receiver).await.request_id,
+            "early"
+        );
+        assert_eq!(
+            next_soon(&mut first.subscription_receiver).await.request_id,
+            "late"
+        );
+
+        // Handles after the first subscribe at the tail, so "early" is not
+        // replayed and the first thing this handle sees is "late".
+        assert_eq!(
+            next_soon(&mut second.subscription_receiver)
+                .await
+                .request_id,
+            "late"
+        );
     }
 }

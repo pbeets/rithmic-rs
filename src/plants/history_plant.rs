@@ -7,7 +7,10 @@ use crate::{
     api::{receiver_api::RithmicResponse, rithmic_command_types::LoginConfig},
     config::RithmicConfig,
     error::RithmicError,
-    plants::core::{PlantCore, SelectResult},
+    plants::{
+        core::{PlantCore, SelectResult},
+        subscription::InitialReceiver,
+    },
     request_handler::RithmicRequest,
     rti::{
         messages::RithmicMessage, request_login::SysInfraType, request_tick_bar_update,
@@ -186,6 +189,7 @@ pub struct RithmicHistoryPlant {
     pub(crate) connection_handle: JoinHandle<()>,
     sender: mpsc::Sender<HistoryPlantCommand>,
     subscription_sender: broadcast::Sender<RithmicResponse>,
+    initial_receiver: InitialReceiver,
 }
 
 impl RithmicHistoryPlant {
@@ -205,7 +209,7 @@ impl RithmicHistoryPlant {
         strategy: ConnectStrategy,
     ) -> Result<RithmicHistoryPlant, RithmicError> {
         let (req_tx, req_rx) = mpsc::channel::<HistoryPlantCommand>(32);
-        let (sub_tx, _sub_rx) = broadcast::channel::<RithmicResponse>(20_000);
+        let (sub_tx, sub_rx) = broadcast::channel::<RithmicResponse>(20_000);
         let mut history_plant = HistoryPlant::new(req_rx, sub_tx.clone(), config, strategy).await?;
 
         let connection_handle = tokio::spawn(async move {
@@ -216,6 +220,7 @@ impl RithmicHistoryPlant {
             connection_handle,
             sender: req_tx,
             subscription_sender: sub_tx,
+            initial_receiver: InitialReceiver::new(sub_rx),
         })
     }
 }
@@ -230,10 +235,16 @@ impl RithmicHistoryPlant {
     ///
     /// The handle provides methods to load historical ticks, time bars, and subscribe to bar updates.
     /// Multiple handles can be created from the same plant.
+    ///
+    /// The first handle receives everything broadcast since [`connect`](Self::connect),
+    /// including updates emitted before this call. Later handles start at the
+    /// current end of the stream.
     pub fn get_handle(&self) -> RithmicHistoryPlantHandle {
         RithmicHistoryPlantHandle {
             sender: self.sender.clone(),
-            subscription_receiver: self.subscription_sender.subscribe(),
+            subscription_receiver: self
+                .initial_receiver
+                .take_or_subscribe(&self.subscription_sender),
             subscription_sender: self.subscription_sender.clone(),
         }
     }
@@ -1009,5 +1020,61 @@ mod tests {
             rx.await.unwrap(),
             Err(RithmicError::ConnectionClosed)
         ));
+    }
+
+    fn health_event(request_id: &str) -> RithmicResponse {
+        RithmicResponse {
+            request_id: request_id.to_string(),
+            message: RithmicMessage::HeartbeatTimeout,
+            error: None,
+            is_update: true,
+            has_more: false,
+            multi_response: false,
+            source: "history_plant".to_string(),
+        }
+    }
+
+    // Every asserted message is already buffered when the assertion runs, so
+    // this uses `try_recv`: a lost message shows up as `Empty` instead of
+    // parking the suite on a message that will never arrive.
+    #[tokio::test]
+    async fn first_handle_receives_updates_broadcast_before_it_existed() {
+        let (sender, command_receiver) = mpsc::channel(4);
+        let (sub_tx, sub_rx) = broadcast::channel(16);
+
+        let plant = RithmicHistoryPlant {
+            connection_handle: tokio::spawn(async move {
+                let _keep_open = command_receiver;
+            }),
+            sender,
+            subscription_sender: sub_tx.clone(),
+            initial_receiver: InitialReceiver::new(sub_rx),
+        };
+
+        // Emitted during the window between connect() and the first get_handle().
+        sub_tx
+            .send(health_event("early"))
+            .expect("send must reach the parked receiver");
+
+        let mut first = plant.get_handle();
+        let mut second = plant.get_handle();
+
+        sub_tx.send(health_event("late")).unwrap();
+
+        assert_eq!(
+            first.subscription_receiver.try_recv().unwrap().request_id,
+            "early"
+        );
+        assert_eq!(
+            first.subscription_receiver.try_recv().unwrap().request_id,
+            "late"
+        );
+
+        // Handles after the first subscribe at the tail, as broadcast normally does.
+        assert_eq!(
+            second.subscription_receiver.try_recv().unwrap().request_id,
+            "late"
+        );
+        assert!(second.subscription_receiver.try_recv().is_err());
     }
 }

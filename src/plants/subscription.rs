@@ -1,8 +1,48 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use tokio::sync::broadcast;
 
 use crate::{api::RithmicResponse, config::RithmicAccount, rti::messages::RithmicMessage};
+
+/// Parks the `Receiver` that `broadcast::channel` returns alongside the sender
+/// until the first plant handle claims it.
+///
+/// That receiver starts at position zero and is never read, so it still yields
+/// every message the sender has buffered since the plant connected. Handing it
+/// to the first `get_handle()` caller makes those messages visible to that
+/// handle; later callers get a fresh `subscribe()`, which starts at the channel
+/// tail. Parking it also keeps the receiver count at one, so `send` does not
+/// fail — and drop the value instead of buffering it — while no handle exists.
+///
+/// Backlog is bounded by the requested channel capacity rounded up to a power
+/// of two: the ring is preallocated at that size and sends overwrite the oldest
+/// slot, so a claimed receiver that has fallen further behind than the ring
+/// gets `RecvError::Lagged` and resumes at the oldest retained message.
+#[derive(Debug)]
+pub(crate) struct InitialReceiver {
+    receiver: Mutex<Option<broadcast::Receiver<RithmicResponse>>>,
+}
+
+impl InitialReceiver {
+    pub(crate) fn new(receiver: broadcast::Receiver<RithmicResponse>) -> Self {
+        Self {
+            receiver: Mutex::new(Some(receiver)),
+        }
+    }
+
+    /// Claim the parked receiver, or subscribe at the channel tail once it is
+    /// already claimed.
+    pub(crate) fn take_or_subscribe(
+        &self,
+        sender: &broadcast::Sender<RithmicResponse>,
+    ) -> broadcast::Receiver<RithmicResponse> {
+        self.receiver
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take()
+            .unwrap_or_else(|| sender.subscribe())
+    }
+}
 
 /// Filters a shared plant subscription stream down to a single account.
 ///
@@ -79,7 +119,7 @@ fn response_account_id(response: &RithmicResponse) -> Option<&str> {
 mod tests {
     use tokio::sync::broadcast;
 
-    use super::SubscriptionFilter;
+    use super::{InitialReceiver, SubscriptionFilter};
     use crate::{
         api::RithmicResponse,
         config::RithmicAccount,
@@ -191,5 +231,80 @@ mod tests {
             response.message,
             RithmicMessage::ResponseAcceptAgreement(_)
         ));
+    }
+
+    fn tagged(request_id: &str) -> RithmicResponse {
+        RithmicResponse {
+            request_id: request_id.to_string(),
+            ..response(RithmicMessage::ResponseAcceptAgreement(
+                ResponseAcceptAgreement::default(),
+            ))
+        }
+    }
+
+    // Everything these tests assert on is already buffered when the assertion
+    // runs, so they use `try_recv`: a lost message shows up as `Empty` instead
+    // of parking the suite on a message that will never arrive.
+
+    #[test]
+    fn parked_receiver_replays_messages_sent_before_it_was_claimed() {
+        let (sender, receiver) = broadcast::channel(16);
+        let parked = InitialReceiver::new(receiver);
+
+        sender.send(tagged("before")).unwrap();
+
+        let mut first = parked.take_or_subscribe(&sender);
+
+        assert_eq!(first.try_recv().unwrap().request_id, "before");
+    }
+
+    #[test]
+    fn claims_after_the_first_start_at_the_stream_tail() {
+        let (sender, receiver) = broadcast::channel(16);
+        let parked = InitialReceiver::new(receiver);
+
+        sender.send(tagged("before")).unwrap();
+
+        let mut first = parked.take_or_subscribe(&sender);
+        let mut second = parked.take_or_subscribe(&sender);
+
+        sender.send(tagged("after")).unwrap();
+
+        assert_eq!(first.try_recv().unwrap().request_id, "before");
+        assert_eq!(first.try_recv().unwrap().request_id, "after");
+        // The second claim subscribed at the tail, so "before" is not replayed.
+        assert_eq!(second.try_recv().unwrap().request_id, "after");
+        assert!(second.try_recv().is_err());
+    }
+
+    #[test]
+    fn sends_succeed_while_the_receiver_is_still_parked() {
+        let (sender, receiver) = broadcast::channel(16);
+        let _parked = InitialReceiver::new(receiver);
+
+        assert_eq!(sender.receiver_count(), 1);
+        assert!(sender.send(tagged("unclaimed")).is_ok());
+    }
+
+    #[test]
+    fn backlog_beyond_capacity_lags_the_parked_receiver() {
+        // Capacity bounds the backlog: the ring keeps the newest `capacity`
+        // messages — rounded up to a power of two, already the case for 2 — and
+        // the claimed receiver resumes at the oldest retained one.
+        let (sender, receiver) = broadcast::channel(2);
+        let parked = InitialReceiver::new(receiver);
+
+        for i in 0..4 {
+            sender.send(tagged(&i.to_string())).unwrap();
+        }
+
+        let mut first = parked.take_or_subscribe(&sender);
+
+        assert!(matches!(
+            first.try_recv(),
+            Err(broadcast::error::TryRecvError::Lagged(2))
+        ));
+        assert_eq!(first.try_recv().unwrap().request_id, "2");
+        assert_eq!(first.try_recv().unwrap().request_id, "3");
     }
 }
