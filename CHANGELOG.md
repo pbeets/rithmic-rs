@@ -69,6 +69,7 @@ Public struct fields and a method signature change, so this lands in a major rel
   Rithmic to reject the trailing stop with rp_code 1112).
 - **`request_account_rms_updates` sent `update_bits: None`**, so `auto_liq_threshold_current_value`
   never streamed even when subscribed.
+- **A server `ForcedLogout` (template 77) now stops the plant actor.** All four plants drain their pending requests with `ConnectionClosed`, set `close_requested` and stop the loop, instead of heartbeating a session the server has ended while callers await oneshots that never resolve. Subscribers receive the `ForcedLogout` frame unchanged, followed by the `ConnectionError` actor-lifecycle event every stopping path emits — stopping the loop means no later path raises it.
 
 ## [2.0.0]
 

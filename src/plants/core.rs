@@ -370,7 +370,16 @@ where
                 let source = self.rithmic_receiver_api.source.clone();
 
                 match self.rithmic_receiver_api.buf_to_message(data) {
-                    Ok(response) => self.forward_response(&source, response),
+                    Ok(response) => {
+                        let forced_logout =
+                            matches!(response.message, RithmicMessage::ForcedLogout(_));
+
+                        self.forward_response(&source, response);
+
+                        if forced_logout {
+                            stop = self.handle_forced_logout();
+                        }
+                    }
                     Err(err_response) => {
                         error!("{}: decode failure: {:?}", source, err_response);
                         self.forward_response(&source, err_response);
@@ -467,6 +476,26 @@ where
         }
 
         stop
+    }
+
+    /// Terminate the session after a server-sent `ForcedLogout` (template 77).
+    /// Returns `true` (stop).
+    ///
+    /// `forward_response` has already broadcast the frame itself, which is what
+    /// distinguishes this from an ordinary disconnect; the `ConnectionError`
+    /// lifecycle event emitted here follows it, since stopping the loop means no
+    /// later path emits one.
+    pub(crate) fn handle_forced_logout(&mut self) -> bool {
+        error!(
+            "{}: server sent a forced logout — stopping",
+            self.rithmic_receiver_api.source
+        );
+        // Drain first: the loop is about to stop, so nothing else will resolve these.
+        self.request_handler.drain_and_drop();
+        self.emit_connection_health_event("", RithmicError::ConnectionClosed);
+        self.close_requested = true;
+
+        true
     }
 
     /// Handle a clean EOF on the WebSocket reader stream. Returns `true` (stop).
@@ -1262,6 +1291,66 @@ mod tests {
         ));
         let result = rx1.try_recv().unwrap();
         assert!(matches!(result, Err(RithmicError::ConnectionClosed)));
+    }
+
+    /// A server-sent `ForcedLogout` (template 77) ends the session: the actor
+    /// loop stops, `close_requested` is set, pending requests resolve with an
+    /// error, and subscribers get the frame followed by the `ConnectionError`
+    /// event every stopping path emits.
+    #[tokio::test]
+    async fn forced_logout_stops_actor_and_emits_frame_then_connection_error() {
+        use crate::rti::ForcedLogout;
+        use prost::Message as _;
+
+        let reader = make_dormant_ws_reader().await;
+        let (mut core, mut sub_rx) = make_test_core(MockMessageSink::ready(), reader);
+        let mut rx = register_request(&mut core, "req-1");
+
+        let mut payload = Vec::new();
+        ForcedLogout { template_id: 77 }
+            .encode(&mut payload)
+            .unwrap();
+        let mut framed = (payload.len() as u32).to_be_bytes().to_vec();
+        framed.extend(payload);
+
+        let stop = core
+            .handle_rithmic_message(Ok(Message::Binary(framed.into())))
+            .await;
+
+        assert!(stop, "forced logout must stop the actor loop");
+        assert!(
+            core.close_requested,
+            "forced logout must set close_requested"
+        );
+
+        let result = rx
+            .try_recv()
+            .expect("pending request must be resolved, not left hanging");
+        assert!(matches!(result, Err(RithmicError::ConnectionClosed)));
+
+        let frame_event = sub_rx.try_recv().unwrap();
+        assert!(
+            matches!(frame_event.message, RithmicMessage::ForcedLogout(_)),
+            "the ForcedLogout frame must arrive first, got {:?}",
+            frame_event.message
+        );
+        assert!(
+            frame_event
+                .error
+                .as_ref()
+                .expect("error should be set")
+                .is_connection_issue(),
+            "reconnect-driving callers must see a connection issue"
+        );
+
+        let lifecycle_event = sub_rx
+            .try_recv()
+            .expect("forced logout must emit the actor-lifecycle event every stopping path emits");
+        assert!(
+            matches!(lifecycle_event.message, RithmicMessage::ConnectionError),
+            "the lifecycle event must follow the frame, got {:?}",
+            lifecycle_event.message
+        );
     }
 
     /// Heartbeat success with a registered oneshot must resolve the oneshot
