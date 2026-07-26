@@ -2,26 +2,27 @@ use super::{
     AccountListUpdates, AccountPnLPositionUpdate, AccountRmsUpdates, BestBidOffer, BracketUpdates,
     DepthByOrder, DepthByOrderEndEvent, EndOfDayPrices, ExchangeOrderNotification, ForcedLogout,
     FrontMonthContractUpdate, IndicatorPrices, InstrumentPnLPositionUpdate, LastTrade, MarketMode,
-    OpenInterest, OrderBook, OrderPriceLimits, QuoteStatistics, Reject, ResponseAcceptAgreement,
-    ResponseAccountList, ResponseAccountRmsInfo, ResponseAccountRmsUpdates,
-    ResponseAuxilliaryReferenceData, ResponseBracketOrder, ResponseCancelAllOrders,
-    ResponseCancelOrder, ResponseDepthByOrderSnapshot, ResponseDepthByOrderUpdates,
-    ResponseEasyToBorrowList, ResponseExitPosition, ResponseFrontMonthContract,
-    ResponseGetInstrumentByUnderlying, ResponseGetInstrumentByUnderlyingKeys,
-    ResponseGetVolumeAtPrice, ResponseGiveTickSizeTypeTable, ResponseHeartbeat, ResponseLinkOrders,
-    ResponseListAcceptedAgreements, ResponseListExchangePermissions,
-    ResponseListUnacceptedAgreements, ResponseLogin, ResponseLoginInfo, ResponseLogout,
-    ResponseMarketDataUpdate, ResponseMarketDataUpdateByUnderlying, ResponseModifyOrder,
-    ResponseModifyOrderReferenceData, ResponseNewOrder, ResponseOcoOrder,
-    ResponseOrderSessionConfig, ResponsePnLPositionSnapshot, ResponsePnLPositionUpdates,
-    ResponseProductCodes, ResponseProductRmsInfo, ResponseReferenceData, ResponseReplayExecutions,
-    ResponseResumeBars, ResponseRithmicSystemGatewayInfo, ResponseRithmicSystemInfo,
-    ResponseSearchSymbols, ResponseSetRithmicMrktDataSelfCertStatus, ResponseShowAgreement,
-    ResponseShowBracketStops, ResponseShowBrackets, ResponseShowOrderHistory,
-    ResponseShowOrderHistoryDates, ResponseShowOrderHistoryDetail, ResponseShowOrderHistorySummary,
-    ResponseShowOrders, ResponseSubscribeForOrderUpdates, ResponseSubscribeToBracketUpdates,
-    ResponseTickBarReplay, ResponseTickBarUpdate, ResponseTimeBarReplay, ResponseTimeBarUpdate,
-    ResponseTradeRoutes, ResponseUpdateStopBracketLevel, ResponseUpdateTargetBracketLevel,
+    OpenInterest, OrderBook, OrderPriceLimits, QuoteStatistics, Reject, RequestHeartbeat,
+    ResponseAcceptAgreement, ResponseAccountList, ResponseAccountRmsInfo,
+    ResponseAccountRmsUpdates, ResponseAuxilliaryReferenceData, ResponseBracketOrder,
+    ResponseCancelAllOrders, ResponseCancelOrder, ResponseDepthByOrderSnapshot,
+    ResponseDepthByOrderUpdates, ResponseEasyToBorrowList, ResponseExitPosition,
+    ResponseFrontMonthContract, ResponseGetInstrumentByUnderlying,
+    ResponseGetInstrumentByUnderlyingKeys, ResponseGetVolumeAtPrice, ResponseGiveTickSizeTypeTable,
+    ResponseHeartbeat, ResponseLinkOrders, ResponseListAcceptedAgreements,
+    ResponseListExchangePermissions, ResponseListUnacceptedAgreements, ResponseLogin,
+    ResponseLoginInfo, ResponseLogout, ResponseMarketDataUpdate,
+    ResponseMarketDataUpdateByUnderlying, ResponseModifyOrder, ResponseModifyOrderReferenceData,
+    ResponseNewOrder, ResponseOcoOrder, ResponseOrderSessionConfig, ResponsePnLPositionSnapshot,
+    ResponsePnLPositionUpdates, ResponseProductCodes, ResponseProductRmsInfo,
+    ResponseReferenceData, ResponseReplayExecutions, ResponseResumeBars,
+    ResponseRithmicSystemGatewayInfo, ResponseRithmicSystemInfo, ResponseSearchSymbols,
+    ResponseSetRithmicMrktDataSelfCertStatus, ResponseShowAgreement, ResponseShowBracketStops,
+    ResponseShowBrackets, ResponseShowOrderHistory, ResponseShowOrderHistoryDates,
+    ResponseShowOrderHistoryDetail, ResponseShowOrderHistorySummary, ResponseShowOrders,
+    ResponseSubscribeForOrderUpdates, ResponseSubscribeToBracketUpdates, ResponseTickBarReplay,
+    ResponseTickBarUpdate, ResponseTimeBarReplay, ResponseTimeBarUpdate, ResponseTradeRoutes,
+    ResponseUpdateStopBracketLevel, ResponseUpdateTargetBracketLevel,
     ResponseVolumeProfileMinuteBars, RithmicOrderNotification, SymbolMarginRate, TickBar, TimeBar,
     TradeRoute, TradeStatistics, UpdateEasyToBorrowList, UserAccountUpdate,
 };
@@ -51,6 +52,17 @@ pub enum RithmicMessage {
     OrderPriceLimits(OrderPriceLimits),
     QuoteStatistics(QuoteStatistics),
     Reject(Reject),
+
+    /// A heartbeat frame (template 18) received from the server.
+    ///
+    /// Delivered as a subscription update with `error: None` and an empty
+    /// `request_id`: it matches no request this client sent, and the frame's own
+    /// `user_msg` is the server's token, which can collide with the ids this
+    /// client hands out. The library does not reply to it.
+    ///
+    /// The heartbeats this client sends are answered by the server with
+    /// [`ResponseHeartbeat`](Self::ResponseHeartbeat) instead.
+    RequestHeartbeat(RequestHeartbeat),
     ResponseAcceptAgreement(ResponseAcceptAgreement),
     ResponseAccountList(ResponseAccountList),
     ResponseAccountRmsInfo(ResponseAccountRmsInfo),

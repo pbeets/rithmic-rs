@@ -6,7 +6,7 @@ use crate::rti::{
     DepthByOrder, DepthByOrderEndEvent, EndOfDayPrices, ExchangeOrderNotification, ForcedLogout,
     FrontMonthContractUpdate, IndicatorPrices, InstrumentPnLPositionUpdate, LastTrade, MarketMode,
     MessageType, OpenInterest, OrderBook, OrderPriceLimits, QuoteStatistics, Reject,
-    ResponseAcceptAgreement, ResponseAccountList, ResponseAccountRmsInfo,
+    RequestHeartbeat, ResponseAcceptAgreement, ResponseAccountList, ResponseAccountRmsInfo,
     ResponseAccountRmsUpdates, ResponseAuxilliaryReferenceData, ResponseBracketOrder,
     ResponseCancelAllOrders, ResponseCancelOrder, ResponseDepthByOrderSnapshot,
     ResponseDepthByOrderUpdates, ResponseEasyToBorrowList, ResponseExitPosition,
@@ -147,6 +147,24 @@ impl RithmicReceiverApi {
                     has_more: false,
                     multi_response: false,
                     error,
+                    source: self.source.clone(),
+                }
+            }
+            18 => {
+                let resp = RequestHeartbeat::decode(payload)
+                    .map_err(|e| decode_error(&self.source, e, true))?;
+
+                RithmicResponse {
+                    // A server-initiated probe matches no request of ours. Left
+                    // empty so it routes as an update: the frame's own user_msg
+                    // is the server's correlation token and would collide with
+                    // the ids this client hands out for its own requests.
+                    request_id: "".to_string(),
+                    message: RithmicMessage::RequestHeartbeat(resp),
+                    is_update: true, // Server-initiated keep-alive probe - route to subscription channel
+                    has_more: false,
+                    multi_response: false,
+                    error: None,
                     source: self.source.clone(),
                 }
             }
@@ -1572,6 +1590,39 @@ mod tests {
             RithmicMessage::UpdateEasyToBorrowList(_)
         ));
         assert!(response.is_update);
+    }
+
+    #[test]
+    fn inbound_heartbeat_request_decodes_as_an_update() {
+        // Template 18 arriving from the server is a keep-alive probe, not a
+        // response to anything this client sent. It decodes to its own variant
+        // instead of falling through to UnknownTemplate, and routes as an
+        // update so it never reaches the request handler.
+        let api = RithmicReceiverApi {
+            source: "ticker_plant".to_string(),
+        };
+        let probe = crate::rti::RequestHeartbeat {
+            template_id: 18,
+            user_msg: vec!["srv-probe-7".to_string()],
+            ssboe: Some(1_700_000_000),
+            usecs: Some(123_456),
+        };
+
+        let response = api
+            .buf_to_message(encode_with_header(&probe))
+            .expect("an inbound heartbeat request should decode");
+
+        let RithmicMessage::RequestHeartbeat(frame) = &response.message else {
+            panic!("expected RequestHeartbeat, got {:?}", response.message);
+        };
+
+        assert_eq!(frame.template_id, 18);
+        assert_eq!(frame.user_msg, vec!["srv-probe-7".to_string()]);
+        assert!(response.error.is_none());
+        assert!(response.is_update);
+        assert_eq!(response.request_id, "");
+        assert!(!response.has_more);
+        assert!(!response.multi_response);
     }
 
     #[test]

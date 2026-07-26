@@ -1299,6 +1299,70 @@ mod tests {
         assert!(matches!(result, Err(RithmicError::ConnectionClosed)));
     }
 
+    /// Encode a server-sent `RequestHeartbeat` (template 18) as a
+    /// length-prefixed frame carrying `user_msg` as its correlation token.
+    fn inbound_heartbeat_frame(user_msg: &[&str]) -> Vec<u8> {
+        use crate::rti::RequestHeartbeat;
+        use prost::Message as _;
+
+        let req = RequestHeartbeat {
+            template_id: 18,
+            user_msg: user_msg.iter().map(|s| s.to_string()).collect(),
+            ..RequestHeartbeat::default()
+        };
+        let mut payload = Vec::new();
+        req.encode(&mut payload).unwrap();
+        let mut framed = (payload.len() as u32).to_be_bytes().to_vec();
+        framed.extend(payload);
+        framed
+    }
+
+    /// A template 18 from the server reaches subscribers as an update and must
+    /// not be routed to the request handler: its `user_msg` is the server's
+    /// token and can collide with the ids this client hands out.
+    #[tokio::test]
+    async fn inbound_heartbeat_request_is_not_routed_to_the_request_handler() {
+        let reader = make_dormant_ws_reader().await;
+        let (mut core, mut sub_rx) = make_test_core(MockMessageSink::ready(), reader);
+
+        // The probe's user_msg deliberately matches a pending request id: the
+        // ids this client hands out are small integers, so a server token can
+        // collide with one.
+        let mut rx = register_request(&mut core, "1");
+
+        let stop = core
+            .handle_rithmic_message(Ok(Message::Binary(inbound_heartbeat_frame(&["1"]).into())))
+            .await;
+
+        assert!(!stop, "a heartbeat frame must not stop the actor");
+        assert!(
+            matches!(rx.try_recv(), Err(oneshot::error::TryRecvError::Empty)),
+            "an inbound heartbeat must not resolve a pending request"
+        );
+
+        let broadcast_msg = sub_rx.try_recv().unwrap();
+        assert!(
+            matches!(broadcast_msg.message, RithmicMessage::RequestHeartbeat(_)),
+            "the frame must reach subscribers as RequestHeartbeat, got {:?}",
+            broadcast_msg.message
+        );
+        assert!(
+            broadcast_msg.error.is_none(),
+            "an inbound heartbeat is not an error"
+        );
+        assert!(
+            broadcast_msg.request_id.is_empty(),
+            "the frame matches no request of ours, so request_id stays empty"
+        );
+        // Decoding the frame is the whole of this change: nothing is written
+        // back. Answering it is a separate, unshipped change.
+        assert!(
+            core.rithmic_sender.sent_messages.is_empty(),
+            "an inbound heartbeat must not be answered, got {:?}",
+            core.rithmic_sender.sent_messages
+        );
+    }
+
     /// Encode a `ForcedLogout` (template 77) as a length-prefixed frame.
     fn forced_logout_frame() -> Vec<u8> {
         use crate::rti::ForcedLogout;
