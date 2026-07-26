@@ -128,6 +128,13 @@ pub enum RithmicError {
     /// A caller-supplied argument is invalid (the message describes which argument
     /// and why).
     InvalidArgument(String),
+    /// No route for the order's exchange and the order named none, so nothing was sent.
+    NoTradeRoute {
+        /// The exchange the order named.
+        exchange: String,
+        /// The exchanges that do have a route.
+        cached: Vec<String>,
+    },
     /// Keep-alive detected the connection is dead.
     HeartbeatTimeout,
     /// Server terminated the session with a reason string.
@@ -179,6 +186,23 @@ impl fmt::Display for RithmicError {
             }
             RithmicError::ProtocolError(msg) => write!(f, "protocol error: {msg}"),
             RithmicError::InvalidArgument(msg) => write!(f, "invalid argument: {msg}"),
+            RithmicError::NoTradeRoute { exchange, cached } => {
+                write!(
+                    f,
+                    "no trade route for exchange {}",
+                    sanitize_for_display(exchange),
+                )?;
+
+                match cached.is_empty() {
+                    true => write!(f, "; no routes cached"),
+                    false => {
+                        let cached: Vec<String> =
+                            cached.iter().map(|key| sanitize_for_display(key)).collect();
+
+                        write!(f, "; cached: {}", cached.join(", "))
+                    }
+                }
+            }
             RithmicError::HeartbeatTimeout => write!(f, "heartbeat timeout"),
             RithmicError::ForcedLogout(reason) => {
                 write!(f, "forced logout: {}", sanitize_for_display(reason))
@@ -428,6 +452,51 @@ mod tests {
         assert!(!RithmicError::ProtocolError("x".into()).is_connection_issue());
         assert!(!RithmicError::InvalidArgument("x".into()).is_connection_issue());
         assert!(!RithmicError::EmptyResponse.is_connection_issue());
+        assert!(
+            !RithmicError::NoTradeRoute {
+                exchange: "CBOT".into(),
+                cached: vec![],
+            }
+            .is_connection_issue()
+        );
+    }
+
+    #[test]
+    fn no_trade_route_display_lists_what_is_cached() {
+        let err = RithmicError::NoTradeRoute {
+            exchange: "CBOT".into(),
+            cached: vec!["CME".into(), "NYMEX".into()],
+        };
+
+        assert_eq!(
+            err.to_string(),
+            "no trade route for exchange CBOT; cached: CME, NYMEX"
+        );
+
+        let err = RithmicError::NoTradeRoute {
+            exchange: "CBOT".into(),
+            cached: vec![],
+        };
+
+        assert_eq!(
+            err.to_string(),
+            "no trade route for exchange CBOT; no routes cached"
+        );
+    }
+
+    #[test]
+    fn no_trade_route_display_sanitizes_control_chars() {
+        // The exchange and the cached names both come off the wire, so both go
+        // through the sanitizer.
+        let err = RithmicError::NoTradeRoute {
+            exchange: "CB\rOT".into(),
+            cached: vec!["C\x1b[31mME".into()],
+        };
+
+        assert_eq!(
+            err.to_string(),
+            "no trade route for exchange CBOT; cached: C[31mME"
+        );
     }
 
     #[test]

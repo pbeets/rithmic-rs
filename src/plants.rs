@@ -23,3 +23,4 @@ pub mod subscription;
 pub(crate) mod test_support;
 /// Real-time market data subscription
 pub mod ticker_plant;
+pub(crate) mod trade_routes;

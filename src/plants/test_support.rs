@@ -171,7 +171,7 @@ pub(crate) async fn assert_wire_silent(client: &mut TcpStream) {
 
     assert!(
         read.is_err(),
-        "a command was serialized to the wire after close was requested: {:?}",
+        "a command reached the wire that should have been refused locally: {:?}",
         read.map(|r| r.map(|n| &buf[..n]))
     );
 }

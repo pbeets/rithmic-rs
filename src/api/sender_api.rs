@@ -4,7 +4,7 @@ use super::rithmic_command_types::{
 use prost::Message;
 
 use crate::{
-    config::{RithmicAccount, RithmicConfig, RithmicEnv},
+    config::{RithmicAccount, RithmicConfig},
     rti::{
         RequestAcceptAgreement, RequestAccountList, RequestAccountRmsInfo,
         RequestAccountRmsUpdates, RequestAuxilliaryReferenceData, RequestBracketOrder,
@@ -38,9 +38,6 @@ use crate::{
         response_login_info,
     },
 };
-
-pub(crate) const TRADE_ROUTE_LIVE: &str = "globex";
-pub(crate) const TRADE_ROUTE_DEMO: &str = "simulator";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum LoginUserType {
@@ -114,7 +111,6 @@ impl LoginScope {
 pub(crate) struct RithmicSenderApi {
     app_name: String,
     app_version: String,
-    env: RithmicEnv,
     message_id_counter: u64,
 }
 
@@ -123,7 +119,6 @@ impl RithmicSenderApi {
         RithmicSenderApi {
             app_name: config.app_name.clone(),
             app_version: config.app_version.clone(),
-            env: config.env,
             message_id_counter: 0,
         }
     }
@@ -520,8 +515,13 @@ impl RithmicSenderApi {
     /// This is the preferred method for placing orders as it supports
     /// advanced features like trigger prices and trailing stops.
     ///
+    /// The route sent is the `trade_route` argument; `order.trade_route` is one
+    /// of the inputs the caller resolved it from and is not read here.
+    ///
     /// # Arguments
     /// * `order` - The order parameters
+    /// * `account` - The account to place the order for
+    /// * `trade_route` - The route to send the order on
     ///
     /// # Returns
     /// A tuple of (serialized request buffer, request ID)
@@ -529,13 +529,9 @@ impl RithmicSenderApi {
         &mut self,
         order: &RithmicOrder,
         account: &RithmicAccount,
+        trade_route: &str,
     ) -> (Vec<u8>, String) {
         let id = self.get_next_message_id();
-
-        let trade_route = match self.env {
-            RithmicEnv::Live => TRADE_ROUTE_LIVE,
-            RithmicEnv::Demo | RithmicEnv::Test => TRADE_ROUTE_DEMO,
-        };
 
         let req = RequestNewOrder {
             template_id: 312,
@@ -563,27 +559,45 @@ impl RithmicSenderApi {
         self.request_to_buf(req, id)
     }
 
+    /// Build a bracket order request from the simple [`RithmicBracketOrder`].
+    ///
+    /// # Arguments
+    /// * `bracket_order` - The bracket order parameters
+    /// * `account` - The account to place the order for
+    /// * `trade_route` - The route to send the order on
+    ///
+    /// # Returns
+    /// A tuple of (serialized request buffer, request ID)
     pub fn request_bracket_order(
         &mut self,
         bracket_order: RithmicBracketOrder,
         account: &RithmicAccount,
         scope: Option<&LoginScope>,
+        trade_route: &str,
     ) -> (Vec<u8>, String) {
-        self.request_advanced_bracket_order(bracket_order.into(), account, scope)
+        self.request_advanced_bracket_order(bracket_order.into(), account, scope, trade_route)
     }
 
+    /// Build a bracket order request from the full [`RithmicAdvancedBracketOrder`].
+    ///
+    /// The route sent is the `trade_route` argument; `bracket_order.trade_route`
+    /// is one of the inputs the caller resolved it from and is not read here.
+    ///
+    /// # Arguments
+    /// * `bracket_order` - The bracket order parameters
+    /// * `account` - The account to place the order for
+    /// * `trade_route` - The route to send the order on
+    ///
+    /// # Returns
+    /// A tuple of (serialized request buffer, request ID)
     pub fn request_advanced_bracket_order(
         &mut self,
         bracket_order: RithmicAdvancedBracketOrder,
         account: &RithmicAccount,
         scope: Option<&LoginScope>,
+        trade_route: &str,
     ) -> (Vec<u8>, String) {
         let id = self.get_next_message_id();
-
-        let trade_route = match self.env {
-            RithmicEnv::Live => TRADE_ROUTE_LIVE,
-            RithmicEnv::Demo | RithmicEnv::Test => TRADE_ROUTE_DEMO, // NOTE: Not sure if this is correct value for test environment
-        };
 
         let req = RequestBracketOrder {
             template_id: 330,
@@ -1536,25 +1550,6 @@ impl RithmicSenderApi {
         self.request_to_buf(req, id)
     }
 
-    /// Request an OCO (One Cancels Other) order pair
-    ///
-    /// Builds a `RequestOcoOrder` carrying the two supplied legs.
-    ///
-    /// # Arguments
-    /// * `order1` - First order leg
-    /// * `order2` - Second order leg
-    ///
-    /// # Returns
-    /// A tuple of (serialized request buffer, request ID)
-    pub fn request_oco_order(
-        &mut self,
-        order1: RithmicOcoOrderLeg,
-        order2: RithmicOcoOrderLeg,
-        account: &RithmicAccount,
-    ) -> (Vec<u8>, String) {
-        self.request_oco_order_multi(vec![order1, order2], account)
-    }
-
     /// Request an OCO (One Cancels Other) order with an arbitrary number of legs
     ///
     /// Builds a single `RequestOcoOrder` (template 328) with every repeated field
@@ -1562,22 +1557,18 @@ impl RithmicSenderApi {
     /// are automatically cancelled.
     ///
     /// # Arguments
-    /// * `legs` - The order legs
+    /// * `legs` - The order legs, each paired with the resolved trade route for
+    ///   that leg's exchange, which keeps the repeated route field index-aligned
     /// * `account` - The account to place the order for
     ///
     /// # Returns
     /// A tuple of (serialized request buffer, request ID)
     pub fn request_oco_order_multi(
         &mut self,
-        legs: Vec<RithmicOcoOrderLeg>,
+        legs: Vec<(RithmicOcoOrderLeg, String)>,
         account: &RithmicAccount,
     ) -> (Vec<u8>, String) {
         let id = self.get_next_message_id();
-
-        let trade_route = match self.env {
-            RithmicEnv::Live => TRADE_ROUTE_LIVE,
-            RithmicEnv::Demo | RithmicEnv::Test => TRADE_ROUTE_DEMO,
-        };
 
         let mut user_tag = Vec::new();
         let mut symbol = Vec::new();
@@ -1594,7 +1585,7 @@ impl RithmicSenderApi {
         let mut trail_by_ticks = Vec::new();
         let mut trail_by_price_id = Vec::new();
 
-        for leg in legs {
+        for (leg, trade_route) in legs {
             user_tag.push(leg.user_tag);
             symbol.push(leg.symbol);
             exchange.push(leg.exchange);
@@ -1604,7 +1595,7 @@ impl RithmicSenderApi {
             transaction_type.push(leg.transaction_type.into());
             duration.push(leg.duration.into());
             price_type.push(leg.price_type.into());
-            trade_routes.push(trade_route.to_string());
+            trade_routes.push(trade_route);
             manual_or_auto.push(request_oco_order::OrderPlacement::Auto.into());
             trailing_stop.push(leg.trailing_stop.is_some());
             trail_by_ticks.push(leg.trailing_stop.as_ref().map_or(0, |ts| ts.trail_by_ticks));
@@ -1906,7 +1897,7 @@ impl RithmicSenderApi {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::rithmic_command_types::TrailingStop;
+    use crate::{api::rithmic_command_types::TrailingStop, config::RithmicEnv};
 
     fn test_config() -> RithmicConfig {
         RithmicConfig::builder(RithmicEnv::Demo)
@@ -1991,9 +1982,10 @@ mod tests {
             duration: Some(crate::rti::request_new_order::Duration::Day),
             trigger_price: None,
             trailing_stop: None,
+            trade_route: None,
         };
 
-        let (buf, _) = api.request_order(&order, &override_account());
+        let (buf, _) = api.request_order(&order, &override_account(), "globex");
         let request: RequestNewOrder = decode_request(&buf);
 
         assert_eq!(request.fcm_id.as_deref(), Some("FCM_B"));
@@ -2041,7 +2033,7 @@ mod tests {
             symbol: "ESM6".to_string(),
         };
 
-        let (buf, _) = api.request_bracket_order(bracket, &override_account(), None);
+        let (buf, _) = api.request_bracket_order(bracket, &override_account(), None, "globex");
         let request: RequestBracketOrder = decode_request(&buf);
 
         assert_eq!(request.fcm_id.as_deref(), Some("FCM_B"));
@@ -2064,14 +2056,18 @@ mod tests {
     fn advanced_bracket_request_sets_account_and_trade_route_fields() {
         let mut api = RithmicSenderApi::new(&test_config());
 
-        let (buf, _) =
-            api.request_advanced_bracket_order(advanced_bracket(), &override_account(), None);
+        let (buf, _) = api.request_advanced_bracket_order(
+            advanced_bracket(),
+            &override_account(),
+            None,
+            "globex",
+        );
         let request: RequestBracketOrder = decode_request(&buf);
 
         assert_eq!(request.fcm_id.as_deref(), Some("FCM_B"));
         assert_eq!(request.ib_id.as_deref(), Some("IB_B"));
         assert_eq!(request.account_id.as_deref(), Some("ACCOUNT_B"));
-        assert_eq!(request.trade_route.as_deref(), Some(TRADE_ROUTE_DEMO));
+        assert_eq!(request.trade_route.as_deref(), Some("globex"));
         assert_eq!(request.user_tag.as_deref(), Some("advanced-bracket-1"));
     }
 
@@ -2079,8 +2075,12 @@ mod tests {
     fn advanced_bracket_request_encodes_trigger_and_if_touched_fields() {
         let mut api = RithmicSenderApi::new(&test_config());
 
-        let (buf, _) =
-            api.request_advanced_bracket_order(advanced_bracket(), &default_account(), None);
+        let (buf, _) = api.request_advanced_bracket_order(
+            advanced_bracket(),
+            &default_account(),
+            None,
+            "globex",
+        );
         let request: RequestBracketOrder = decode_request(&buf);
         assert_eq!(request.price, Some(5000.25));
         assert_eq!(request.trigger_price, Some(4999.75));
@@ -2113,8 +2113,12 @@ mod tests {
     fn advanced_bracket_request_encodes_management_and_timing_fields() {
         let mut api = RithmicSenderApi::new(&test_config());
 
-        let (buf, _) =
-            api.request_advanced_bracket_order(advanced_bracket(), &default_account(), None);
+        let (buf, _) = api.request_advanced_bracket_order(
+            advanced_bracket(),
+            &default_account(),
+            None,
+            "globex",
+        );
         let request: RequestBracketOrder = decode_request(&buf);
 
         assert_eq!(request.break_even_ticks, Some(2));
@@ -2149,6 +2153,7 @@ mod tests {
             price_type: crate::rti::request_oco_order::PriceType::Limit,
             user_tag: "oco-1".to_string(),
             trailing_stop: None,
+            trade_route: None,
         };
         let leg2 = RithmicOcoOrderLeg {
             symbol: "ESM6".to_string(),
@@ -2161,9 +2166,13 @@ mod tests {
             price_type: crate::rti::request_oco_order::PriceType::StopMarket,
             user_tag: "oco-2".to_string(),
             trailing_stop: None,
+            trade_route: None,
         };
 
-        let (buf, _) = api.request_oco_order(leg1, leg2, &override_account());
+        let (buf, _) = api.request_oco_order_multi(
+            vec![(leg1, "globex".to_string()), (leg2, "nymex".to_string())],
+            &override_account(),
+        );
         let request: RequestOcoOrder = decode_request(&buf);
 
         assert_eq!(request.fcm_id.as_deref(), Some("FCM_B"));
@@ -2279,6 +2288,7 @@ mod tests {
             price_type: crate::rti::request_oco_order::PriceType::Limit,
             user_tag: "leg-0".to_string(),
             trailing_stop: None,
+            trade_route: None,
         };
         let leg1 = RithmicOcoOrderLeg {
             symbol: "NQM6".to_string(),
@@ -2294,6 +2304,7 @@ mod tests {
                 trail_by_ticks: 15,
                 trail_by_price_id: 7,
             }),
+            trade_route: None,
         };
         let leg2 = RithmicOcoOrderLeg {
             symbol: "CLM6".to_string(),
@@ -2309,9 +2320,17 @@ mod tests {
                 trail_by_ticks: 25,
                 trail_by_price_id: 9,
             }),
+            trade_route: None,
         };
 
-        let (buf, _) = api.request_oco_order_multi(vec![leg0, leg1, leg2], &default_account());
+        let (buf, _) = api.request_oco_order_multi(
+            vec![
+                (leg0, "globex".to_string()),
+                (leg1, "globex".to_string()),
+                (leg2, "nymex".to_string()),
+            ],
+            &default_account(),
+        );
         let request: RequestOcoOrder = decode_request(&buf);
 
         assert_eq!(request.symbol.len(), 3);
@@ -2365,7 +2384,14 @@ mod tests {
             request.manual_or_auto,
             vec![request_oco_order::OrderPlacement::Auto as i32; 3]
         );
-        assert_eq!(request.trade_route, vec![TRADE_ROUTE_DEMO.to_string(); 3]);
+        assert_eq!(
+            request.trade_route,
+            vec![
+                "globex".to_string(),
+                "globex".to_string(),
+                "nymex".to_string()
+            ]
+        );
         assert_eq!(request.trailing_stop, vec![false, true, true]);
         assert_eq!(request.trail_by_ticks, vec![0, 15, 25]);
         assert_eq!(request.trail_by_price_id, vec![0, 7, 9]);
@@ -2388,9 +2414,10 @@ mod tests {
                 trail_by_ticks: 20,
                 trail_by_price_id: 3,
             }),
+            trade_route: None,
         };
 
-        let (buf, _) = api.request_order(&order, &default_account());
+        let (buf, _) = api.request_order(&order, &default_account(), "globex");
         let request: RequestNewOrder = decode_request(&buf);
 
         assert_eq!(request.trailing_stop, Some(true));
@@ -2565,6 +2592,7 @@ mod tests {
                 advanced_bracket(),
                 &override_account(),
                 Some(&scope),
+                "globex",
             );
             let request: RequestBracketOrder = decode_request(&buf);
 

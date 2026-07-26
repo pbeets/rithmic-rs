@@ -23,6 +23,10 @@ Public struct fields and a method signature change, so this lands in a major rel
 - **`RithmicOrderPlantHandle::adjust_profit` and `adjust_stop` take a `RithmicBracketLevelAdjustment`**
   instead of `(id, ticks)`, adding a `level` that selects the bracket leg. `level: None` keeps the
   prior behavior.
+- **`RithmicOrder`, `RithmicAdvancedBracketOrder` and `RithmicOcoOrderLeg` gain a required
+  `trade_route: Option<String>` field.** Add `trade_route: None` to existing literals. Orders now use
+  the route the server publishes for their exchange instead of a fixed `"globex"`/`"simulator"`, and
+  fail with `RithmicError::NoTradeRoute` when there is none.
 
 ### Added
 
@@ -49,6 +53,18 @@ Public struct fields and a method signature change, so this lands in a major rel
   into `rithmic_rs::rti`.
 - `RithmicModifyOrder::trigger_price` — StopLimit/StopMarket modifies can set a trigger price
   distinct from the limit price. When `None`, the trigger still defaults to `price` for stop types.
+- **`RithmicError::NoTradeRoute { exchange, cached }`** — no route was published for that exchange
+  and the order set none itself, so nothing was sent. `cached` lists the exchanges that do have one.
+- **Per-order trade routes** via the new `trade_route` field on `RithmicOrder`,
+  `RithmicAdvancedBracketOrder` and `RithmicOcoOrderLeg`, which overrides the route the plant would
+  pick, including with a route the server never published. `place_bracket_order` has no override;
+  convert to `RithmicAdvancedBracketOrder` to set one.
+- **`RithmicOrderPlantHandle::trade_route_for(exchange)`** — the route an order for that exchange
+  would take right now, without sending anything.
+- **`RithmicOrderPlantHandle::record_trade_route(update)`** — apply a `TradeRoute` update to the
+  cached routes. `login()` subscribes, so those updates arrive on `subscription_receiver`, but
+  nothing applies them for you: ignore them and orders keep the routes login read. See
+  `examples/trade_routes.rs`.
 
 ### Changed
 
@@ -94,6 +110,13 @@ Public struct fields and a method signature change, so this lands in a major rel
   `get_account_rms_info` may return fewer accounts than before**, including for `Trader` logins.
 - **Bracket target/stop level updates omitted the `level` field**, so on a multi-leg bracket every
   adjustment landed on the server's default leg and the other legs were unreachable.
+- **Every order went out on `"globex"` (live) or `"simulator"` regardless of exchange**, ignoring the
+  routes the server publishes. That is correct only where the FCM happens to route every venue the
+  same way; anywhere it does not, or where a venue has no route at all, the order carried a route
+  that does not apply to it. The plant now uses the routes the server publishes for the exchange,
+  preferring one it marks default; `login()` reads them once and orders route off that snapshot for
+  the life of the connection. Login logs each route it loaded, and the count, at `info`, or logs at
+  `error` if none were published; the route each order takes logs at `debug`.
 
 ## [2.0.0]
 

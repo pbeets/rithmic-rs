@@ -155,6 +155,9 @@
 //!
 //! - [`InvalidArgument`](RithmicError::InvalidArgument) — your arguments.
 //!   Nothing was sent. Fix them and call again.
+//! - [`NoTradeRoute`](RithmicError::NoTradeRoute) — no route for the order's
+//!   exchange. Nothing was sent. Set the order's `trade_route`, or check the
+//!   exchange with `trade_route_for` before you trade.
 //! - [`SendFailed`](RithmicError::SendFailed) — the send failed. Only this
 //!   request fails and the plant is still up, but the connection is usually on
 //!   its way out; expect a `ConnectionError` to follow. Treat it as a

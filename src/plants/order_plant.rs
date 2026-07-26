@@ -20,11 +20,12 @@ use crate::{
     plants::{
         core::{PlantCore, SelectResult},
         subscription::SubscriptionFilter,
+        trade_routes::TradeRouteCache,
     },
     request_handler::RithmicRequest,
     rti::{
-        messages::RithmicMessage, request_account_rms_updates, request_easy_to_borrow_list,
-        request_login::SysInfraType,
+        TradeRoute, messages::RithmicMessage, request_account_rms_updates,
+        request_easy_to_borrow_list, request_login::SysInfraType,
     },
     ws::PlantActor,
 };
@@ -69,7 +70,7 @@ pub(crate) enum OrderPlantCommand {
         response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
     },
     PlaceAdvancedBracketOrder {
-        bracket_order: RithmicAdvancedBracketOrder,
+        bracket_order: Box<RithmicAdvancedBracketOrder>,
         account: Arc<RithmicAccount>,
         response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
     },
@@ -117,6 +118,12 @@ pub(crate) enum OrderPlantCommand {
         subscribe_for_updates: bool,
         response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
     },
+    RecordTradeRoutes(Vec<RithmicResponse>),
+    RecordTradeRouteUpdate(Box<TradeRoute>),
+    TradeRouteFor {
+        exchange: String,
+        response_sender: oneshot::Sender<Result<String, RithmicError>>,
+    },
     ShowOrderHistoryDates {
         response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
     },
@@ -138,12 +145,6 @@ pub(crate) enum OrderPlantCommand {
     },
     PlaceOrder {
         order: RithmicOrder,
-        account: Arc<RithmicAccount>,
-        response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
-    },
-    PlaceOcoOrder {
-        order1: RithmicOcoOrderLeg,
-        order2: RithmicOcoOrderLeg,
         account: Arc<RithmicAccount>,
         response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
     },
@@ -406,6 +407,7 @@ struct OrderPlant {
     core: PlantCore,
     request_receiver: mpsc::Receiver<OrderPlantCommand>,
     login_scope: Arc<OnceLock<LoginScope>>,
+    trade_routes: TradeRouteCache,
 }
 
 impl OrderPlant {
@@ -422,6 +424,7 @@ impl OrderPlant {
             core,
             request_receiver,
             login_scope,
+            trade_routes: TradeRouteCache::default(),
         })
     }
 }
@@ -596,10 +599,19 @@ impl PlantActor for OrderPlant {
                 account,
                 response_sender,
             } => {
+                let trade_route = match self.trade_routes.resolve(None, &bracket_order.exchange) {
+                    Ok(trade_route) => trade_route,
+                    Err(err) => {
+                        let _ = response_sender.send(Err(err));
+                        return;
+                    }
+                };
+
                 let (req_buf, id) = self.core.rithmic_sender_api.request_bracket_order(
                     bracket_order,
                     &account,
                     self.login_scope.get(),
+                    &trade_route,
                 );
 
                 self.core.request_handler.register_request(RithmicRequest {
@@ -616,10 +628,22 @@ impl PlantActor for OrderPlant {
                 account,
                 response_sender,
             } => {
+                let trade_route = match self.trade_routes.resolve(
+                    bracket_order.trade_route.as_deref(),
+                    &bracket_order.exchange,
+                ) {
+                    Ok(trade_route) => trade_route,
+                    Err(err) => {
+                        let _ = response_sender.send(Err(err));
+                        return;
+                    }
+                };
+
                 let (req_buf, id) = self.core.rithmic_sender_api.request_advanced_bracket_order(
-                    bracket_order,
+                    *bracket_order,
                     &account,
                     self.login_scope.get(),
+                    &trade_route,
                 );
 
                 self.core.request_handler.register_request(RithmicRequest {
@@ -804,6 +828,28 @@ impl PlantActor for OrderPlant {
                     .send_or_fail(Message::Binary(req_buf.into()), &id)
                     .await;
             }
+            OrderPlantCommand::RecordTradeRoutes(responses) => {
+                let loaded = responses
+                    .iter()
+                    .filter(|response| self.trade_routes.record_response(response))
+                    .count();
+
+                match loaded {
+                    0 => error!(
+                        "order_plant: no trade routes published, orders will fail with NoTradeRoute"
+                    ),
+                    loaded => info!("order_plant: {} trade routes loaded", loaded),
+                }
+            }
+            OrderPlantCommand::RecordTradeRouteUpdate(update) => {
+                self.trade_routes.record_update(&update);
+            }
+            OrderPlantCommand::TradeRouteFor {
+                exchange,
+                response_sender,
+            } => {
+                let _ = response_sender.send(self.trade_routes.resolve(None, &exchange));
+            }
             OrderPlantCommand::ShowOrderHistoryDates { response_sender } => {
                 let (req_buf, id) = self
                     .core
@@ -882,27 +928,21 @@ impl PlantActor for OrderPlant {
                 account,
                 response_sender,
             } => {
-                let (req_buf, id) = self.core.rithmic_sender_api.request_order(&order, &account);
+                let trade_route = match self
+                    .trade_routes
+                    .resolve(order.trade_route.as_deref(), &order.exchange)
+                {
+                    Ok(trade_route) => trade_route,
+                    Err(err) => {
+                        let _ = response_sender.send(Err(err));
+                        return;
+                    }
+                };
 
-                self.core.request_handler.register_request(RithmicRequest {
-                    request_id: id.clone(),
-                    responder: response_sender,
-                });
-
-                self.core
-                    .send_or_fail(Message::Binary(req_buf.into()), &id)
-                    .await;
-            }
-            OrderPlantCommand::PlaceOcoOrder {
-                order1,
-                order2,
-                account,
-                response_sender,
-            } => {
-                let (req_buf, id) = self
-                    .core
-                    .rithmic_sender_api
-                    .request_oco_order(order1, order2, &account);
+                let (req_buf, id) =
+                    self.core
+                        .rithmic_sender_api
+                        .request_order(&order, &account, &trade_route);
 
                 self.core.request_handler.register_request(RithmicRequest {
                     request_id: id.clone(),
@@ -918,6 +958,14 @@ impl PlantActor for OrderPlant {
                 account,
                 response_sender,
             } => {
+                let legs = match self.trade_routes.resolve_legs(legs) {
+                    Ok(legs) => legs,
+                    Err(err) => {
+                        let _ = response_sender.send(Err(err));
+                        return;
+                    }
+                };
+
                 let (req_buf, id) = self
                     .core
                     .rithmic_sender_api
@@ -1271,7 +1319,10 @@ impl RithmicOrderPlantHandle {
 
     /// Log in to the Rithmic Order plant
     ///
-    /// This must be called before sending orders or subscriptions
+    /// This must be called before sending orders or subscriptions.
+    ///
+    /// Also loads the trade routes orders are sent on. If that fails the login still
+    /// succeeds, and orders fail with [`RithmicError::NoTradeRoute`].
     ///
     /// # Returns
     /// The login response or an error message
@@ -1282,6 +1333,8 @@ impl RithmicOrderPlantHandle {
     /// Log in to the Rithmic Order plant with custom configuration
     ///
     /// This must be called before sending orders or subscriptions.
+    ///
+    /// Loads trade routes on success, like [`login`](Self::login).
     ///
     /// # Arguments
     /// * `config` - Login configuration options. See [`LoginConfig`] for details.
@@ -1348,9 +1401,43 @@ impl RithmicOrderPlantHandle {
             ),
         }
 
+        self.prime_trade_routes().await;
+
         info!("order_plant: logged in");
 
         Ok(response)
+    }
+
+    /// Load the routes orders are sent on, once, and hand them to the plant.
+    ///
+    /// This is the snapshot orders route from for the life of the connection.
+    /// It subscribes, so updates reach the subscription channel, but only
+    /// [`record_trade_route`](Self::record_trade_route) applies one.
+    ///
+    /// A failure here is only logged: you get [`RithmicError::NoTradeRoute`]
+    /// when placing an order, rather than a bad route.
+    async fn prime_trade_routes(&self) {
+        match self.get_trade_routes(true).await {
+            Ok(responses) => {
+                for rejection in responses.iter().filter_map(|resp| resp.error.as_ref()) {
+                    error!(
+                        "order_plant: trade route request rejected, orders will fail: {}",
+                        rejection
+                    );
+                }
+
+                // Queued on the same channel orders are, so an order placed the
+                // moment `connect` returns is still handled after this.
+                let _ = self
+                    .sender
+                    .send(OrderPlantCommand::RecordTradeRoutes(responses))
+                    .await;
+            }
+            Err(err) => error!(
+                "order_plant: trade routes unavailable, orders will fail: {}",
+                err
+            ),
+        }
     }
 
     /// Disconnect from the Rithmic Order plant
@@ -1492,7 +1579,7 @@ impl RithmicOrderPlantHandle {
         let (tx, rx) = oneshot::channel::<Result<Vec<RithmicResponse>, RithmicError>>();
 
         let command = OrderPlantCommand::PlaceAdvancedBracketOrder {
-            bracket_order,
+            bracket_order: Box::new(bracket_order),
             account: self.account.clone(),
             response_sender: tx,
         };
@@ -1729,6 +1816,58 @@ impl RithmicOrderPlantHandle {
         rx.await.map_err(|_| RithmicError::ConnectionClosed)?
     }
 
+    /// Apply a `TradeRoute` update to the routes orders go out on.
+    ///
+    /// [`login`](Self::login) subscribes, so updates arrive on
+    /// [`subscription_receiver`](Self::subscription_receiver); applying them is up
+    /// to you.
+    ///
+    /// ```no_run
+    /// # use rithmic_rs::{RithmicOrderPlantHandle, rti::messages::RithmicMessage};
+    /// # async fn example(handle: RithmicOrderPlantHandle) -> Result<(), Box<dyn std::error::Error>> {
+    /// let mut updates = handle.subscription_receiver.resubscribe();
+    ///
+    /// while let Ok(response) = updates.recv().await {
+    ///     if let RithmicMessage::TradeRoute(update) = &response.message {
+    ///         handle.record_trade_route(update).await?;
+    ///     }
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn record_trade_route(&self, update: &TradeRoute) -> Result<(), RithmicError> {
+        self.sender
+            .send(OrderPlantCommand::RecordTradeRouteUpdate(Box::new(
+                update.clone(),
+            )))
+            .await
+            .map_err(|_| RithmicError::ConnectionClosed)
+    }
+
+    /// The route an order for `exchange` would go out on right now, without sending
+    /// anything. Call it after [`login`](Self::login) to check your venues are routable.
+    ///
+    /// Fails with [`RithmicError::NoTradeRoute`] where an order would, so an `Ok`
+    /// here means an order that names no route of its own takes this one.
+    ///
+    /// # Arguments
+    /// * `exchange` - The exchange to look up, as it appears on your orders
+    ///
+    /// # Returns
+    /// The route name, or an error naming what is cached instead
+    pub async fn trade_route_for(&self, exchange: &str) -> Result<String, RithmicError> {
+        let (tx, rx) = oneshot::channel::<Result<String, RithmicError>>();
+
+        let command = OrderPlantCommand::TradeRouteFor {
+            exchange: exchange.to_string(),
+            response_sender: tx,
+        };
+
+        let _ = self.sender.send(command).await;
+
+        rx.await.map_err(|_| RithmicError::ConnectionClosed)?
+    }
+
     /// Get dates for which order history is available
     ///
     /// # Returns
@@ -1890,9 +2029,8 @@ impl RithmicOrderPlantHandle {
     ) -> Result<Vec<RithmicResponse>, RithmicError> {
         let (tx, rx) = oneshot::channel::<Result<Vec<RithmicResponse>, RithmicError>>();
 
-        let command = OrderPlantCommand::PlaceOcoOrder {
-            order1,
-            order2,
+        let command = OrderPlantCommand::PlaceOcoOrderMulti {
+            legs: vec![order1, order2],
             account: self.account.clone(),
             response_sender: tx,
         };

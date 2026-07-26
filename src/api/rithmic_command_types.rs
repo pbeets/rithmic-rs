@@ -49,6 +49,7 @@ pub struct LoginConfig {
 ///     price_type: OcoPriceType::Limit,
 ///     user_tag: "take-profit".to_string(),
 ///     trailing_stop: None,
+///     trade_route: None,
 /// };
 ///
 /// let stop_loss = RithmicOcoOrderLeg {
@@ -62,6 +63,7 @@ pub struct LoginConfig {
 ///     price_type: OcoPriceType::StopMarket,
 ///     user_tag: "stop-loss".to_string(),
 ///     trailing_stop: None,
+///     trade_route: None,
 /// };
 ///
 /// handle.place_oco_order(take_profit, stop_loss).await?;
@@ -88,6 +90,9 @@ pub struct RithmicOcoOrderLeg {
     pub user_tag: String,
     /// Optional trailing stop configuration for this leg
     pub trailing_stop: Option<TrailingStop>,
+    /// Route to send on. `None` uses the route the server published for this
+    /// leg's exchange.
+    pub trade_route: Option<String>,
 }
 
 /// Entry order with linked profit target and stop loss orders.
@@ -291,6 +296,8 @@ pub struct RithmicAdvancedBracketOrder {
     pub cancel_at_usecs: Option<i32>,
     /// Cancel order after this many seconds.
     pub cancel_after_secs: Option<i32>,
+    /// Route to send on. `None` uses the route the server published for `exchange`.
+    pub trade_route: Option<String>,
 }
 
 impl Default for RithmicAdvancedBracketOrder {
@@ -327,6 +334,7 @@ impl Default for RithmicAdvancedBracketOrder {
             cancel_at_ssboe: None,
             cancel_at_usecs: None,
             cancel_after_secs: None,
+            trade_route: None,
         }
     }
 }
@@ -365,6 +373,7 @@ impl From<RithmicBracketOrder> for RithmicAdvancedBracketOrder {
             cancel_at_ssboe: None,
             cancel_at_usecs: None,
             cancel_after_secs: None,
+            trade_route: None,
         }
     }
 }
@@ -555,6 +564,8 @@ pub struct RithmicOrder {
     pub trigger_price: Option<f64>,
     /// Trailing stop configuration
     pub trailing_stop: Option<TrailingStop>,
+    /// Route to send on. `None` uses the route the server published for `exchange`.
+    pub trade_route: Option<String>,
 }
 
 impl Default for RithmicOrder {
@@ -570,6 +581,7 @@ impl Default for RithmicOrder {
             duration: None,
             trigger_price: None,
             trailing_stop: None,
+            trade_route: None,
         }
     }
 }

@@ -63,7 +63,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-See [`examples/`](examples/) for more usage patterns including [error handling](examples/error_handling.rs), [reconnection handling](examples/reconnect.rs), and historical data loading.
+See [`examples/`](examples/) for more usage patterns including [error handling](examples/error_handling.rs), [reconnection handling](examples/reconnect.rs), [order routing](examples/trade_routes.rs), and historical data loading.
 
 ## Architecture
 

@@ -4,12 +4,15 @@ use super::*;
 use crate::{
     RithmicRequestError,
     api::{
-        rithmic_command_types::{RithmicBracketOrder, RithmicOcoOrderLeg},
+        rithmic_command_types::{
+            RithmicAdvancedBracketOrder, RithmicBracketOrder, RithmicOcoOrderLeg,
+        },
         sender_api::LoginUserType,
     },
     plants::test_support::{
         self, Responder, assert_close_still_sent, assert_rejected_after_close,
-        assert_sent_while_open, assert_wire_silent, read_wire_request, test_account,
+        assert_sent_while_open, assert_wire_silent, awaited_caller_outcome, read_wire_request,
+        test_account,
     },
 };
 
@@ -48,6 +51,7 @@ fn leg(tag: &str) -> RithmicOcoOrderLeg {
         price_type: crate::rti::request_oco_order::PriceType::Limit,
         user_tag: tag.to_string(),
         trailing_stop: None,
+        trade_route: None,
     }
 }
 
@@ -56,13 +60,19 @@ async fn plant_with_wire() -> (OrderPlant, mpsc::Sender<OrderPlantCommand>, TcpS
         core,
         request_receiver,
         login_scope: Arc::new(OnceLock::new()),
+        trade_routes: TradeRouteCache::default(),
     })
     .await
 }
 
+/// Carries an explicit route, so a silent wire below is the close guard rather
+/// than an unroutable order.
 fn place_order(response_sender: Responder) -> OrderPlantCommand {
     OrderPlantCommand::PlaceOrder {
-        order: RithmicOrder::default(),
+        order: RithmicOrder {
+            trade_route: Some("globex".to_string()),
+            ..RithmicOrder::default()
+        },
         account: test_account(),
         response_sender,
     }
@@ -337,6 +347,104 @@ async fn answer_login_info(
     }
 }
 
+/// Answer the `GetTradeRoutes` that `login` issues, returning whether it asked to
+/// stay subscribed to later updates.
+async fn answer_trade_routes(
+    command_receiver: &mut mpsc::Receiver<OrderPlantCommand>,
+    response: Result<Vec<RithmicResponse>, RithmicError>,
+) -> bool {
+    match next_command(command_receiver).await {
+        OrderPlantCommand::GetTradeRoutes {
+            subscribe_for_updates,
+            response_sender,
+        } => {
+            let _ = response_sender.send(response);
+
+            subscribe_for_updates
+        }
+        _ => panic!("login must fetch the trade routes that orders are routed on"),
+    }
+}
+
+fn trade_route_response(exchange: &str, trade_route: &str) -> RithmicResponse {
+    RithmicResponse {
+        request_id: "3".to_string(),
+        message: RithmicMessage::ResponseTradeRoutes(crate::rti::ResponseTradeRoutes {
+            template_id: 311,
+            exchange: Some(exchange.to_string()),
+            trade_route: Some(trade_route.to_string()),
+            ..Default::default()
+        }),
+        is_update: false,
+        has_more: false,
+        multi_response: true,
+        error: None,
+        source: "order_plant".to_string(),
+    }
+}
+
+/// Routes are what orders are placed on, so a login must hand the plant the
+/// snapshot it read. Only `record_trade_route` fills the cache after that.
+#[tokio::test]
+async fn login_hands_the_trade_routes_it_read_to_the_plant() {
+    let (handle, mut command_receiver) = test_handle();
+
+    let driver = async {
+        drive_login_to_login_info(&mut command_receiver).await;
+        answer_login_info(&mut command_receiver, Ok(vec![login_info_response(None)])).await;
+
+        let subscribed = answer_trade_routes(
+            &mut command_receiver,
+            Ok(vec![trade_route_response("CME", "globex")]),
+        )
+        .await;
+
+        let recorded = match next_command(&mut command_receiver).await {
+            OrderPlantCommand::RecordTradeRoutes(responses) => responses,
+            _ => panic!("login must hand the routes it read to the plant"),
+        };
+
+        (subscribed, recorded)
+    };
+
+    let (login, (subscribed, recorded)) = tokio::join!(handle.login(), driver);
+
+    assert!(login.is_ok());
+    assert!(
+        subscribed,
+        "a route the server changes later must at least reach subscribers"
+    );
+    assert_eq!(recorded.len(), 1, "the route read has to reach the plant");
+
+    match &recorded[0].message {
+        RithmicMessage::ResponseTradeRoutes(route) => {
+            assert_eq!(route.exchange.as_deref(), Some("CME"));
+            assert_eq!(route.trade_route.as_deref(), Some("globex"));
+        }
+        _ => panic!("expected the ResponseTradeRoutes frame login read"),
+    }
+}
+
+/// An unavailable route request must not fail a login that already succeeded — the
+/// orders that follow fail individually with `NoTradeRoute` instead.
+#[tokio::test]
+async fn login_succeeds_when_the_trade_routes_are_unavailable() {
+    let (handle, mut command_receiver) = test_handle();
+
+    let driver = async {
+        drive_login_to_login_info(&mut command_receiver).await;
+        answer_login_info(&mut command_receiver, Ok(vec![login_info_response(None)])).await;
+        answer_trade_routes(&mut command_receiver, Err(RithmicError::EmptyResponse)).await;
+    };
+
+    let (login, ()) = tokio::join!(handle.login(), driver);
+
+    assert!(
+        login.is_ok(),
+        "failing trade routes must not fail the login"
+    );
+}
+
 /// Neither failure shape may fail the login or leave a scope behind.
 #[tokio::test]
 async fn login_succeeds_and_stays_unscoped_when_the_login_info_fails() {
@@ -355,6 +463,7 @@ async fn login_succeeds_and_stays_unscoped_when_the_login_info_fails() {
         let driver = async {
             drive_login_to_login_info(&mut command_receiver).await;
             answer_login_info(&mut command_receiver, response).await;
+            answer_trade_routes(&mut command_receiver, Ok(vec![])).await;
         };
 
         let (login, ()) = tokio::join!(handle.login(), driver);
@@ -388,6 +497,7 @@ async fn every_handle_from_one_plant_shares_the_login_scope() {
     let driver = async {
         drive_login_to_login_info(&mut command_receiver).await;
         answer_login_info(&mut command_receiver, Ok(vec![login_info_response(None)])).await;
+        answer_trade_routes(&mut command_receiver, Ok(vec![])).await;
     };
 
     let (login, ()) = tokio::join!(logs_in.login(), driver);
@@ -403,9 +513,19 @@ async fn every_handle_from_one_plant_shares_the_login_scope() {
     assert_eq!(scope.user_type, LoginUserType::Ib);
 }
 
+/// Record the route the server would have published for `exchange`, as a login on
+/// this connection would have left it.
+fn cache_route(plant: &mut OrderPlant, exchange: &str, trade_route: &str) {
+    plant
+        .trade_routes
+        .record(Some(exchange), Some(trade_route), None);
+}
+
 /// A plant actor whose connection has logged in, as `login()` would leave it.
 async fn scoped_plant_with_wire() -> (OrderPlant, mpsc::Sender<OrderPlantCommand>, TcpStream) {
-    let (plant, sender, client) = plant_with_wire().await;
+    let (mut plant, sender, client) = plant_with_wire().await;
+
+    cache_route(&mut plant, "CME", "globex");
 
     plant
         .login_scope
@@ -547,4 +667,444 @@ async fn bracket_level_commands_carry_their_level_to_the_wire() {
     assert_eq!(stop.basket_id.as_deref(), Some("basket-2"));
     assert_eq!(stop.stop_ticks, Some(8));
     assert_eq!(stop.level, Some(3));
+}
+
+fn advanced_bracket_order(
+    exchange: &str,
+    trade_route: Option<&str>,
+) -> RithmicAdvancedBracketOrder {
+    RithmicAdvancedBracketOrder {
+        exchange: exchange.to_string(),
+        localid: "advanced-1".to_string(),
+        symbol: "ESM6".to_string(),
+        quantity: 1,
+        trade_route: trade_route.map(str::to_string),
+        ..RithmicAdvancedBracketOrder::default()
+    }
+}
+
+fn leg_on(exchange: &str, trade_route: Option<&str>) -> RithmicOcoOrderLeg {
+    RithmicOcoOrderLeg {
+        exchange: exchange.to_string(),
+        trade_route: trade_route.map(str::to_string),
+        ..leg("oco")
+    }
+}
+
+/// Every order command must reach the wire on the route cached for its own
+/// exchange — a route crossed between exchanges is an order the venue rejects.
+#[tokio::test]
+async fn every_order_command_sends_the_route_cached_for_its_exchange() {
+    let (mut plant, _sender, mut client) = plant_with_wire().await;
+    cache_route(&mut plant, "CME", "globex");
+    cache_route(&mut plant, "NYMEX", "nymex-route");
+
+    let order: crate::rti::RequestNewOrder =
+        sent_request(&mut plant, &mut client, |response_sender| {
+            OrderPlantCommand::PlaceOrder {
+                order: RithmicOrder {
+                    exchange: "CME".to_string(),
+                    ..RithmicOrder::default()
+                },
+                account: test_account(),
+                response_sender,
+            }
+        })
+        .await;
+
+    assert_eq!(order.trade_route.as_deref(), Some("globex"));
+
+    let bracket: crate::rti::RequestBracketOrder =
+        sent_request(&mut plant, &mut client, |response_sender| {
+            OrderPlantCommand::PlaceBracketOrder {
+                bracket_order: bracket_order(),
+                account: test_account(),
+                response_sender,
+            }
+        })
+        .await;
+
+    assert_eq!(bracket.trade_route.as_deref(), Some("globex"));
+
+    let advanced: crate::rti::RequestBracketOrder =
+        sent_request(&mut plant, &mut client, |response_sender| {
+            OrderPlantCommand::PlaceAdvancedBracketOrder {
+                bracket_order: Box::new(advanced_bracket_order("NYMEX", None)),
+                account: test_account(),
+                response_sender,
+            }
+        })
+        .await;
+
+    assert_eq!(advanced.trade_route.as_deref(), Some("nymex-route"));
+
+    // 350's `trade_route` is repeated and index-aligned with the legs, so an OCO
+    // spanning exchanges must send one route per leg in the legs' own order.
+    let oco: crate::rti::RequestOcoOrder =
+        sent_request(&mut plant, &mut client, |response_sender| {
+            OrderPlantCommand::PlaceOcoOrderMulti {
+                legs: vec![leg_on("NYMEX", None), leg_on("CME", None)],
+                account: test_account(),
+                response_sender,
+            }
+        })
+        .await;
+
+    assert_eq!(oco.trade_route, vec!["nymex-route", "globex"]);
+
+    let oco_multi: crate::rti::RequestOcoOrder =
+        sent_request(&mut plant, &mut client, |response_sender| {
+            OrderPlantCommand::PlaceOcoOrderMulti {
+                legs: vec![
+                    leg_on("CME", None),
+                    leg_on("NYMEX", None),
+                    leg_on("CME", None),
+                ],
+                account: test_account(),
+                response_sender,
+            }
+        })
+        .await;
+
+    assert_eq!(
+        oco_multi.trade_route,
+        vec!["globex", "nymex-route", "globex"]
+    );
+}
+
+/// The per-order route wins over the cache, and works with nothing cached at all —
+/// which is how an unlisted route stays reachable.
+#[tokio::test]
+async fn a_per_order_route_overrides_the_cached_one() {
+    let (mut plant, _sender, mut client) = plant_with_wire().await;
+    cache_route(&mut plant, "CME", "globex");
+
+    let order: crate::rti::RequestNewOrder =
+        sent_request(&mut plant, &mut client, |response_sender| {
+            OrderPlantCommand::PlaceOrder {
+                order: RithmicOrder {
+                    exchange: "CME".to_string(),
+                    trade_route: Some("my-route".to_string()),
+                    ..RithmicOrder::default()
+                },
+                account: test_account(),
+                response_sender,
+            }
+        })
+        .await;
+
+    assert_eq!(order.trade_route.as_deref(), Some("my-route"));
+
+    let advanced: crate::rti::RequestBracketOrder =
+        sent_request(&mut plant, &mut client, |response_sender| {
+            OrderPlantCommand::PlaceAdvancedBracketOrder {
+                bracket_order: Box::new(advanced_bracket_order("CBOT", Some("cbot-route"))),
+                account: test_account(),
+                response_sender,
+            }
+        })
+        .await;
+
+    assert_eq!(advanced.trade_route.as_deref(), Some("cbot-route"));
+
+    let oco: crate::rti::RequestOcoOrder =
+        sent_request(&mut plant, &mut client, |response_sender| {
+            OrderPlantCommand::PlaceOcoOrderMulti {
+                legs: vec![leg_on("CME", Some("leg-route")), leg_on("CME", None)],
+                account: test_account(),
+                response_sender,
+            }
+        })
+        .await;
+
+    assert_eq!(oco.trade_route, vec!["leg-route", "globex"]);
+}
+
+/// An order with no route must be refused here rather than sent for the server to
+/// reject, and an OCO must fail whole: a partial group is not the order asked for.
+#[tokio::test]
+async fn an_unroutable_order_is_refused_before_the_wire() {
+    let commands: Vec<Box<dyn FnOnce(Responder) -> OrderPlantCommand>> = vec![
+        Box::new(|response_sender| OrderPlantCommand::PlaceOrder {
+            order: RithmicOrder {
+                exchange: "CBOT".to_string(),
+                ..RithmicOrder::default()
+            },
+            account: test_account(),
+            response_sender,
+        }),
+        Box::new(|response_sender| OrderPlantCommand::PlaceBracketOrder {
+            bracket_order: bracket_order(),
+            account: test_account(),
+            response_sender,
+        }),
+        Box::new(
+            |response_sender| OrderPlantCommand::PlaceAdvancedBracketOrder {
+                bracket_order: Box::new(advanced_bracket_order("CBOT", None)),
+                account: test_account(),
+                response_sender,
+            },
+        ),
+        // Second leg only: the first resolves, so the whole group must still fail.
+        Box::new(|response_sender| OrderPlantCommand::PlaceOcoOrderMulti {
+            legs: vec![leg_on("CME", Some("leg-route")), leg_on("CBOT", None)],
+            account: test_account(),
+            response_sender,
+        }),
+    ];
+
+    for build in commands {
+        let (mut plant, _sender, mut client) = plant_with_wire().await;
+
+        let (response_sender, rx) = oneshot::channel();
+        plant.handle_command(build(response_sender)).await;
+
+        assert!(matches!(
+            awaited_caller_outcome(rx).await,
+            Err(RithmicError::NoTradeRoute { .. })
+        ));
+        assert_wire_silent(&mut client).await;
+    }
+}
+
+/// The preflight check answers from the cache and sends nothing, so it is safe to
+/// call before trading opens.
+#[tokio::test]
+async fn trade_route_for_reports_the_route_an_order_would_take() {
+    let (mut plant, _sender, mut client) = plant_with_wire().await;
+
+    cache_route(&mut plant, "CME", "globex");
+
+    let (response_sender, rx) = oneshot::channel();
+
+    plant
+        .handle_command(OrderPlantCommand::TradeRouteFor {
+            exchange: "CME".to_string(),
+            response_sender,
+        })
+        .await;
+
+    assert_eq!(
+        rx.await
+            .expect("the caller must be answered")
+            .expect("CME is cached"),
+        "globex"
+    );
+    assert_wire_silent(&mut client).await;
+}
+
+/// The server moves a route mid-session and a subscriber hands it back, so the
+/// orders that follow have to take the new one. Applying it sends nothing.
+#[tokio::test]
+async fn a_route_update_handed_back_moves_where_orders_go() {
+    let (mut plant, _sender, mut client) = plant_with_wire().await;
+
+    cache_route(&mut plant, "CME", "globex");
+
+    plant
+        .handle_command(OrderPlantCommand::RecordTradeRouteUpdate(Box::new(
+            crate::rti::TradeRoute {
+                template_id: 350,
+                exchange: Some("CME".to_string()),
+                trade_route: Some("globex-2".to_string()),
+                is_default: Some(true),
+                ..Default::default()
+            },
+        )))
+        .await;
+
+    let (response_sender, rx) = oneshot::channel();
+
+    plant
+        .handle_command(OrderPlantCommand::TradeRouteFor {
+            exchange: "CME".to_string(),
+            response_sender,
+        })
+        .await;
+
+    assert_eq!(
+        rx.await
+            .expect("the caller must be answered")
+            .expect("CME is cached"),
+        "globex-2"
+    );
+    assert_wire_silent(&mut client).await;
+}
+
+/// An exchange with no route fails the preflight the same way placing the order
+/// would, so a caller can gate on it.
+#[tokio::test]
+async fn trade_route_for_fails_where_an_order_would() {
+    let (mut plant, _sender, _client) = plant_with_wire().await;
+
+    cache_route(&mut plant, "CME", "globex");
+
+    let (response_sender, rx) = oneshot::channel();
+
+    plant
+        .handle_command(OrderPlantCommand::TradeRouteFor {
+            exchange: "CBOT".to_string(),
+            response_sender,
+        })
+        .await;
+
+    assert!(matches!(
+        rx.await.expect("the caller must be answered"),
+        Err(RithmicError::NoTradeRoute { .. })
+    ));
+}
+
+/// The command login queues once it has read the routes off the wire. Applying
+/// it is what fills the cache orders resolve against.
+#[tokio::test]
+async fn record_trade_routes_populates_the_cache() {
+    let (mut plant, _sender, _client) = plant_with_wire().await;
+
+    plant
+        .handle_command(OrderPlantCommand::RecordTradeRoutes(vec![
+            trade_route_response("CME", "globex"),
+        ]))
+        .await;
+
+    assert_eq!(plant.trade_routes.resolve(None, "CME").unwrap(), "globex");
+}
+
+/// A rejected route request must not fail the login, and must not leave orders
+/// a route to send on.
+#[tokio::test]
+async fn login_does_not_cache_a_rejected_trade_route() {
+    let (handle, mut command_receiver) = test_handle();
+
+    let driver = async {
+        drive_login_to_login_info(&mut command_receiver).await;
+        answer_login_info(&mut command_receiver, Ok(vec![login_info_response(None)])).await;
+
+        answer_trade_routes(
+            &mut command_receiver,
+            Ok(vec![RithmicResponse {
+                error: Some(RithmicError::ProtocolError("denied".to_string())),
+                ..trade_route_response("CME", "globex")
+            }]),
+        )
+        .await;
+
+        match next_command(&mut command_receiver).await {
+            OrderPlantCommand::RecordTradeRoutes(responses) => responses,
+            _ => panic!("login must hand the routes it read to the plant"),
+        }
+    };
+
+    let (login, recorded) = tokio::join!(handle.login(), driver);
+
+    assert!(
+        login.is_ok(),
+        "a rejected trade route must not fail the login"
+    );
+
+    let (mut plant, _sender, _client) = plant_with_wire().await;
+    plant
+        .handle_command(OrderPlantCommand::RecordTradeRoutes(recorded))
+        .await;
+
+    assert!(matches!(
+        plant.trade_routes.resolve(None, "CME"),
+        Err(RithmicError::NoTradeRoute { .. })
+    ));
+}
+
+/// Querying the server's routes is a read: it must not change what an order
+/// placed right now would route on.
+#[tokio::test]
+async fn get_trade_routes_does_not_touch_the_cache() {
+    let (mut plant, _sender, _client) = plant_with_wire().await;
+    cache_route(&mut plant, "CME", "globex");
+
+    let (response_sender, _rx) = oneshot::channel();
+
+    plant
+        .handle_command(OrderPlantCommand::GetTradeRoutes {
+            subscribe_for_updates: true,
+            response_sender,
+        })
+        .await;
+
+    assert_eq!(plant.trade_routes.resolve(None, "CME").unwrap(), "globex");
+}
+
+/// The handle-level wrapper: it has to ask the actor and hand back whatever
+/// the actor answers, not just queue the command.
+#[tokio::test]
+async fn trade_route_for_asks_the_actor_and_returns_its_answer() {
+    let (handle, mut command_receiver) = test_handle();
+
+    let call = tokio::spawn(async move { handle.trade_route_for("CME").await });
+
+    match command_receiver.recv().await {
+        Some(OrderPlantCommand::TradeRouteFor {
+            exchange,
+            response_sender,
+        }) => {
+            assert_eq!(exchange, "CME");
+            let _ = response_sender.send(Ok("globex".to_string()));
+        }
+        _ => panic!("expected TradeRouteFor to be queued"),
+    }
+
+    assert_eq!(call.await.expect("call task panicked").unwrap(), "globex");
+}
+
+#[tokio::test]
+async fn trade_route_for_reports_connection_closed_when_the_plant_is_gone() {
+    let (handle, command_receiver) = test_handle();
+    drop(command_receiver);
+
+    let err = handle
+        .trade_route_for("CME")
+        .await
+        .expect_err("the plant is gone");
+
+    assert!(matches!(err, RithmicError::ConnectionClosed));
+}
+
+/// The handle-level wrapper: it has to hand the update to the actor rather
+/// than applying it itself.
+#[tokio::test]
+async fn record_trade_route_forwards_the_update_to_the_actor() {
+    let (handle, mut command_receiver) = test_handle();
+
+    let update = crate::rti::TradeRoute {
+        template_id: 350,
+        exchange: Some("CME".to_string()),
+        trade_route: Some("moved".to_string()),
+        is_default: Some(true),
+        ..Default::default()
+    };
+
+    let call = tokio::spawn({
+        let update = update.clone();
+        async move { handle.record_trade_route(&update).await }
+    });
+
+    match command_receiver.recv().await {
+        Some(OrderPlantCommand::RecordTradeRouteUpdate(recorded)) => {
+            assert_eq!(recorded.exchange.as_deref(), Some("CME"));
+            assert_eq!(recorded.trade_route.as_deref(), Some("moved"));
+        }
+        _ => panic!("expected RecordTradeRouteUpdate to be queued"),
+    }
+
+    call.await.expect("call task panicked").unwrap();
+}
+
+#[tokio::test]
+async fn record_trade_route_reports_connection_closed_when_the_plant_is_gone() {
+    let (handle, command_receiver) = test_handle();
+    drop(command_receiver);
+
+    let err = handle
+        .record_trade_route(&crate::rti::TradeRoute::default())
+        .await
+        .expect_err("the plant is gone");
+
+    assert!(matches!(err, RithmicError::ConnectionClosed));
 }
