@@ -158,7 +158,15 @@ impl RithmicReceiverApi {
                 RithmicResponse {
                     request_id: resp.user_msg.first().cloned().unwrap_or_default(),
                     message: RithmicMessage::ResponseHeartbeat(resp),
-                    is_update: true, // Heartbeats are connection health events - route to subscription channel
+                    // A connection health event rather than a reply the caller
+                    // asked for. `PlantCore::forward_response` matches
+                    // `ResponseHeartbeat` and returns before it reads this flag,
+                    // so the flag picks no channel here. The frame goes only to
+                    // a responder registered under its request id, and this
+                    // crate registers none: `send_heartbeat` discards the id it
+                    // sends with, so the handler's heartbeat arm finds no entry
+                    // and drops the frame.
+                    is_update: true,
                     has_more: false,
                     multi_response: false,
                     error,

@@ -188,7 +188,7 @@ match handle.subscribe("ESM6", "CME").await {
         None => { /* success */ }
     },
     Err(RithmicError::ConnectionClosed | RithmicError::SendFailed) => {
-        handle.abort();
+        handle.abort().await;
         // reconnect — see examples/reconnect.rs
     }
     Err(e) => eprintln!("{}", e),

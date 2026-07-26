@@ -20,6 +20,9 @@ Public struct fields and a method signature change, so this lands in a major rel
 - **`RithmicOrderPlantHandle::subscribe_account_rms_updates` gains a required `update_bits` parameter.**
   Pass `vec![]` for the prior behavior, or `vec![RmsUpdateBits::AutoLiqThresholdCurrentValue]` to
   stream auto-liq threshold updates.
+- **`abort()` on every plant handle is now `async`.** Add `.await` at the call site. It was a
+  non-blocking send that gave up when the command channel was full, silently discarding the abort
+  in exactly the situation it exists for; it now waits for room.
 
 ### Added
 
@@ -74,6 +77,18 @@ Public struct fields and a method signature change, so this lands in a major rel
   stays bounded by the requested channel capacity rounded up to a power of two; an over-capacity
   backlog surfaces as `RecvError::Lagged` on the first receive, as it does for any lagging
   subscriber.
+- **`abort()` was dropped under command-channel backpressure.** It used a non-blocking send, so a
+  full channel — the wedged actor that `abort()` exists to kill — discarded it and left the actor
+  running with pending requests unresolved. It now waits for room; every await inside the actor
+  loop is bounded by the WebSocket send timeout, and a channel closed by an already-exited actor
+  returns immediately.
+- **A comment on the heartbeat decode arm claimed heartbeats route to the subscription channel.**
+  `PlantCore::forward_response` matches `ResponseHeartbeat` and returns before it reads
+  `is_update`, so they never do; only the synthetic `HeartbeatTimeout` built on the error path is
+  broadcast. A healthy heartbeat reaches a responder registered under its request id, and this
+  crate registers none — `send_heartbeat` discards the id it sends with — so it is dropped. The
+  `is_update` value is left as it is, since nothing reads it, and now says so. (The claim dates
+  from the `return_heartbeat_response()` API described under `[0.5.2]` below, removed in `[1.0.0]`.)
 
 ## [2.0.0]
 

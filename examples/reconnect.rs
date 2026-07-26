@@ -199,7 +199,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// leave an orphaned task holding a TCP/WebSocket session while the next
 /// reconnect attempt opens a new one.
 async fn shutdown_plant(handle: &rithmic_rs::RithmicTickerPlantHandle, plant: RithmicTickerPlant) {
-    handle.abort();
+    handle.abort().await;
 
     let _ = plant.await_shutdown().await;
 }

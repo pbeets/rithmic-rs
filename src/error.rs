@@ -79,7 +79,7 @@ impl std::error::Error for RithmicRequestError {}
 ///         None => { /* success */ }
 ///     },
 ///     Err(RithmicError::ConnectionClosed | RithmicError::SendFailed) => {
-///         handle.abort();
+///         handle.abort().await;
 ///         // reconnect — see examples/reconnect.rs
 ///     }
 ///     Err(e) => eprintln!("{e}"),

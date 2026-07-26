@@ -689,13 +689,29 @@ impl RithmicHistoryPlantHandle {
         Ok(response)
     }
 
-    /// Immediately shut down the history plant actor without a graceful logout.
+    /// Shut down the history plant actor without a graceful logout.
     ///
     /// Use when the connection is known to be dead and `disconnect()` would hang.
     /// All pending request callers will receive an error. The subscription channel
     /// receives a `ConnectionError` notification. Safe to call if the actor is already dead.
-    pub fn abort(&self) {
-        let _ = self.sender.try_send(HistoryPlantCommand::Abort);
+    ///
+    /// # How long this takes
+    ///
+    /// The abort is queued on the command channel and the actor takes commands
+    /// in order, so it waits behind everything already queued — up to 32
+    /// commands, each of which can hold the actor for the WebSocket send
+    /// timeout. It does not jump the queue. On a dead link the call is usually
+    /// released by the actor stopping itself once a ping goes unanswered, which
+    /// drops the receiver, rather than by the queue draining.
+    ///
+    /// # Cancel safety
+    ///
+    /// This method is **not** cancel safe. Nothing is queued if the returned
+    /// future is dropped before it completes, so an abort raced in `select!` or
+    /// wrapped in `timeout` is silently not delivered when the other branch
+    /// wins. Poll it to completion.
+    pub async fn abort(&self) {
+        let _ = self.sender.send(HistoryPlantCommand::Abort).await;
     }
 
     /// Load historical tick data for a specific symbol and time range.
@@ -1076,5 +1092,50 @@ mod tests {
             "late"
         );
         assert!(second.subscription_receiver.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn abort_queues_behind_a_full_command_channel() {
+        let (sender, mut command_receiver) = mpsc::channel(4);
+        let (sub_tx, sub_rx) = broadcast::channel(4);
+
+        let handle = RithmicHistoryPlantHandle {
+            sender,
+            subscription_sender: sub_tx,
+            subscription_receiver: sub_rx,
+        };
+
+        // Fill the command channel so there is no room for another command.
+        while handle
+            .sender
+            .try_send(HistoryPlantCommand::SetLogin)
+            .is_ok()
+        {}
+
+        let abort = handle.abort();
+        tokio::pin!(abort);
+
+        // Polled to completion here only if the abort gave up on the full
+        // channel; still pending means it is holding out for a slot.
+        assert!(
+            futures_util::poll!(abort.as_mut()).is_pending(),
+            "abort must wait for room rather than give up on a full channel"
+        );
+
+        // Free one slot; the abort claims it.
+        assert!(matches!(
+            command_receiver.recv().await,
+            Some(HistoryPlantCommand::SetLogin)
+        ));
+        assert!(futures_util::poll!(abort.as_mut()).is_ready());
+
+        let mut saw_abort = false;
+        while let Ok(command) = command_receiver.try_recv() {
+            if matches!(command, HistoryPlantCommand::Abort) {
+                saw_abort = true;
+            }
+        }
+
+        assert!(saw_abort, "abort must be queued once room appears");
     }
 }

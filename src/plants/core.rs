@@ -1298,6 +1298,9 @@ mod tests {
             RithmicMessage::ResponseHeartbeat(_)
         ));
         assert!(result[0].error.is_none());
+        // The decoder sets this, and the frame still reaches the responder
+        // rather than the channel the flag otherwise selects.
+        assert!(result[0].is_update);
     }
 
     /// Heartbeat with a populated `error` (e.g. rp_code rejection) must BOTH
