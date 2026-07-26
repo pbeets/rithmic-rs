@@ -199,15 +199,14 @@ impl TickerPlantCommand {
 /// # Connection Health Monitoring
 ///
 /// The subscription receiver provides connection health events:
-/// - **WebSocket ping/pong timeouts**: Primary indicator of dead connections (auto-detected)
-/// - **Heartbeat errors**: Only forwarded when Rithmic server returns an error (rare)
-/// - **Forced logout events**: Server-initiated disconnections requiring reconnection
-/// - **Market data updates**: Real-time trade and quote data
+/// - **WebSocket ping/pong timeouts**: primary dead-connection signal (auto-detected)
+/// - **Heartbeat errors**: forwarded as `HeartbeatTimeout`
+/// - **Forced logout events**: session terminated by the server
+/// - **Market data updates**: real-time trade and quote data
 ///
-/// **Note:** Heartbeat requests are sent automatically to comply with Rithmic's protocol,
-/// but successful responses are silently dropped. Only heartbeat errors from the server
-/// are forwarded as `HeartbeatTimeout` messages. The primary keep-alive mechanism is
-/// WebSocket ping/pong, which reliably detects dead connections 24/7.
+/// **Note:** Heartbeat requests are sent automatically for protocol compliance,
+/// but successful responses are dropped. Only heartbeat errors are forwarded as
+/// `HeartbeatTimeout` messages.
 ///
 /// # Example: Basic Usage
 ///
@@ -1379,11 +1378,8 @@ impl RithmicTickerPlantHandle {
 
     /// Subscribe to end-of-day price updates for a specific symbol.
     ///
-    /// Subscribes to `Close`, `Settlement`, `ProjectedSettlement`, and `AdjustedClose`.
-    /// The first three are delivered as real-time updates throughout the session.
-    /// `AdjustedClose` is a reference field and will not fire as a real-time callback;
-    /// it is included for end-of-session reconciliation use cases where its value is
-    /// populated after market close.
+    /// Sends the `Close`, `Settlement`, `ProjectedSettlement`, and
+    /// `AdjustedClose` update bits.
     ///
     /// # Arguments
     /// * `symbol` - The trading symbol (e.g., "ESH6")
@@ -1393,8 +1389,8 @@ impl RithmicTickerPlantHandle {
     /// The subscription response or an error message
     ///
     /// # Updates
-    /// After subscribing, close, settlement, and projected settlement updates arrive as
-    /// [`RithmicMessage::EndOfDayPrices`] on `subscription_receiver`.
+    /// Updates arrive as [`RithmicMessage::EndOfDayPrices`] on
+    /// `subscription_receiver`.
     pub async fn subscribe_end_of_day_prices(
         &self,
         symbol: &str,
@@ -1416,8 +1412,7 @@ impl RithmicTickerPlantHandle {
 
     /// Unsubscribe from end-of-day price updates for a specific symbol.
     ///
-    /// This reverses [`subscribe_end_of_day_prices`](Self::subscribe_end_of_day_prices),
-    /// including the non-streaming `AdjustedClose` reference field.
+    /// This reverses [`subscribe_end_of_day_prices`](Self::subscribe_end_of_day_prices).
     ///
     /// # Arguments
     /// * `symbol` - The trading symbol (e.g., "ESH6")

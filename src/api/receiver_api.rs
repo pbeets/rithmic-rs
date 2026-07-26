@@ -1480,16 +1480,12 @@ impl RithmicReceiverApi {
     }
 }
 
-// Per the Rithmic R|Protocol Reference Guide (§3 "Responses From Server"):
-// a response message carries either `rq_hndlr_rp_code` OR `rp_code`, never
-// both. The *presence* of `rq_hndlr_rp_code` means more frames follow;
-// `rp_code` marks the terminal frame. The value inside `rq_handler_rp_code`
-// is not the multipart signal — presence is. Keying on `[0] == "0"` silently
-// truncates multipart responses whose intermediate frames carry a non-"0"
-// status.
+// The *presence* of `rq_handler_rp_code` is the multipart signal, not the value
+// inside it: keying on `[0] == "0"` truncates multipart responses whose
+// intermediate frames carry a non-"0" status.
 //
-// proto3 `repeated string` has no "absent" vs "empty" distinction on the wire,
-// so "presence" is equivalent to "non-empty".
+// A `repeated string` has no "absent" vs "empty" distinction on the wire, so
+// "presence" is equivalent to "non-empty".
 fn has_multiple(rq_handler_rp_code: &[String]) -> bool {
     !rq_handler_rp_code.is_empty()
 }
@@ -1636,11 +1632,8 @@ mod tests {
     // has_multiple() unit tests
     // =========================================================================
 
-    // Per §3 of the Rithmic Reference Guide, presence of `rq_hndlr_rp_code`
-    // (not any particular value) signals "more frames follow". Our has_multiple
-    // mirrors that: any non-empty slice means more frames follow; an empty
-    // slice means the field wasn't populated (terminal frame, rp_code is what
-    // gets inspected instead).
+    // has_multiple keys on presence, not value: any non-empty slice means more
+    // frames follow; an empty slice means the field wasn't populated.
 
     #[test]
     fn has_multiple_true_for_zero_only() {
@@ -1859,10 +1852,8 @@ mod tests {
 
     #[test]
     fn search_symbols_multipart_uses_rq_handler_field_presence_not_value() {
-        // Per §3 of the Rithmic Reference Guide, presence of `rq_handler_rp_code`
-        // on an intermediate multipart frame means "more frames follow",
-        // regardless of the value inside. The terminal frame carries `rp_code`
-        // instead (the two fields are mutually exclusive on the wire).
+        // Presence of `rq_handler_rp_code` marks an intermediate frame,
+        // regardless of the value inside.
         let api = RithmicReceiverApi {
             source: "test".to_string(),
         };

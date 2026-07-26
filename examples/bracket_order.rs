@@ -5,8 +5,7 @@
 //! - Profit target: limit order to take profits at a specified tick distance
 //! - Stop loss: stop order to limit losses at a specified tick distance
 //!
-//! When the entry fills, Rithmic automatically creates and links the profit and stop orders.
-//! When either the profit or stop fills, the other is automatically canceled.
+//! The listener below prints each order notification as it arrives.
 //!
 //! Run with: cargo run --example bracket_order
 
@@ -26,8 +25,7 @@ fn spawn_order_listener(mut receiver: SubscriptionFilter) {
             match receiver.recv().await {
                 Ok(update) => {
                     if let Some(error) = &update.error {
-                        info!("Connection error: {}", error);
-                        break;
+                        info!("Message error: {}", error);
                     }
 
                     match &update.message {

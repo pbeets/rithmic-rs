@@ -1,27 +1,24 @@
 use std::fmt;
 
-/// Structured server-side rejection preserving both the Rithmic `rp_code`
-/// numeric code and the human-readable message.
+/// A request the server turned down, carrying the numeric code and the
+/// human-readable message separately so callers can branch on the code without
+/// parsing the message text.
 ///
-/// Rithmic returns request-level errors as a tuple `rp_code = [code, message]`;
-/// this struct keeps both pieces accessible so callers can branch on the
-/// numeric code (e.g. `"1039"` for "FCM Id field is not received") without
-/// parsing the string. The raw payload is preserved on [`Self::rp_code`] so
-/// consumers see exactly what the wire carried.
-///
-/// A populated `RithmicRequestError` is a **protocol-level** outcome — not a
-/// transport/connection failure. Receiving one must NOT trigger reconnection.
+/// This is a request-level outcome, not a connection failure. Receiving one
+/// does not mean the connection is unhealthy, so it is not a reason to
+/// reconnect.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct RithmicRequestError {
-    /// Raw rp_code payload exactly as received from Rithmic.
+    /// The response code exactly as received, before it is split into
+    /// [`Self::code`] and [`Self::message`].
     pub rp_code: Vec<String>,
-    /// First rp_code element when present.
+    /// Numeric code, when present.
     pub code: Option<String>,
-    /// Second rp_code element when present.
+    /// Human-readable message, when present.
     ///
-    /// `None` when the server emitted a single-element rp_code (e.g. `["5"]`).
-    /// Symmetric with [`Self::code`].
+    /// `None` when the response carried a code with no message. Symmetric with
+    /// [`Self::code`].
     pub message: Option<String>,
 }
 
@@ -55,22 +52,46 @@ impl std::error::Error for RithmicRequestError {}
 
 /// Typed errors returned by all plant handle methods.
 ///
+/// There are three outcomes to handle, not two:
+///
+/// - `Ok(resp)` with `resp.error == None` — the request succeeded.
+/// - `Ok(resp)` with `resp.error == Some(..)` — the request reached the server
+///   and the server turned it down.
+/// - `Err(..)` — the request could not be completed: an argument was invalid,
+///   the connection dropped, or no response came back.
+///
+/// The second case is the one that catches people out: a request the server
+/// turned down still returns `Ok`. Code that only checks for `Err` will treat
+/// it as a success. Check [`RithmicResponse::error`] to tell the first two
+/// apart.
+///
+/// `login` is the one call that returns it as
+/// `Err(`[`RequestRejected`](Self::RequestRejected)`)` instead — both cases are
+/// shown below.
+///
+/// [`RithmicResponse::error`]: crate::api::response::RithmicResponse::error
+///
 /// ```ignore
+/// // A `subscribe` the server turns down arrives as `Ok` with `error` set.
 /// match handle.subscribe("ESH6", "CME").await {
-///     Ok(resp) => { /* success */ }
+///     Ok(resp) => match &resp.error {
+///         Some(err) => eprintln!("rejected: {err}"),
+///         None => { /* success */ }
+///     },
 ///     Err(RithmicError::ConnectionClosed | RithmicError::SendFailed) => {
 ///         handle.abort();
 ///         // reconnect — see examples/reconnect.rs
 ///     }
-///     Err(RithmicError::InvalidArgument(msg)) => eprintln!("bad input: {msg}"),
-///     Err(RithmicError::RequestRejected(err)) => {
-///         eprintln!(
-///             "rejected code={} msg={}",
-///             err.code.as_deref().unwrap_or("?"),
-///             err.message.as_deref().unwrap_or(""),
-///         );
-///     }
 ///     Err(e) => eprintln!("{e}"),
+/// }
+///
+/// // A `login` the server turns down arrives as `Err`.
+/// if let Err(RithmicError::RequestRejected(err)) = handle.login().await {
+///     eprintln!(
+///         "login rejected code={} msg={}",
+///         err.code.as_deref().unwrap_or("?"),
+///         err.message.as_deref().unwrap_or(""),
+///     );
 /// }
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -90,12 +111,12 @@ pub enum RithmicError {
     SendFailed,
     /// Server returned an empty response where at least one was expected.
     EmptyResponse,
-    /// Structured protocol-level rejection preserving the Rithmic `rp_code`
-    /// tuple. Not a reconnect signal — request-level only.
+    /// The server turned the request down, with the code and message it gave.
+    /// Request-level only — not a reason to reconnect.
     RequestRejected(RithmicRequestError),
-    /// Non-transport, non-rp_code response failure (e.g. decode failures or
-    /// other protocol-level outcomes that don't carry `rp_code`). Not a
-    /// reconnect signal.
+    /// A response arrived but could not be turned into a result — a decode
+    /// failure, or a failure the server reported without a code. Not a reason
+    /// to reconnect.
     ///
     /// An unrecognized `template_id` does not produce this error; it arrives as
     /// [`RithmicMessage::UnknownTemplate`](crate::rti::messages::RithmicMessage::UnknownTemplate).

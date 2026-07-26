@@ -33,8 +33,6 @@ pub struct LoginConfig {
 
 /// One leg of an OCO (One-Cancels-Other) order pair.
 ///
-/// When one leg fills, the other is automatically canceled.
-///
 /// # Example
 ///
 /// ```ignore
@@ -89,9 +87,6 @@ pub struct RithmicOcoOrderLeg {
 }
 
 /// Entry order with linked profit target and stop loss orders.
-///
-/// When the entry fills, the system creates the profit target and stop loss
-/// orders automatically.
 ///
 /// # Example
 ///
@@ -178,6 +173,10 @@ pub struct RithmicIfTouchedTrigger {
 ///
 /// # Example
 ///
+/// This struct is `#[non_exhaustive]`, so downstream crates cannot build it with
+/// a struct expression — including functional-update (`..Default::default()`)
+/// syntax. Start from [`Default`] and assign fields:
+///
 /// ```ignore
 /// use rithmic_rs::{
 ///     BracketCondition, BracketDuration, BracketPriceField, BracketPriceType,
@@ -185,37 +184,39 @@ pub struct RithmicIfTouchedTrigger {
 ///     RithmicIfTouchedTrigger,
 /// };
 ///
-/// let order = RithmicAdvancedBracketOrder {
-///     action: BracketTransactionType::Buy,
-///     duration: BracketDuration::Gtc,
+/// let mut order = RithmicAdvancedBracketOrder::default();
+///
+/// order.action = BracketTransactionType::Buy;
+/// order.duration = BracketDuration::Gtc;
+/// order.exchange = "CME".to_string();
+/// order.localid = "advanced-bracket-1".to_string();
+/// order.price_type = BracketPriceType::StopLimit;
+/// order.price = Some(5000.25);
+/// order.trigger_price = Some(4999.75);
+/// order.quantity = 3;
+/// order.symbol = "ESM6".to_string();
+///
+/// order.bracket_type = BracketType::TargetAndStop;
+/// order.target_quantity = vec![2, 1];
+/// order.target_ticks = vec![16, 24];
+/// order.stop_quantity = vec![3];
+/// order.stop_ticks = vec![8];
+///
+/// order.if_touched = Some(RithmicIfTouchedTrigger {
+///     symbol: "NQM6".to_string(),
 ///     exchange: "CME".to_string(),
-///     localid: "advanced-bracket-1".to_string(),
-///     price_type: BracketPriceType::StopLimit,
-///     price: Some(5000.25),
-///     trigger_price: Some(4999.75),
-///     quantity: 3,
-///     symbol: "ESM6".to_string(),
-///     bracket_type: BracketType::TargetAndStop,
-///     target_quantity: vec![2, 1],
-///     target_ticks: vec![16, 24],
-///     stop_quantity: vec![3],
-///     stop_ticks: vec![8],
-///     if_touched: Some(RithmicIfTouchedTrigger {
-///         symbol: "NQM6".to_string(),
-///         exchange: "CME".to_string(),
-///         condition: BracketCondition::GreaterThanEqualTo,
-///         price_field: BracketPriceField::TradePrice,
-///         price: 18250.5,
-///     }),
-///     break_even_ticks: Some(2),
-///     break_even_trigger_ticks: Some(10),
-///     trailing_stop_trigger_ticks: Some(12),
-///     target_market_order_if_touched: Some(true),
-///     stop_market_on_reject: Some(true),
-///     release_at_ssboe: Some(35900),
-///     cancel_after_secs: Some(120),
-///     ..Default::default()
-/// };
+///     condition: BracketCondition::GreaterThanEqualTo,
+///     price_field: BracketPriceField::TradePrice,
+///     price: 18250.5,
+/// });
+///
+/// order.break_even_ticks = Some(2);
+/// order.break_even_trigger_ticks = Some(10);
+/// order.trailing_stop_trigger_ticks = Some(12);
+/// order.target_market_order_if_touched = Some(true);
+/// order.stop_market_on_reject = Some(true);
+/// order.release_at_ssboe = Some(35900);
+/// order.cancel_after_secs = Some(120);
 /// ```
 #[non_exhaustive]
 #[derive(Debug, Clone)]
@@ -238,7 +239,7 @@ pub struct RithmicAdvancedBracketOrder {
     ///
     /// For a coherent bracket, this should equal the sum of
     /// `target_quantity` across all target legs. The crate does not validate
-    /// this invariant; Rithmic rejects inconsistent combinations.
+    /// this invariant.
     pub quantity: i32,
     /// Trading symbol (e.g., "ESH6").
     pub symbol: String,
@@ -414,9 +415,6 @@ pub struct RithmicCancelOrder {
 }
 
 /// Configuration for trailing stop orders.
-///
-/// When a trailing stop is configured, the stop price follows the market
-/// by the specified number of ticks.
 ///
 /// # Example
 ///

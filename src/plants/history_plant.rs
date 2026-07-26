@@ -700,13 +700,6 @@ impl RithmicHistoryPlantHandle {
     ///
     /// # Returns
     /// The historical tick data responses, or a [`RithmicError`] on failure.
-    ///
-    /// # Note
-    ///
-    /// Large requests may be truncated by the server. If the response contains a
-    /// round number of bars (e.g., 10 000) or does not cover the full time range,
-    /// use the `request_key` from the response with `request_resume_bars` on the
-    /// sender API to fetch the remaining data.
     pub async fn load_ticks(
         &self,
         symbol: String,
@@ -736,13 +729,6 @@ impl RithmicHistoryPlantHandle {
     /// # Errors
     /// * [`RithmicError::InvalidArgument`] if `bar_length` is 0.
     /// * [`RithmicError::ConnectionClosed`] if the history plant has shut down.
-    ///
-    /// # Note
-    ///
-    /// Large requests may be truncated by the server. If the response contains a
-    /// round number of bars (e.g., 10 000) or does not cover the full time range,
-    /// use the `request_key` from the response with `request_resume_bars` on the
-    /// sender API to fetch the remaining data.
     pub async fn load_tick_bars(
         &self,
         symbol: String,
@@ -853,12 +839,10 @@ impl RithmicHistoryPlantHandle {
         rx.await.map_err(|_| RithmicError::ConnectionClosed)?
     }
 
-    /// Resume a previously truncated bars request
-    ///
-    /// Use this when a bars request was truncated due to data limits.
+    /// Resume a bars request from a previous response's `request_key`.
     ///
     /// # Arguments
-    /// * `request_key` - The request key from the previous truncated response
+    /// * `request_key` - The `request_key` carried on the previous response
     ///
     /// # Returns
     /// The remaining bar data responses or an error message

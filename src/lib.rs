@@ -108,38 +108,37 @@
 //!
 //! ## Error Handling
 //!
-//! All plant handle methods return [`Result<_, RithmicError>`]. The [`RithmicError`] enum
-//! lets you programmatically distinguish error kinds:
+//! All plant handle methods return [`Result<_, RithmicError>`]. A request the
+//! server turns down still returns `Ok` — check `RithmicResponse::error` for it.
+//! `login` is the one call that returns it as `Err`:
 //!
 //! ```ignore
 //! use rithmic_rs::RithmicError;
 //!
 //! match handle.subscribe("ESM6", "CME").await {
-//!     Ok(resp) => { /* success */ }
+//!     Ok(resp) => match &resp.error {
+//!         Some(err) => eprintln!("Server rejected: {err}"),
+//!         None => { /* success */ }
+//!     },
 //!     Err(RithmicError::ConnectionClosed | RithmicError::SendFailed) => {
 //!         handle.abort();
 //!         // reconnect — see examples/reconnect.rs
 //!     }
-//!     Err(RithmicError::RequestRejected(err)) => {
-//!         eprintln!(
-//!             "Server rejected: code={} msg={}",
-//!             err.code.as_deref().unwrap_or("?"),
-//!             err.message.as_deref().unwrap_or(""),
-//!         );
-//!     }
-//!     Err(RithmicError::ProtocolError(msg)) => {
-//!         eprintln!("Protocol error: {msg}");
-//!     }
 //!     Err(e) => eprintln!("{e}"),
+//! }
+//!
+//! if let Err(RithmicError::RequestRejected(err)) = handle.login().await {
+//!     eprintln!(
+//!         "Login rejected: code={} msg={}",
+//!         err.code.as_deref().unwrap_or("?"),
+//!         err.message.as_deref().unwrap_or(""),
+//!     );
 //! }
 //! ```
 //!
 //! For inspecting a `RithmicResponse` directly, match on `response.error` — it
-//! is `Option<RithmicError>` with `RequestRejected` for rp_code rejections and
-//! `ProtocolError` for other non-transport failures. Use
-//! [`RithmicError::is_connection_issue`] to distinguish transport-level events
-//! that warrant reconnection. The raw rp_code payload is available via
-//! `response.rp_code()`, `response.rp_code_num()`, and `response.rp_code_text()`.
+//! is `Option<RithmicError>`. Use [`RithmicError::is_connection_issue`] to
+//! distinguish transport-level events that warrant reconnection.
 //!
 //! A graceful `disconnect().await` is separate from that reconnect path: it
 //! shuts the plant down without sending synthetic `HeartbeatTimeout` or

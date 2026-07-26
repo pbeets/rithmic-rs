@@ -99,7 +99,7 @@ let front_month = handle.get_front_month_contract("ES", "CME", false).await?;
 ```rust
 use rithmic_rs::{
     ConnectStrategy, NewOrderPriceType, NewOrderTransactionType, RithmicAccount,
-    RithmicConfig, RithmicEnv, RithmicOrder, RithmicOrderPlant,
+    RithmicCancelOrder, RithmicConfig, RithmicEnv, RithmicOrder, RithmicOrderPlant,
 };
 
 let config = RithmicConfig::from_env(RithmicEnv::Demo)?;
@@ -107,6 +107,7 @@ let account = RithmicAccount::from_env(RithmicEnv::Demo)?;
 let plant = RithmicOrderPlant::connect(&config, ConnectStrategy::Retry).await?;
 let mut handle = plant.get_handle(&account);
 handle.login().await?;
+handle.subscribe_order_updates().await?;
 
 // Place orders using the RithmicOrder API
 let order = RithmicOrder {
@@ -122,15 +123,20 @@ let order = RithmicOrder {
 handle.place_order(order).await?;
 
 // Bracket orders, OCO orders, advanced bracket orders
-handle.place_bracket_order(...).await?;
+handle.place_bracket_order(bracket_order).await?;
 handle.place_advanced_bracket_order(advanced_order).await?;
 
-// Manage positions
-handle.cancel_order(order_id).await?;
+// Cancel by the `basket_id` carried on the order notification
+handle.cancel_order(RithmicCancelOrder { id: basket_id }).await?;
+
+// Flatten by instrument, not by order
 handle.exit_position("ESM6", "CME").await?;
 ```
 
-For multi-account workflows, create one [`RithmicAccount`] per account and call
+Order state arrives on the subscription stream as `RithmicOrderNotification`
+updates, not in the response to the call.
+
+For multi-account workflows, create one `RithmicAccount` per account and call
 `get_handle(&account)` for each handle you need.
 
 ### Unrecognized message templates
@@ -155,12 +161,21 @@ if let RithmicMessage::UnknownTemplate(frame) = &update.message {
 ### History Plant
 
 ```rust
-// Load historical data (bar_type, period, start_time, end_time as i32 unix seconds)
-let bars = handle.load_time_bars("ESM6", "CME", BarType::MinuteBar, 5, start, end).await?;
-let ticks = handle.load_ticks("ESM6", "CME", start, end).await?;
+use rithmic_rs::rti::request_time_bar_replay::BarType;
+
+let symbol = "ESM6".to_string(); // Update to current front-month ES contract
+let exchange = "CME".to_string();
+
+// start_time / end_time are i32 unix seconds
+let bars = handle
+    .load_time_bars(symbol.clone(), exchange.clone(), BarType::MinuteBar, 5, start, end)
+    .await?;
+let ticks = handle
+    .load_ticks(symbol.clone(), exchange.clone(), start, end)
+    .await?;
 
 // Load N-tick bars (e.g., 5-tick bars)
-let tick_bars = handle.load_tick_bars("ESM6", "CME", 5, start, end).await?;
+let tick_bars = handle.load_tick_bars(symbol, exchange, 5, start, end).await?;
 ```
 
 ### PnL Plant
@@ -183,38 +198,34 @@ let snapshot = handle.pnl_position_snapshots().await?;
 
 ## Error Handling
 
-All plant handle methods return `Result<_, RithmicError>` with typed variants you can match on for recovery decisions:
-
 ```rust
 use rithmic_rs::RithmicError;
 
 match handle.subscribe("ESM6", "CME").await {
-    Ok(resp) => { /* success */ }
+    Ok(resp) => match &resp.error {
+        Some(err) => eprintln!("Server rejected: {}", err),
+        None => { /* success */ }
+    },
     Err(RithmicError::ConnectionClosed | RithmicError::SendFailed) => {
         handle.abort();
         // reconnect — see examples/reconnect.rs
     }
-    Err(RithmicError::InvalidArgument(msg)) => eprintln!("Bad argument: {}", msg),
-    Err(RithmicError::RequestRejected(err)) => {
-        eprintln!(
-            "Server rejected: code={} msg={}",
-            err.code.as_deref().unwrap_or("?"),
-            err.message.as_deref().unwrap_or(""),
-        );
-    }
-    Err(RithmicError::ProtocolError(msg)) => eprintln!("Protocol error: {}", msg),
     Err(e) => eprintln!("{}", e),
+}
+
+if let Err(RithmicError::RequestRejected(err)) = handle.login().await {
+    eprintln!(
+        "Login rejected: code={} msg={}",
+        err.code.as_deref().unwrap_or("?"),
+        err.message.as_deref().unwrap_or(""),
+    );
 }
 ```
 
 When inspecting a `RithmicResponse` directly (for example, entries from a
 subscription broadcast), match on `response.error` — it is `Option<RithmicError>`.
-Use [`RithmicError::is_connection_issue`] to distinguish transport failures from
-protocol rejections. The raw rp_code payload is also accessible:
-
-- `response.rp_code() -> Option<&[String]>` — full raw payload as received.
-- `response.rp_code_num() -> Option<&str>` — numeric code (first element).
-- `response.rp_code_text() -> Option<&str>` — human message (second element).
+Use `RithmicError::is_connection_issue` to distinguish transport failures from
+requests the server turned down.
 
 `RithmicError` implements `std::error::Error`, so `?` works in functions returning `Box<dyn Error>`.
 

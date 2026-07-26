@@ -806,13 +806,6 @@ impl RithmicSenderApi {
     /// # Returns
     ///
     /// A tuple containing the request buffer and the message id.
-    ///
-    /// # Note
-    ///
-    /// Large data requests may be truncated by the server. If the response contains
-    /// a round number of bars (e.g., 10 000) or does not cover the entire requested
-    /// time period, use [`request_resume_bars`](Self::request_resume_bars) with the
-    /// `request_key` from the response to fetch the remaining data.
     pub fn request_tick_bar_replay(
         &mut self,
         symbol: &str,
@@ -855,13 +848,6 @@ impl RithmicSenderApi {
     /// # Returns
     ///
     /// A tuple containing the request buffer and the message id
-    ///
-    /// # Note
-    ///
-    /// Large data requests may be truncated by the server. If the response contains
-    /// a round number of bars (e.g., 10000) or does not cover the entire requested
-    /// time period, use [`request_resume_bars`](Self::request_resume_bars) with the
-    /// `request_key` from the response to fetch the remaining data.
     pub fn request_time_bar_replay(
         &mut self,
         symbol: &str,
@@ -905,13 +891,6 @@ impl RithmicSenderApi {
     ///
     /// # Returns
     /// A tuple of (serialized request buffer, request ID)
-    ///
-    /// # Note
-    ///
-    /// Large data requests may be truncated by the server. If the response contains
-    /// a round number of bars (e.g., 10000) or does not cover the entire requested
-    /// time period, use [`request_resume_bars`](Self::request_resume_bars) with the
-    /// `request_key` from the response to fetch the remaining data.
     #[allow(clippy::too_many_arguments)]
     pub fn request_volume_profile_minute_bars(
         &mut self,
@@ -1405,8 +1384,7 @@ impl RithmicSenderApi {
 
     /// Request an OCO (One Cancels Other) order pair
     ///
-    /// Places two orders where if one is filled, the other is automatically cancelled.
-    /// This is commonly used for bracket-style trading (profit target and stop loss).
+    /// Builds a `RequestOcoOrder` carrying the two supplied legs.
     ///
     /// # Arguments
     /// * `order1` - First order leg
@@ -1467,8 +1445,7 @@ impl RithmicSenderApi {
 
     /// Request to link multiple orders together
     ///
-    /// Links orders so they are managed as a group. When one order is cancelled,
-    /// all linked orders are cancelled.
+    /// Links orders together by basket id.
     ///
     /// # Arguments
     /// * `basket_ids` - Vector of basket IDs to link together
@@ -1496,8 +1473,6 @@ impl RithmicSenderApi {
     }
 
     /// Request the easy-to-borrow list for short selling
-    ///
-    /// Returns a list of securities that are readily available for short selling.
     ///
     /// # Arguments
     /// * `request_type` - Subscribe or Unsubscribe from updates

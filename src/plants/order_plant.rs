@@ -225,10 +225,10 @@ pub(crate) enum OrderPlantCommand {
 /// # Connection Health Monitoring
 ///
 /// The subscription receiver provides connection health events:
-/// - **WebSocket ping/pong timeouts**: Primary indicator of dead connections (auto-detected)
-/// - **Heartbeat errors**: Only forwarded when Rithmic server returns an error (rare)
-/// - **Forced logout events**: Server-initiated disconnections requiring reconnection
-/// - **Order notifications**: Real-time order fills, cancellations, and status changes
+/// - **WebSocket ping/pong timeouts**: primary dead-connection signal (auto-detected)
+/// - **Heartbeat errors**: forwarded as `HeartbeatTimeout`
+/// - **Forced logout events**: session terminated by the server
+/// - **Order notifications**: real-time order fills, cancellations, and status changes
 ///
 /// **Note:** Heartbeat requests are sent automatically for protocol compliance,
 /// but successful responses are silently dropped. Only heartbeat errors from the server
@@ -1422,6 +1422,14 @@ impl RithmicOrderPlantHandle {
 
     /// Cancel an order
     ///
+    /// Resolves when the final frame of the response sequence arrives. That
+    /// result describes the request, not the order. Order state arrives
+    /// separately as [`RithmicOrderNotification`] updates on the subscription
+    /// stream; those carry an empty `request_id` and are broadcast to
+    /// subscribers, so they never resolve this call.
+    ///
+    /// [`RithmicOrderNotification`]: crate::rti::messages::RithmicMessage::RithmicOrderNotification
+    ///
     /// # Arguments
     /// * `order` - The cancel order parameters
     ///
@@ -1503,6 +1511,9 @@ impl RithmicOrderPlantHandle {
     }
 
     /// Request a list of all open orders
+    ///
+    /// The response is a `ResponseShowOrders`, which has no field for the
+    /// orders themselves.
     ///
     /// # Returns
     /// The order list response or an error message
@@ -1753,7 +1764,7 @@ impl RithmicOrderPlantHandle {
 
     /// Place an OCO (One Cancels Other) order pair
     ///
-    /// When one order is filled, the other is automatically cancelled.
+    /// This wrapper submits exactly two legs.
     ///
     /// # Arguments
     /// * `order1` - First order leg
@@ -1818,6 +1829,9 @@ impl RithmicOrderPlantHandle {
     ///
     /// This closes all open positions for the specified symbol/exchange.
     ///
+    /// Resolves when the final frame of the response sequence arrives. That
+    /// result describes the request, not the resulting orders.
+    ///
     /// # Arguments
     /// * `symbol` - The trading symbol (e.g., "ESH6")
     /// * `exchange` - The exchange code (e.g., "CME")
@@ -1844,8 +1858,6 @@ impl RithmicOrderPlantHandle {
     }
 
     /// Link multiple orders together
-    ///
-    /// When one linked order is cancelled, all linked orders are cancelled.
     ///
     /// # Arguments
     /// * `basket_ids` - Vector of basket IDs to link together

@@ -373,10 +373,10 @@ where
                 }
             }
             Ok(Message::Ping(data)) => {
-                // RFC 6455 §5.5.3: a Ping must be answered with a Pong carrying
-                // the same payload.  With a split sink/stream the tungstenite
-                // internal write buffer is only flushed when the sink side is
-                // polled, so we send the Pong explicitly to guarantee delivery.
+                // Answer with a Pong carrying the same payload. With a split
+                // sink/stream the tungstenite internal write buffer is only
+                // flushed when the sink side is polled, so we send the Pong
+                // explicitly to guarantee delivery.
                 let source = self.rithmic_receiver_api.source.clone();
                 match send_with_timeout(
                     &mut self.rithmic_sender,

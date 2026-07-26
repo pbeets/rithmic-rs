@@ -22,6 +22,14 @@ Additive: no public API is removed or changed, so this lands in a 2.x minor rele
 
   This is a behavioural change, not a source-breaking one: code matching `RithmicMessage::Unknown` still compiles, but will no longer see unrecognized templates. Match `UnknownTemplate` for those; `Unknown` now means only that a frame failed to decode.
 - A frame carrying no `template_id` is still an error: prost does not enforce proto2 `required` on decode, so the missing field arrives as `0`, leaving no template to route it to.
+- **Documentation pass across the crate.** Comments and rustdoc now stick to what the code does, without describing server behaviour, citing external documents, or assuming familiarity with the wire protocol. No API changed.
+- **`RithmicAdvancedBracketOrder`'s rustdoc example no longer shows code that cannot compile downstream.** The struct is `#[non_exhaustive]`, so external crates cannot build it with a struct expression — including `..Default::default()` functional-update syntax. The example now starts from `Default` and assigns fields. It is fenced ```ignore, so nothing caught this.
+- **README samples no longer show incorrect API usage.** `cancel_order` takes a `RithmicCancelOrder`, not a bare id, and `place_bracket_order` had a literal `...` for its argument. The history plant block passed `&str` where those methods require owned `String`s and used `BarType` without importing it — it is not re-exported at the crate root. The blocks are still illustrative fragments rather than standalone programs, and are not doctested.
+
+### Fixed
+
+- **`examples/bracket_order.rs` no longer exits its listener on a recoverable error.** It broke out of the loop on any populated `update.error`, which a per-message decode failure also sets. Breaking there was redundant for the fatal cases — transport failure, forced logout and heartbeat timeout each arrive as their own `RithmicMessage` variant, which the listener already matches — so its only effect was that a single undecodable frame silently stopped order updates on a live bracket.
+- **Samples that handled a turned-down `subscribe` in an `Err` arm.** That arm can never match, so a `subscribe` the server turned down was reported as a success. Affects the crate-root docs, the `RithmicError` rustdoc, the README, `examples/reconnect.rs` and the 2.0.0 migration guide below. All now check `resp.error`, and show `Err(RequestRejected)` on `login`, which is the one call that returns it.
 
 ## [2.0.0]
 
@@ -54,23 +62,25 @@ match handle.subscribe("ESH6", "CME").await {
 After (2.0):
 ```rust
 match handle.subscribe("ESH6", "CME").await {
-    Ok(_) => { /* ... */ }
-    Err(RithmicError::RequestRejected(err)) => {
-        // Structured rp_code rejection — do NOT reconnect.
-        eprintln!(
-            "rejected code={} msg={}",
-            err.code.as_deref().unwrap_or("?"),
-            err.message.as_deref().unwrap_or(""),
-        );
-    }
-    Err(RithmicError::ProtocolError(msg)) => {
-        // Decode or non-rp_code protocol failure — do NOT reconnect.
-        eprintln!("protocol error: {msg}");
-    }
+    Ok(resp) => match &resp.error {
+        // A rejection now arrives here, not in an `Err` arm. Decode failures
+        // populate `error` too. Neither is a reconnect signal.
+        Some(err) => eprintln!("request failed: {err}"),
+        None => { /* success */ }
+    },
     Err(RithmicError::ConnectionClosed | RithmicError::SendFailed) => {
         // Transport failure — reconnect.
     }
     Err(e) => eprintln!("{e}"),
+}
+
+// `login` is the one call that returns this as `Err`:
+if let Err(RithmicError::RequestRejected(err)) = handle.login().await {
+    eprintln!(
+        "login rejected code={} msg={}",
+        err.code.as_deref().unwrap_or("?"),
+        err.message.as_deref().unwrap_or(""),
+    );
 }
 ```
 
@@ -111,8 +121,8 @@ match handle.subscribe("ESH6", "CME").await {
 - **Ping/heartbeat SEND transport failures** broadcast as `RithmicMessage::HeartbeatTimeout` (same signal as a true heartbeat timeout) instead of `ConnectionError`.
 - **`send_or_fail` timeout now drains all pending requests** and broadcasts `ConnectionError` before the next ping/heartbeat stops the actor. Previously only the single failing request was notified; remaining pending oneshots could hang on a half-open TCP connection since the poisoned sink is not guaranteed to surface through the reader.
 - **`RithmicError::SendFailed`** now also covers send timeouts — all plant WebSocket sends are bounded to 10 seconds; a hung sink surfaces as `SendFailed` rather than blocking the actor indefinitely
-- **`classify_rp_code` accepts `["0", <trailing>]` as success.** Per §2.1.b of the Rithmic R|Protocol Reference Guide, `rp_code[0] == "0"` is the authoritative success signal regardless of whether the server appends a trailing annotation. Previously `["0", "ok"]` was mis-classified as a rejection.
-- **`has_multiple` (multipart framing) now keys on presence, not value.** Per §3 of the Reference Guide, the presence of `rq_handler_rp_code` signals "more frames follow"; the value inside is not the multipart signal. Previously keying on `[0] == "0"` silently truncated multipart responses whose intermediate frames carried a non-`"0"` value.
+- **`classify_rp_code` accepts `["0", <trailing>]` as success.** Only the first element decides success; a trailing element does not change it. Previously `["0", "ok"]` was mis-classified as a rejection.
+- **`has_multiple` (multipart framing) now keys on presence, not value.** The presence of `rq_handler_rp_code` marks an intermediate frame; the value inside is not the multipart signal. Previously keying on `[0] == "0"` silently truncated multipart responses whose intermediate frames carried a non-`"0"` value.
 - **`load_ticks`** now delegates to `load_tick_bars` with `bar_length = 1` — no behavioral change for existing callers
 - **`request_tick_bar_replay`** on `RithmicSenderApi` now accepts a `bar_type_specifier` parameter instead of hard-coding `"1"`
 - **`examples/reconnect.rs` handles broadcast `RecvError::Lagged` explicitly** — a slow consumer that drops a connection-health frame through buffer wrap now logs and reconnects instead of silently exiting the read loop.

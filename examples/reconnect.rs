@@ -3,10 +3,10 @@
 //! Sketches a production-shaped connection supervisor:
 //!
 //! - Transport failures reconnect with exponential backoff (capped at 60s).
-//! - `RequestRejected` on **login** is terminal (bad credentials / entitlements) —
-//!   retrying risks account lockout, so we log, disconnect, and exit.
-//! - `RequestRejected` on **subscribe** is per-symbol (e.g. unknown instrument) —
-//!   log it and keep going with the rest of the session.
+//! - `login` returns `Err(RequestRejected)` on a rejection; this example exits
+//!   rather than retrying.
+//! - `subscribe` returns `Ok` with `RithmicResponse::error` set on a rejection;
+//!   this example logs it and moves on to the next symbol.
 //! - Backoff resets after a session has produced real data for long enough to be
 //!   considered healthy, so a long-lived connection that drops doesn't inherit
 //!   a large backoff from earlier failures.
@@ -111,20 +111,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         for (symbol, exchange) in &subscriptions {
             match handle.subscribe(symbol, exchange).await {
-                Ok(_) => info!("Subscribed to {symbol} on {exchange}"),
+                Ok(resp) => match &resp.error {
+                    Some(err) => {
+                        warn!("Subscribe rejected for {symbol}/{exchange}: {err} — skipping")
+                    }
+                    None => info!("Subscribed to {symbol} on {exchange}"),
+                },
                 Err(RithmicError::ConnectionClosed | RithmicError::SendFailed) => {
                     warn!("Subscribe failed (connection lost), reconnecting…");
 
                     connection_lost = true;
 
                     break;
-                }
-                Err(RithmicError::RequestRejected(err)) => {
-                    warn!(
-                        "Subscribe rejected for {symbol}/{exchange}: code={} msg={} — skipping",
-                        err.code.as_deref().unwrap_or("?"),
-                        err.message.as_deref().unwrap_or(""),
-                    );
                 }
                 Err(e) => warn!("Subscribe error for {symbol}/{exchange}: {e}"),
             }

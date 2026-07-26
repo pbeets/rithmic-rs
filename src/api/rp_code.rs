@@ -125,9 +125,9 @@ pub(crate) fn response_rp_code_slice(message: &RithmicMessage) -> Option<&[Strin
 // decode test — e.g. `["7", "an error occurred while parsing data."]` shares
 // code "7" but is a real error.
 pub(crate) fn classify_rp_code(rp_code: &[String]) -> RpCodeClassification {
-    // Per §2.1.b, `rp_code[0] == "0"` is the authoritative success signal.
-    // Empty rp_code = success (defensive — multipart intermediates don't carry
-    // rp_code and short-circuit earlier, but this covers any edge case).
+    // `rp_code[0] == "0"` is the success signal. Empty rp_code is also treated
+    // as success (defensive — multipart intermediates don't carry rp_code and
+    // short-circuit earlier, but this covers any edge case).
     if rp_code.is_empty() || rp_code[0] == "0" {
         return RpCodeClassification::Success;
     }
@@ -290,10 +290,8 @@ mod tests {
 
     #[test]
     fn classify_rp_code_zero_with_trailing_annotation_is_success() {
-        // Per §2.1.b of the Rithmic Reference Guide, rp_code[0] == "0" is the
-        // authoritative success signal. A server that annotates success with
-        // a trailing message (e.g. ["0", "ok"] or ["0", ""]) must not be
-        // silently reclassified as a rejection.
+        // Only rp_code[0] decides success; a trailing element (e.g. ["0", "ok"]
+        // or ["0", ""]) must not be reclassified as a rejection.
         assert_eq!(
             classify_rp_code(&["0".to_string(), "ok".to_string()]),
             RpCodeClassification::Success
