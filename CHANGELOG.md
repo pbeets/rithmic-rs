@@ -7,7 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Additive: no public API is removed or changed, so this lands in a 2.x minor release.
+Public struct fields and a method signature change, so this lands in a major release.
+
+### Breaking Changes
+
+- **`RithmicOcoOrderLeg` gains a required `trailing_stop: Option<TrailingStop>` field.** Add
+  `trailing_stop: None` to existing literals to preserve prior behavior.
+- **`TrailingStop` gains a required `trail_by_price_id: i32` field.** It is mandatory for Rithmic to
+  accept a trailing stop.
+- **`RithmicModifyOrder` gains a required `trigger_price: Option<f64>` field.** Add `trigger_price: None`
+  to preserve the prior stop-type default behavior.
+- **`RithmicOrderPlantHandle::subscribe_account_rms_updates` gains a required `update_bits` parameter.**
+  Pass `vec![]` for the prior behavior, or `vec![RmsUpdateBits::AutoLiqThresholdCurrentValue]` to
+  stream auto-liq threshold updates.
 
 ### Added
 
@@ -15,6 +27,21 @@ Additive: no public API is removed or changed, so this lands in a 2.x minor rele
 - **`UnknownTemplateMessage::decode_as<M>()`** — decode the payload into a caller-supplied `prost` type, so an unmapped template can be handled downstream without a change here. `Ok` is not proof the type was guessed right: protobuf skips undeclared fields, so an unrelated payload usually decodes into a mostly-empty value.
 - **`UnknownTemplateMessage::payload_hex()` / `from_payload_hex()`** — the untruncated payload as hex and its inverse. `Display` elides; `payload_hex` doesn't, so a frame captured in production can be attached to a bug report and replayed in a test.
 - **`rithmic_rs::prost`** — the `prost` this crate's types are generated against, re-exported so downstream types are compatible with `decode_as` and with `UnknownTemplateMessage::payload`. prost is a public dependency, so a major bump of it remains a breaking change of this crate.
+- **Multi-leg OCO orders**: `RithmicOrderPlantHandle::place_oco_order_multi(Vec<RithmicOcoOrderLeg>)`
+  for N-leg OCO groups (minimum two legs; fewer returns `RithmicError::InvalidArgument`).
+- **Per-leg OCO trailing stops** via the new `RithmicOcoOrderLeg::trailing_stop` field, which reuses
+  the existing `TrailingStop`. `trail_by_price_id` is mandatory — Rithmic rejects a trailing stop
+  with rp_code 1112 when it is omitted. The three repeated trailing-stop fields are
+  index-aligned with the other per-leg fields, so they are sent for every leg or for none; an OCO
+  where no leg trails is unchanged on the wire.
+- **RMS auto-liquidation streaming**: `subscribe_account_rms_updates` now accepts a `Vec` of update
+  selectors; pass `AutoLiqThresholdCurrentValue` to receive `auto_liq_threshold_current_value`. An
+  empty `Vec` omits `update_bits` rather than sending `0`.
+- **`rithmic_rs::RmsUpdateBits`** — `request_account_rms_updates::UpdateBits` re-exported at the
+  crate root, so the selector passed to `subscribe_account_rms_updates` is nameable without reaching
+  into `rithmic_rs::rti`.
+- `RithmicModifyOrder::trigger_price` — StopLimit/StopMarket modifies can set a trigger price
+  distinct from the limit price. When `None`, the trigger still defaults to `price` for stop types.
 
 ### Changed
 
@@ -30,6 +57,10 @@ Additive: no public API is removed or changed, so this lands in a 2.x minor rele
 
 - **`examples/bracket_order.rs` no longer exits its listener on a recoverable error.** It broke out of the loop on any populated `update.error`, which a per-message decode failure also sets. Breaking there was redundant for the fatal cases — transport failure, forced logout and heartbeat timeout each arrive as their own `RithmicMessage` variant, which the listener already matches — so its only effect was that a single undecodable frame silently stopped order updates on a live bracket.
 - **Samples that handled a turned-down `subscribe` in an `Err` arm.** That arm can never match, so a `subscribe` the server turned down was reported as a success. Affects the crate-root docs, the `RithmicError` rustdoc, the README, `examples/reconnect.rs` and the 2.0.0 migration guide below. All now check `resp.error`, and show `Err(RequestRejected)` on `login`, which is the one call that returns it.
+- **Single-order trailing stops now populate `trail_by_price_id`** (previously omitted, causing
+  Rithmic to reject the trailing stop with rp_code 1112).
+- **`request_account_rms_updates` sent `update_bits: None`**, so `auto_liq_threshold_current_value`
+  never streamed even when subscribed.
 
 ## [2.0.0]
 

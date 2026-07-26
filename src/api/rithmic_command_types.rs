@@ -48,6 +48,7 @@ pub struct LoginConfig {
 ///     duration: OcoDuration::Day,
 ///     price_type: OcoPriceType::Limit,
 ///     user_tag: "take-profit".to_string(),
+///     trailing_stop: None,
 /// };
 ///
 /// let stop_loss = RithmicOcoOrderLeg {
@@ -60,6 +61,7 @@ pub struct LoginConfig {
 ///     duration: OcoDuration::Day,
 ///     price_type: OcoPriceType::StopMarket,
 ///     user_tag: "stop-loss".to_string(),
+///     trailing_stop: None,
 /// };
 ///
 /// handle.place_oco_order(take_profit, stop_loss).await?;
@@ -84,6 +86,8 @@ pub struct RithmicOcoOrderLeg {
     pub price_type: request_oco_order::PriceType,
     /// Your identifier for this order
     pub user_tag: String,
+    /// Optional trailing stop configuration for this leg
+    pub trailing_stop: Option<TrailingStop>,
 }
 
 /// Entry order with linked profit target and stop loss orders.
@@ -379,6 +383,7 @@ impl From<RithmicBracketOrder> for RithmicAdvancedBracketOrder {
 ///     qty: 2,
 ///     price: 5005.0,
 ///     price_type: ModifyPriceType::Limit,
+///     trigger_price: None,
 /// };
 /// handle.modify_order(modification).await?;
 /// ```
@@ -396,6 +401,8 @@ pub struct RithmicModifyOrder {
     pub price: f64,
     /// Order type
     pub price_type: request_modify_order::PriceType,
+    /// Separate trigger price for StopLimit/StopMarket modifies. When `None`, the trigger defaults to `price` for stop order types.
+    pub trigger_price: Option<f64>,
 }
 
 /// Cancel an existing order.
@@ -416,17 +423,23 @@ pub struct RithmicCancelOrder {
 
 /// Configuration for trailing stop orders.
 ///
+/// Used both by [`RithmicOrder::trailing_stop`] for a standalone order and by
+/// [`RithmicOcoOrderLeg::trailing_stop`] for a single leg of an OCO group.
+///
 /// # Example
 ///
 /// ```ignore
 /// use rithmic_rs::TrailingStop;
 ///
-/// let trailing = TrailingStop { trail_by_ticks: 20 };
+/// let trailing = TrailingStop { trail_by_ticks: 20, trail_by_price_id: 1 };
 /// ```
 #[derive(Debug, Clone, Default)]
 pub struct TrailingStop {
     /// Number of ticks to trail behind the market price
     pub trail_by_ticks: i32,
+    /// Rithmic price-id to trail against. Rithmic rejects a trailing stop with
+    /// rp_code 1112 when this is unset.
+    pub trail_by_price_id: i32,
 }
 
 /// A standalone order (not a bracket order).
@@ -485,7 +498,7 @@ pub struct TrailingStop {
 ///     price: 0.0,  // Not used for trailing stops
 ///     transaction_type: NewOrderTransactionType::Sell,
 ///     price_type: NewOrderPriceType::StopMarket,
-///     trailing_stop: Some(TrailingStop { trail_by_ticks: 20 }),
+///     trailing_stop: Some(TrailingStop { trail_by_ticks: 20, trail_by_price_id: 1 }),
 ///     user_tag: "trailing-stop".to_string(),
 ///     ..Default::default()
 /// };

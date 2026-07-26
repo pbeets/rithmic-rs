@@ -53,3 +53,6 @@ pub use crate::rti::request_modify_order::PriceType as ModifyPriceType;
 
 // Re-export easy-to-borrow list request type
 pub use crate::rti::request_easy_to_borrow_list::Request as EasyToBorrowRequest;
+
+// Re-export account RMS update selector
+pub use crate::rti::request_account_rms_updates::UpdateBits as RmsUpdateBits;

@@ -20,7 +20,10 @@ use crate::{
         subscription::SubscriptionFilter,
     },
     request_handler::RithmicRequest,
-    rti::{messages::RithmicMessage, request_easy_to_borrow_list, request_login::SysInfraType},
+    rti::{
+        messages::RithmicMessage, request_account_rms_updates, request_easy_to_borrow_list,
+        request_login::SysInfraType,
+    },
     ws::{HEARTBEAT_SECS, PlantActor},
 };
 
@@ -140,6 +143,11 @@ pub(crate) enum OrderPlantCommand {
         account: Arc<RithmicAccount>,
         response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
     },
+    PlaceOcoOrderMulti {
+        legs: Vec<RithmicOcoOrderLeg>,
+        account: Arc<RithmicAccount>,
+        response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
+    },
     ShowBrackets {
         account: Arc<RithmicAccount>,
         response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
@@ -181,6 +189,7 @@ pub(crate) enum OrderPlantCommand {
     },
     SubscribeAccountRmsUpdates {
         subscribe: bool,
+        update_bits: Vec<request_account_rms_updates::UpdateBits>,
         account: Arc<RithmicAccount>,
         response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
     },
@@ -595,6 +604,7 @@ impl PlantActor for OrderPlant {
                     order.qty,
                     order.price,
                     order.price_type,
+                    order.trigger_price,
                     &account,
                 );
 
@@ -862,6 +872,25 @@ impl PlantActor for OrderPlant {
                     .send_or_fail(Message::Binary(req_buf.into()), &id)
                     .await;
             }
+            OrderPlantCommand::PlaceOcoOrderMulti {
+                legs,
+                account,
+                response_sender,
+            } => {
+                let (req_buf, id) = self
+                    .core
+                    .rithmic_sender_api
+                    .request_oco_order_multi(legs, &account);
+
+                self.core.request_handler.register_request(RithmicRequest {
+                    request_id: id.clone(),
+                    responder: response_sender,
+                });
+
+                self.core
+                    .send_or_fail(Message::Binary(req_buf.into()), &id)
+                    .await;
+            }
             OrderPlantCommand::ShowBrackets {
                 account,
                 response_sender,
@@ -1013,13 +1042,15 @@ impl PlantActor for OrderPlant {
             }
             OrderPlantCommand::SubscribeAccountRmsUpdates {
                 subscribe,
+                update_bits,
                 account,
                 response_sender,
             } => {
-                let (req_buf, id) = self
-                    .core
-                    .rithmic_sender_api
-                    .request_account_rms_updates(subscribe, &account);
+                let (req_buf, id) = self.core.rithmic_sender_api.request_account_rms_updates(
+                    subscribe,
+                    update_bits,
+                    &account,
+                );
 
                 self.core.request_handler.register_request(RithmicRequest {
                     request_id: id.clone(),
@@ -1791,6 +1822,42 @@ impl RithmicOrderPlantHandle {
         rx.await.map_err(|_| RithmicError::ConnectionClosed)?
     }
 
+    /// Place a multi-leg OCO (One Cancels Other) order
+    ///
+    /// When one leg is filled, the others are automatically cancelled. Requires
+    /// at least two legs.
+    ///
+    /// # Arguments
+    /// * `legs` - The order legs (at least two)
+    ///
+    /// # Returns
+    /// A vector of order placement responses or an error message
+    ///
+    /// # Errors
+    /// Returns [`RithmicError::InvalidArgument`] if fewer than two legs are supplied.
+    pub async fn place_oco_order_multi(
+        &self,
+        legs: Vec<RithmicOcoOrderLeg>,
+    ) -> Result<Vec<RithmicResponse>, RithmicError> {
+        if legs.len() < 2 {
+            return Err(RithmicError::InvalidArgument(
+                "OCO order requires at least 2 legs".to_string(),
+            ));
+        }
+
+        let (tx, rx) = oneshot::channel::<Result<Vec<RithmicResponse>, RithmicError>>();
+
+        let command = OrderPlantCommand::PlaceOcoOrderMulti {
+            legs,
+            account: self.account.clone(),
+            response_sender: tx,
+        };
+
+        let _ = self.sender.send(command).await;
+
+        rx.await.map_err(|_| RithmicError::ConnectionClosed)?
+    }
+
     /// Show all active bracket orders
     ///
     /// # Returns
@@ -1997,17 +2064,23 @@ impl RithmicOrderPlantHandle {
     ///
     /// # Arguments
     /// * `subscribe` - true to subscribe, false to unsubscribe
+    /// * `update_bits` - which RMS fields to stream. Passing
+    ///   `vec![RmsUpdateBits::AutoLiqThresholdCurrentValue]` streams
+    ///   `auto_liq_threshold_current_value`; an empty `Vec` leaves the field
+    ///   off the request.
     ///
     /// # Returns
     /// The subscription response or an error message
     pub async fn subscribe_account_rms_updates(
         &self,
         subscribe: bool,
+        update_bits: Vec<request_account_rms_updates::UpdateBits>,
     ) -> Result<RithmicResponse, RithmicError> {
         let (tx, rx) = oneshot::channel::<Result<Vec<RithmicResponse>, RithmicError>>();
 
         let command = OrderPlantCommand::SubscribeAccountRmsUpdates {
             subscribe,
+            update_bits,
             account: self.account.clone(),
             response_sender: tx,
         };
@@ -2184,5 +2257,89 @@ impl RithmicOrderPlantHandle {
         let _ = self.sender.send(command).await;
 
         rx.await.map_err(|_| RithmicError::ConnectionClosed)?
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api::rithmic_command_types::RithmicOcoOrderLeg;
+
+    fn test_handle() -> (RithmicOrderPlantHandle, mpsc::Receiver<OrderPlantCommand>) {
+        let account = Arc::new(RithmicAccount::new("FCM_A", "IB_A", "ACCOUNT_A"));
+        let (sender, command_receiver) = mpsc::channel(4);
+        let (_, subscription_receiver) = broadcast::channel(4);
+
+        let handle = RithmicOrderPlantHandle {
+            account: account.clone(),
+            sender,
+            subscription_receiver: SubscriptionFilter::new(account, subscription_receiver),
+        };
+
+        (handle, command_receiver)
+    }
+
+    fn leg(tag: &str) -> RithmicOcoOrderLeg {
+        RithmicOcoOrderLeg {
+            symbol: "ESM6".to_string(),
+            exchange: "CME".to_string(),
+            quantity: 1,
+            price: 5000.0,
+            trigger_price: None,
+            transaction_type: crate::rti::request_oco_order::TransactionType::Buy,
+            duration: crate::rti::request_oco_order::Duration::Day,
+            price_type: crate::rti::request_oco_order::PriceType::Limit,
+            user_tag: tag.to_string(),
+            trailing_stop: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn place_oco_order_multi_rejects_fewer_than_two_legs() {
+        for legs in [vec![], vec![leg("only")]] {
+            let (handle, mut command_receiver) = test_handle();
+
+            // Without the guard the command reaches the actor, which is not
+            // running here, and the call parks on its response channel. The
+            // timeout turns that into a failure instead of a hung suite.
+            let err = tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                handle.place_oco_order_multi(legs),
+            )
+            .await
+            .expect("must be rejected without reaching the actor")
+            .expect_err("fewer than two legs must be rejected");
+
+            assert!(matches!(err, RithmicError::InvalidArgument(_)));
+            // Rejected before reaching the actor, so nothing was queued.
+            assert!(command_receiver.try_recv().is_err());
+        }
+    }
+
+    #[tokio::test]
+    async fn place_oco_order_multi_forwards_two_or_more_legs() {
+        let (handle, mut command_receiver) = test_handle();
+
+        // The call parks on its response channel until the actor answers, so it
+        // has to run alongside the receive below rather than before it.
+        let call = tokio::spawn(async move {
+            handle
+                .place_oco_order_multi(vec![leg("a"), leg("b"), leg("c")])
+                .await
+        });
+
+        match command_receiver.recv().await {
+            Some(OrderPlantCommand::PlaceOcoOrderMulti { legs, .. }) => {
+                assert_eq!(legs.len(), 3);
+                assert_eq!(legs[2].user_tag, "c");
+                // Dropping the command drops the responder, which unparks the call.
+            }
+            _ => panic!("expected PlaceOcoOrderMulti to be queued"),
+        }
+
+        assert!(matches!(
+            call.await.expect("call task panicked"),
+            Err(RithmicError::ConnectionClosed)
+        ));
     }
 }
