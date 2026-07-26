@@ -15,7 +15,7 @@ use crate::{
     },
     request_handler::RithmicRequest,
     rti::{messages::RithmicMessage, request_login::SysInfraType, request_pn_l_position_updates},
-    ws::{HEARTBEAT_SECS, PlantActor},
+    ws::PlantActor,
 };
 
 use tokio::{
@@ -453,7 +453,7 @@ impl RithmicPnlPlantHandle {
 
         if let RithmicMessage::ResponseLogin(resp) = &response.message {
             if let Some(hb) = resp.heartbeat_interval {
-                let secs = hb.max(HEARTBEAT_SECS as f64) as u64;
+                let secs = hb as u64;
                 self.update_heartbeat(secs).await;
             }
 

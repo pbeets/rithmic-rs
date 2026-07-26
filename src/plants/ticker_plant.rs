@@ -16,7 +16,7 @@ use crate::{
         request_market_data_update::{Request, UpdateBits},
         request_market_data_update_by_underlying, request_search_symbols,
     },
-    ws::{HEARTBEAT_SECS, PlantActor},
+    ws::PlantActor,
 };
 
 use tokio::{
@@ -884,7 +884,7 @@ impl RithmicTickerPlantHandle {
 
         if let RithmicMessage::ResponseLogin(resp) = &response.message {
             if let Some(hb) = resp.heartbeat_interval {
-                let secs = hb.max(HEARTBEAT_SECS as f64) as u64;
+                let secs = hb as u64;
                 self.update_heartbeat(secs).await;
             }
 

@@ -55,6 +55,11 @@ Public struct fields and a method signature change, so this lands in a major rel
 
 ### Fixed
 
+- **The `heartbeat_interval` in a login response is now used as the heartbeat period.** All four
+  plants took `hb.max(HEARTBEAT_SECS as f64)`, so the server's value only ever applied when it was
+  longer than the 60-second default: a server asking for a heartbeat every 30 seconds got one every
+  60 and dropped the connection as idle. The server's value is now used as given, and a period of 0
+  falls back to the 60-second default, as does a login response that carries no interval at all.
 - **`examples/bracket_order.rs` no longer exits its listener on a recoverable error.** It broke out of the loop on any populated `update.error`, which a per-message decode failure also sets. Breaking there was redundant for the fatal cases — transport failure, forced logout and heartbeat timeout each arrive as their own `RithmicMessage` variant, which the listener already matches — so its only effect was that a single undecodable frame silently stopped order updates on a live bracket.
 - **Samples that handled a turned-down `subscribe` in an `Err` arm.** That arm can never match, so a `subscribe` the server turned down was reported as a success. Affects the crate-root docs, the `RithmicError` rustdoc, the README, `examples/reconnect.rs` and the 2.0.0 migration guide below. All now check `resp.error`, and show `Err(RequestRejected)` on `login`, which is the one call that returns it.
 - **Single-order trailing stops now populate `trail_by_price_id`** (previously omitted, causing

@@ -24,7 +24,7 @@ use crate::{
         messages::RithmicMessage, request_account_rms_updates, request_easy_to_borrow_list,
         request_login::SysInfraType,
     },
-    ws::{HEARTBEAT_SECS, PlantActor},
+    ws::PlantActor,
 };
 
 use tokio::{
@@ -1279,7 +1279,7 @@ impl RithmicOrderPlantHandle {
 
         if let RithmicMessage::ResponseLogin(resp) = &response.message {
             if let Some(hb) = resp.heartbeat_interval {
-                let secs = hb.max(HEARTBEAT_SECS as f64) as u64;
+                let secs = hb as u64;
                 self.update_heartbeat(secs).await;
             }
 

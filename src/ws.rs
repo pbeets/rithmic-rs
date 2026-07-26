@@ -13,7 +13,8 @@ use tokio_tungstenite::{
     tungstenite::{Error, Message},
 };
 
-/// Number of seconds between heartbeats sent to the server.
+/// Number of seconds between heartbeats sent to the server when the login
+/// response carries no interval of its own.
 pub(crate) const HEARTBEAT_SECS: u64 = 60;
 
 /// Number of seconds between WebSocket ping frames sent to detect dead connections.
@@ -89,8 +90,15 @@ where
     }
 }
 
+/// Creates an interval for sending heartbeats.
+///
+/// `override_secs` is the period the server asked for in its login response.
+/// A period of 0 falls back to [`HEARTBEAT_SECS`], since `interval_at` panics
+/// on a zero period.
 pub(crate) fn get_heartbeat_interval(override_secs: Option<u64>) -> Interval {
-    let secs = override_secs.unwrap_or(HEARTBEAT_SECS);
+    let secs = override_secs
+        .filter(|secs| *secs > 0)
+        .unwrap_or(HEARTBEAT_SECS);
     let heartbeat_interval = Duration::from_secs(secs);
     let start_offset = Instant::now() + heartbeat_interval;
 
@@ -366,5 +374,25 @@ mod tests {
         .await;
 
         assert!(matches!(result, Err(WebSocketSendError::Timeout)));
+    }
+
+    #[tokio::test]
+    async fn get_heartbeat_interval_uses_the_server_period() {
+        assert_eq!(
+            get_heartbeat_interval(Some(30)).period(),
+            Duration::from_secs(30)
+        );
+        assert_eq!(
+            get_heartbeat_interval(Some(120)).period(),
+            Duration::from_secs(120)
+        );
+    }
+
+    #[tokio::test]
+    async fn get_heartbeat_interval_falls_back_to_the_default() {
+        let default = Duration::from_secs(HEARTBEAT_SECS);
+
+        assert_eq!(get_heartbeat_interval(None).period(), default);
+        assert_eq!(get_heartbeat_interval(Some(0)).period(), default);
     }
 }
