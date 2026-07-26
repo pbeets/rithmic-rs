@@ -1353,6 +1353,64 @@ mod tests {
         );
     }
 
+    /// Encode a server-sent `RequestHeartbeat` (template 18) as a
+    /// length-prefixed frame carrying `user_msg` as its correlation token.
+    fn inbound_heartbeat_frame(user_msg: &str) -> Vec<u8> {
+        use crate::rti::RequestHeartbeat;
+        use prost::Message as _;
+
+        let req = RequestHeartbeat {
+            template_id: 18,
+            user_msg: vec![user_msg.to_string()],
+            ..RequestHeartbeat::default()
+        };
+        let mut payload = Vec::new();
+        req.encode(&mut payload).unwrap();
+        let mut framed = (payload.len() as u32).to_be_bytes().to_vec();
+        framed.extend(payload);
+        framed
+    }
+
+    /// A server-sent heartbeat reaches subscribers and is never answered, and
+    /// its `user_msg` never resolves a pending request: that token is the
+    /// server's, and the ids this client hands out are small integers, so the
+    /// two can collide.
+    #[tokio::test]
+    async fn inbound_heartbeat_is_broadcast_but_neither_routed_nor_answered() {
+        let reader = make_dormant_ws_reader().await;
+        let (mut core, mut sub_rx) = make_test_core(MockMessageSink::ready(), reader);
+
+        // The probe's user_msg is deliberately the same string as the pending
+        // request id registered here.
+        let mut rx = register_request(&mut core, "1");
+
+        let stop = core
+            .handle_rithmic_message(Ok(Message::Binary(inbound_heartbeat_frame("1").into())))
+            .await;
+
+        assert!(!stop, "a heartbeat frame must not stop the actor");
+        assert!(
+            matches!(rx.try_recv(), Err(oneshot::error::TryRecvError::Empty)),
+            "an inbound heartbeat must not resolve a pending request"
+        );
+
+        let broadcast_msg = sub_rx.try_recv().unwrap();
+        assert!(
+            matches!(broadcast_msg.message, RithmicMessage::RequestHeartbeat(_)),
+            "the frame must reach subscribers as RequestHeartbeat, got {:?}",
+            broadcast_msg.message
+        );
+        assert!(
+            broadcast_msg.request_id.is_empty(),
+            "the server's token must not be surfaced as a request id"
+        );
+        assert!(
+            core.rithmic_sender.sent_messages.is_empty(),
+            "an inbound heartbeat must not be answered, got {:?}",
+            core.rithmic_sender.sent_messages
+        );
+    }
+
     /// Heartbeat success with a registered oneshot must resolve the oneshot
     /// with the original `ResponseHeartbeat` frame and must NOT broadcast any
     /// subscription update (no synthetic `HeartbeatTimeout`).

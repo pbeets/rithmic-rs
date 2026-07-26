@@ -6,7 +6,7 @@ use crate::rti::{
     DepthByOrder, DepthByOrderEndEvent, EndOfDayPrices, ExchangeOrderNotification, ForcedLogout,
     FrontMonthContractUpdate, IndicatorPrices, InstrumentPnLPositionUpdate, LastTrade, MarketMode,
     MessageType, OpenInterest, OrderBook, OrderPriceLimits, QuoteStatistics, Reject,
-    ResponseAcceptAgreement, ResponseAccountList, ResponseAccountRmsInfo,
+    RequestHeartbeat, ResponseAcceptAgreement, ResponseAccountList, ResponseAccountRmsInfo,
     ResponseAccountRmsUpdates, ResponseAuxilliaryReferenceData, ResponseBracketOrder,
     ResponseCancelAllOrders, ResponseCancelOrder, ResponseDepthByOrderSnapshot,
     ResponseDepthByOrderUpdates, ResponseEasyToBorrowList, ResponseExitPosition,
@@ -147,6 +147,22 @@ impl RithmicReceiverApi {
                     has_more: false,
                     multi_response: false,
                     error,
+                    source: self.source.clone(),
+                }
+            }
+            18 => {
+                let resp = RequestHeartbeat::decode(payload)
+                    .map_err(|e| decode_error(&self.source, e, true))?;
+
+                RithmicResponse {
+                    // The frame's user_msg is the server's own token, not an id
+                    // this client handed out, so it is not surfaced as one.
+                    request_id: "".to_string(),
+                    message: RithmicMessage::RequestHeartbeat(resp),
+                    is_update: true, // Server-initiated keep-alive - route to subscription channel
+                    has_more: false,
+                    multi_response: false,
+                    error: None,
                     source: self.source.clone(),
                 }
             }

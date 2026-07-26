@@ -23,6 +23,7 @@ Public struct fields and a method signature change, so this lands in a major rel
 
 ### Added
 
+- **`RithmicMessage::RequestHeartbeat(RequestHeartbeat)`** — a keep-alive frame (template 18) sent by the server, which previously arrived as `UnknownTemplate`. Delivered on the subscription channel with `error: None` and an empty `request_id`: it answers no request you made, and its `user_msg` is the server's own token rather than an id this client handed out. The library does not reply to it. `RithmicMessage` is `#[non_exhaustive]`, so the new variant does not break existing matches.
 - **`RithmicMessage::UnknownTemplate(UnknownTemplateMessage)`** — a frame whose `template_id` has no message definition in this crate. Delivered with `error: None` and the message body kept as received. `RithmicMessage` is `#[non_exhaustive]`, so the new variant does not break existing matches.
 - **`UnknownTemplateMessage::decode_as<M>()`** — decode the payload into a caller-supplied `prost` type, so an unmapped template can be handled downstream without a change here. `Ok` is not proof the type was guessed right: protobuf skips undeclared fields, so an unrelated payload usually decodes into a mostly-empty value.
 - **`UnknownTemplateMessage::payload_hex()` / `from_payload_hex()`** — the untruncated payload as hex and its inverse. `Display` elides; `payload_hex` doesn't, so a frame captured in production can be attached to a bug report and replayed in a test.
