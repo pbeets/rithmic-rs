@@ -14,6 +14,45 @@ const MAX_RENDERED_BYTES: usize = 32;
 /// still be handled downstream: [`decode_as`](Self::decode_as) decodes it into a
 /// type you generate yourself, and [`payload_hex`](Self::payload_hex) dumps it
 /// for later.
+///
+/// # Examples
+///
+/// A frame off a subscription stream arrives as
+/// [`RithmicMessage::UnknownTemplate`](crate::rti::messages::RithmicMessage::UnknownTemplate)
+/// with `error: None`. Log it, then decode it into a type generated in your own
+/// crate from the `.proto`; [`crate::prost`] is re-exported so the generated
+/// code can't drift from the version this crate decodes with.
+///
+/// ```
+/// use rithmic_rs::prost;
+/// use rithmic_rs::rti::messages::RithmicMessage;
+///
+/// // Generated in your crate by prost-build, once you know what 358 maps to.
+/// #[derive(Clone, PartialEq, prost::Message)]
+/// pub struct Template358 {
+///     #[prost(string, optional, tag = "110100")]
+///     pub symbol: Option<String>,
+/// }
+///
+/// fn on_message(message: &RithmicMessage) {
+///     let RithmicMessage::UnknownTemplate(frame) = message else {
+///         return;
+///     };
+///
+///     // template_id=358 (84 bytes) a2e135054d45535536aae13503434d45…+52B
+///     tracing::warn!(payload = %frame.payload_hex(), "unmapped template: {frame}");
+///
+///     if frame.template_id == 358 {
+///         if let Ok(decoded) = frame.decode_as::<Template358>() {
+///             println!("{:?}", decoded.symbol);
+///         }
+///     }
+/// }
+/// ```
+///
+/// [`payload_hex`](Self::payload_hex) is untruncated, so a frame captured in
+/// production can be replayed in a test through
+/// [`from_payload_hex`](Self::from_payload_hex).
 #[derive(Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct UnknownTemplateMessage {

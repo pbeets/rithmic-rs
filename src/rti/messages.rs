@@ -176,6 +176,9 @@ pub enum RithmicMessage {
     ///
     /// The library logs only the template id and size; the payload may carry
     /// account and order ids, so what to log is left to the caller.
+    ///
+    /// [`UnknownTemplateMessage`] carries the handling API and an example of
+    /// logging and decoding one.
     UnknownTemplate(UnknownTemplateMessage),
 
     /// A frame that could not be decoded.
