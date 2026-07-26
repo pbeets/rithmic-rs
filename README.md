@@ -63,7 +63,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-See [`examples/`](examples/) for more usage patterns including [reconnection handling](examples/reconnect.rs) and historical data loading.
+See [`examples/`](examples/) for more usage patterns including [error handling](examples/error_handling.rs), [reconnection handling](examples/reconnect.rs), and historical data loading.
 
 ## Architecture
 
@@ -209,6 +209,11 @@ Use `RithmicError::is_connection_issue` to distinguish transport failures from
 requests the server turned down.
 
 `RithmicError` implements `std::error::Error`, so `?` works in functions returning `Box<dyn Error>`.
+
+[`examples/error_handling.rs`](examples/error_handling.rs) walks through every
+error the crate can hand you — from a call and from the subscription channel —
+in one runnable file. The crate docs cover the same ground in
+[Error Handling](https://docs.rs/rithmic-rs/latest/rithmic_rs/#error-handling).
 
 ## Connection Strategies
 

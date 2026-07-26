@@ -72,6 +72,11 @@ impl RithmicRequestHandler {
             }
             _ => {
                 if !response.multi_response {
+                    // Clear any parts already accumulated under this id: a
+                    // decode failure correlated by user_msg can end a
+                    // multi-part response early and lands here.
+                    self.response_vec_map.remove(&response.request_id);
+
                     if let Some(responder) = self.handle_map.remove(&response.request_id) {
                         let request_id = response.request_id.clone();
                         self.send_to_responder(responder, vec![response], &request_id);
@@ -380,5 +385,48 @@ mod tests {
         drop(rx);
         // Sending to a dropped receiver should not panic (just logs error)
         handler.handle_response(make_response("drop", login_message()));
+    }
+
+    #[test]
+    fn single_response_clears_partial_multi_responses_for_the_same_id() {
+        // Mirrors a decode failure landing mid multi-part response.
+        let mut handler = RithmicRequestHandler::new();
+        let (tx, mut rx) = oneshot::channel();
+
+        handler.register_request(RithmicRequest {
+            request_id: "m".to_string(),
+            responder: tx,
+        });
+
+        let mut partial = make_response("m", ref_data_message());
+        partial.multi_response = true;
+        partial.has_more = true;
+        handler.handle_response(partial);
+
+        let mut failure = make_response("m", RithmicMessage::Unknown);
+        failure.error = Some(crate::error::RithmicError::ProtocolError("bad".to_string()));
+        handler.handle_response(failure);
+
+        let result = rx.try_recv().unwrap().unwrap();
+        assert_eq!(result.len(), 1, "only the terminating frame is delivered");
+        assert!(matches!(result[0].message, RithmicMessage::Unknown));
+
+        let (tx2, mut rx2) = oneshot::channel();
+
+        handler.register_request(RithmicRequest {
+            request_id: "m".to_string(),
+            responder: tx2,
+        });
+
+        let mut terminal = make_response("m", login_message());
+        terminal.multi_response = true;
+        handler.handle_response(terminal);
+
+        let result = rx2.try_recv().unwrap().unwrap();
+        assert_eq!(result.len(), 1, "no stale part may be prepended");
+        assert!(matches!(
+            result[0].message,
+            RithmicMessage::ResponseLogin(_)
+        ));
     }
 }

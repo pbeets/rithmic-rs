@@ -74,22 +74,59 @@ impl RithmicReceiverApi {
                     data.len()
                 );
 
-                return Err(RithmicResponse {
-                    request_id: "".to_string(),
-                    message: RithmicMessage::Unknown,
-                    is_update: false,
-                    has_more: false,
-                    multi_response: false,
-                    error: Some(RithmicError::ProtocolError(format!(
-                        "Failed to decode message: {}",
-                        e
-                    ))),
-                    source: self.source.clone(),
-                });
+                // `template_id` is the envelope's only field, so wire-type
+                // drift there still leaves the echoed `user_msg` readable.
+                return Err(route_decode_failure(
+                    payload,
+                    RithmicResponse {
+                        request_id: "".to_string(),
+                        message: RithmicMessage::Unknown,
+                        is_update: false,
+                        has_more: false,
+                        multi_response: false,
+                        error: Some(RithmicError::ProtocolError(format!(
+                            "Failed to decode message: {}",
+                            e
+                        ))),
+                        source: self.source.clone(),
+                    },
+                ));
             }
         };
 
-        let response = match parsed_message.template_id {
+        if parsed_message.template_id <= 0 {
+            error!("{}: frame carries no template_id", self.source);
+
+            return Err(RithmicResponse {
+                request_id: "".to_string(),
+                message: RithmicMessage::Unknown,
+                is_update: false,
+                has_more: false,
+                multi_response: false,
+                error: Some(RithmicError::ProtocolError(
+                    "Frame carries no template_id".to_string(),
+                )),
+                source: self.source.clone(),
+            });
+        }
+
+        self.decode_body(&data, parsed_message.template_id)
+            .map_err(|response| route_decode_failure(payload, response))
+    }
+
+    /// Decode the body against the message type its `template_id` selects.
+    ///
+    /// Returns `Err` with `request_id: ""`; [`route_decode_failure`] fills in
+    /// `request_id` and `is_update` before the caller sees the response.
+    #[allow(clippy::result_large_err)]
+    fn decode_body(
+        &self,
+        data: &Bytes,
+        template_id: i32,
+    ) -> Result<RithmicResponse, RithmicResponse> {
+        let payload = &data[4..];
+
+        let response = match template_id {
             11 => {
                 let resp = ResponseLogin::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, false))?;
@@ -1456,28 +1493,10 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
-            // prost doesn't enforce proto2 `required`, so a body with no
-            // template_id decodes as 0. Keep it an error — there is no
-            // template to route it to.
-            id if id <= 0 => {
-                error!("{}: frame carries no template_id", self.source);
-
-                return Err(RithmicResponse {
-                    request_id: "".to_string(),
-                    message: RithmicMessage::Unknown,
-                    is_update: false,
-                    has_more: false,
-                    multi_response: false,
-                    error: Some(RithmicError::ProtocolError(
-                        "Frame carries no template_id".to_string(),
-                    )),
-                    source: self.source.clone(),
-                });
-            }
             _ => {
                 // Not a recognized message template.
                 let unknown = UnknownTemplateMessage {
-                    template_id: parsed_message.template_id,
+                    template_id,
                     payload: data.slice(4..),
                 };
 
@@ -1534,6 +1553,37 @@ fn decode_error(source: &str, e: prost::DecodeError, is_update: bool) -> Rithmic
         ))),
         source: source.to_string(),
     }
+}
+
+/// Reads the echoed `user_msg` back off a body that failed to decode.
+///
+/// prost skips tags a type doesn't declare, so this one-field struct decodes
+/// where the real message type won't. Tag 132760 is `user_msg` everywhere in
+/// [`crate::rti`] and nothing else uses it — recheck if `rti.rs` is regenerated.
+#[derive(Clone, PartialEq, ::prost::Message)]
+struct UserMsgProbe {
+    #[prost(string, repeated, tag = "132760")]
+    user_msg: Vec<String>,
+}
+
+/// Settle `request_id` and `is_update` on a decode failure.
+///
+/// A response already marked an update routes correctly. One built for a
+/// request carries an empty `request_id`, matches no responder, and would be
+/// dropped along with its `ProtocolError` — so recover the echoed id where
+/// there is one, and route it as an update where there is not.
+fn route_decode_failure(payload: &[u8], mut response: RithmicResponse) -> RithmicResponse {
+    if response.is_update || !response.request_id.is_empty() {
+        return response;
+    }
+
+    response.request_id = UserMsgProbe::decode(payload)
+        .ok()
+        .and_then(|probe| probe.user_msg.into_iter().next())
+        .unwrap_or_default();
+    response.is_update = response.request_id.is_empty();
+
+    response
 }
 
 #[cfg(test)]
@@ -1704,6 +1754,126 @@ mod tests {
             Some(RithmicError::ProtocolError(_))
         ));
         assert!(!response.is_update);
+    }
+
+    /// A body whose `template_id` and `user_msg` are readable but whose fourth
+    /// field contradicts the message type `template_id` selects.
+    #[derive(Clone, PartialEq, ::prost::Message)]
+    struct MalformedBody {
+        #[prost(int32, required, tag = "154467")]
+        template_id: i32,
+        #[prost(string, repeated, tag = "132760")]
+        user_msg: Vec<String>,
+        /// `ResponseLogin::template_version` — a string there, a varint here.
+        #[prost(int32, optional, tag = "153634")]
+        template_version: Option<i32>,
+        /// `LastTrade::symbol` — a string there, a varint here.
+        #[prost(int32, optional, tag = "110100")]
+        symbol: Option<i32>,
+    }
+
+    fn malformed_response_login(user_msg: &[&str]) -> MalformedBody {
+        MalformedBody {
+            template_id: 11,
+            user_msg: user_msg.iter().map(|m| m.to_string()).collect(),
+            template_version: Some(1),
+            symbol: None,
+        }
+    }
+
+    /// `template_id` as a string rather than a varint, so the envelope itself
+    /// fails to decode while the echoed `user_msg` stays readable.
+    #[derive(Clone, PartialEq, ::prost::Message)]
+    struct DivergedEnvelope {
+        #[prost(string, optional, tag = "154467")]
+        template_id: Option<String>,
+        #[prost(string, repeated, tag = "132760")]
+        user_msg: Vec<String>,
+    }
+
+    #[test]
+    fn envelope_wire_type_divergence_correlates_on_echoed_user_msg() {
+        // The realistic case: schema drift on `template_id`, not a corrupt
+        // frame. It takes the envelope down but leaves the echoed id readable.
+        let api = RithmicReceiverApi {
+            source: "test".to_string(),
+        };
+
+        let response = api
+            .buf_to_message(encode_with_header(&DivergedEnvelope {
+                template_id: Some("11".to_string()),
+                user_msg: vec!["req-9".to_string()],
+            }))
+            .expect_err("an envelope that fails to decode is a decode failure");
+
+        assert!(matches!(
+            response.error,
+            Some(RithmicError::ProtocolError(_))
+        ));
+        assert!(!response.is_update);
+        assert_eq!(response.request_id, "req-9");
+    }
+
+    #[test]
+    fn response_decode_failure_correlates_on_echoed_user_msg() {
+        // Template 11 is ResponseLogin; the body then contradicts its schema.
+        let api = RithmicReceiverApi {
+            source: "test".to_string(),
+        };
+
+        let response = api
+            .buf_to_message(encode_with_header(&malformed_response_login(&["req-7"])))
+            .expect_err("a body contradicting ResponseLogin must not decode");
+
+        assert!(matches!(response.message, RithmicMessage::Unknown));
+        assert!(matches!(
+            response.error,
+            Some(RithmicError::ProtocolError(_))
+        ));
+        assert!(!response.is_update);
+        assert_eq!(response.request_id, "req-7");
+    }
+
+    #[test]
+    fn response_decode_failure_without_user_msg_routes_as_update() {
+        let api = RithmicReceiverApi {
+            source: "test".to_string(),
+        };
+
+        let response = api
+            .buf_to_message(encode_with_header(&malformed_response_login(&[])))
+            .expect_err("a body contradicting ResponseLogin must not decode");
+
+        assert!(matches!(response.message, RithmicMessage::Unknown));
+        assert!(matches!(
+            response.error,
+            Some(RithmicError::ProtocolError(_))
+        ));
+        assert!(response.is_update);
+        assert_eq!(response.request_id, "");
+    }
+
+    #[test]
+    fn update_arm_decode_failure_stays_an_update() {
+        // Template 150 is a subscription update. Its decode failure already
+        // reaches the broadcast channel, so an echoed user_msg must not divert
+        // it to the request handler.
+        let api = RithmicReceiverApi {
+            source: "test".to_string(),
+        };
+
+        let response = api
+            .buf_to_message(encode_with_header(&MalformedBody {
+                template_id: 150,
+                user_msg: vec!["req-7".to_string()],
+                template_version: None,
+                symbol: Some(1),
+            }))
+            .expect_err("a body contradicting LastTrade must not decode");
+
+        assert!(matches!(response.message, RithmicMessage::Unknown));
+        assert!(response.is_update);
+        assert_eq!(response.request_id, "");
     }
 
     // =========================================================================

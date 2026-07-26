@@ -69,6 +69,10 @@ impl std::error::Error for RithmicRequestError {}
 /// `Err(`[`RequestRejected`](Self::RequestRejected)`)` instead — both cases are
 /// shown below.
 ///
+/// For which of these arrive on the subscription channel instead, and which
+/// stop a plant, see the crate-level [Error Handling](crate#error-handling)
+/// section.
+///
 /// [`RithmicResponse::error`]: crate::api::response::RithmicResponse::error
 ///
 /// ```ignore

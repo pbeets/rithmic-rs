@@ -191,5 +191,8 @@ pub enum RithmicMessage {
     ///
     /// Always accompanied by a `ProtocolError`. A `template_id` this crate
     /// doesn't map arrives as [`UnknownTemplate`](Self::UnknownTemplate).
+    ///
+    /// Usually comes back from the call it belongs to; when the frame names no
+    /// request, it arrives on `subscription_receiver` instead.
     Unknown,
 }

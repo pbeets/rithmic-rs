@@ -1613,4 +1613,86 @@ mod tests {
             "an unsolicited reject must not reach the request handler"
         );
     }
+
+    /// Template 11 (`ResponseLogin`) with `template_version`'s wire type
+    /// flipped to a varint. The envelope and `user_msg` stay readable.
+    #[derive(Clone, PartialEq, ::prost::Message)]
+    struct MalformedResponseLogin {
+        #[prost(int32, required, tag = "154467")]
+        template_id: i32,
+        #[prost(string, repeated, tag = "132760")]
+        user_msg: Vec<String>,
+        #[prost(int32, optional, tag = "153634")]
+        template_version: Option<i32>,
+    }
+
+    #[tokio::test]
+    async fn uncorrelatable_decode_failure_reaches_the_subscription_channel() {
+        // A length-delimited field overrunning the buffer leaves no readable
+        // user_msg, so there is nothing to correlate on.
+        let reader = make_dormant_ws_reader().await;
+        let (mut core, mut sub_rx) = make_test_core(MockMessageSink::ready(), reader);
+
+        let mut framed = 2u32.to_be_bytes().to_vec();
+        framed.extend_from_slice(&[0x0a, 0x05]);
+
+        let stop = core
+            .handle_rithmic_message(Ok(Message::Binary(framed.into())))
+            .await;
+
+        assert!(!stop, "a decode failure must not stop the actor");
+
+        let broadcast_msg = sub_rx
+            .try_recv()
+            .expect("decode failure must reach the subscription channel");
+
+        assert!(matches!(broadcast_msg.message, RithmicMessage::Unknown));
+        assert_eq!(broadcast_msg.request_id, "");
+        assert!(matches!(
+            &broadcast_msg.error,
+            Some(RithmicError::ProtocolError(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn correlatable_decode_failure_resolves_the_waiting_request() {
+        use prost::Message as _;
+
+        let reader = make_dormant_ws_reader().await;
+        let (mut core, mut sub_rx) = make_test_core(MockMessageSink::ready(), reader);
+        let mut rx = register_request(&mut core, "req-1");
+
+        let body = MalformedResponseLogin {
+            template_id: 11,
+            user_msg: vec!["req-1".to_string()],
+            template_version: Some(1),
+        };
+        let mut payload = Vec::new();
+        body.encode(&mut payload).unwrap();
+        let mut framed = (payload.len() as u32).to_be_bytes().to_vec();
+        framed.extend(payload);
+
+        let stop = core
+            .handle_rithmic_message(Ok(Message::Binary(framed.into())))
+            .await;
+
+        assert!(!stop, "a decode failure must not stop the actor");
+        assert!(
+            sub_rx.try_recv().is_err(),
+            "a correlated decode failure must not broadcast"
+        );
+
+        let result = rx
+            .try_recv()
+            .expect("the waiting request must be resolved")
+            .expect("the frame resolves the oneshot rather than failing it");
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].request_id, "req-1");
+        assert!(matches!(result[0].message, RithmicMessage::Unknown));
+        assert!(matches!(
+            &result[0].error,
+            Some(RithmicError::ProtocolError(_))
+        ));
+    }
 }

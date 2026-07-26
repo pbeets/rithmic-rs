@@ -75,9 +75,8 @@
 //! - [`ConnectStrategy::AlternateWithRetry`]: Alternates between primary and beta URLs
 //!
 //! A graceful `disconnect().await` logs out first and then closes the WebSocket.
-//! On a healthy connection, that shutdown path does not emit synthetic
-//! `HeartbeatTimeout` or `ConnectionError` subscription updates; reserve those
-//! for unexpected connection-health failures and reconnect logic.
+//! See [Error Handling](#error-handling) for how that differs from an
+//! unexpected drop.
 //!
 //! ## Configuration
 //!
@@ -108,9 +107,18 @@
 //!
 //! ## Error Handling
 //!
-//! All plant handle methods return [`Result<_, RithmicError>`]. A request the
-//! server turns down still returns `Ok` — check `RithmicResponse::error` for it.
-//! `login` is the one call that returns it as `Err`:
+//! An error reaches you in one of two places: the call you made, or the
+//! subscription channel. Which one it is tells you what to do about it.
+//!
+//! `examples/error_handling.rs` in the repository is this section as one
+//! runnable file, if you would rather read code.
+//!
+//! ### From a call
+//!
+//! Handle methods return [`Result<_, RithmicError>`], but `Ok` does not mean
+//! success. A request the server turned down still comes back as `Ok`, with the
+//! reason in `resp.error`. Code that checks only for `Err` will read it as
+//! having worked. `login` is the exception — a rejected login is an `Err`.
 //!
 //! ```ignore
 //! use rithmic_rs::RithmicError;
@@ -136,13 +144,72 @@
 //! }
 //! ```
 //!
-//! For inspecting a `RithmicResponse` directly, match on `response.error` — it
-//! is `Option<RithmicError>`. Use [`RithmicError::is_connection_issue`] to
-//! distinguish transport-level events that warrant reconnection.
+//! Two errors turn up in `resp.error`.
+//! [`RequestRejected`](RithmicError::RequestRejected) is the server saying no,
+//! with its code and message split out so you can branch on the code.
+//! [`ProtocolError`](RithmicError::ProtocolError) means the response arrived but
+//! would not decode — usually Rithmic's schema has moved ahead of this crate, so
+//! retrying will not help and it is worth filing.
 //!
-//! A graceful `disconnect().await` is separate from that reconnect path: it
-//! shuts the plant down without sending synthetic `HeartbeatTimeout` or
-//! `ConnectionError` updates to subscribers when the close handshake succeeds.
+//! An `Err` means you never got an answer at all:
+//!
+//! - [`InvalidArgument`](RithmicError::InvalidArgument) — your arguments.
+//!   Nothing was sent. Fix them and call again.
+//! - [`SendFailed`](RithmicError::SendFailed) — the send failed. Only this
+//!   request fails and the plant is still up, but the connection is usually on
+//!   its way out; expect a `ConnectionError` to follow. Treat it as a
+//!   connection problem rather than retrying in a loop.
+//! - [`ConnectionClosed`](RithmicError::ConnectionClosed) — the plant is gone.
+//!   Reconnect; calling again will not work.
+//!
+//! When a connection drops, everything in flight fails with `ConnectionClosed`
+//! whatever the real cause was. The cause goes out on the subscription channel,
+//! so look there if you need to tell a heartbeat timeout from a dead socket.
+//!
+//! There is no per-request timeout — if a response never arrives, the call
+//! waits. Wrap calls in `tokio::time::timeout` if you need a bound.
+//!
+//! ([`ConnectionFailed`](RithmicError::ConnectionFailed) comes from `connect()`
+//! rather than a handle method, and only under [`ConnectStrategy::Simple`] —
+//! the retrying strategies keep trying instead of handing you an error.
+//! [`EmptyResponse`](RithmicError::EmptyResponse) is a defensive case you should
+//! not see.)
+//!
+//! ### From the subscription channel
+//!
+//! Updates normally arrive with `error: None`. Five messages want a decision
+//! from you:
+//!
+//! | Message | What to do |
+//! |---|---|
+//! | `ConnectionError` | Reconnect. The plant is stopping or already stopped. |
+//! | `HeartbeatTimeout` | Reconnect — unless `error` holds a `RequestRejected`, which means the server rejected a heartbeat and the connection is fine. |
+//! | `ForcedLogout` | The server ended your session. A `ConnectionError` follows, so expect two events. |
+//! | `UnknownTemplate` | Nothing, unless you want to. A template this crate has no mapping for, raw payload attached. Not an error. |
+//! | `Unknown` | A frame that would not decode. Log it and carry on. |
+//!
+//! [`RithmicError::is_connection_issue`] is the shortcut: true means reconnect,
+//! false means the connection is fine and something about the data or the
+//! request was not. Do not reconnect on `ProtocolError` or `RequestRejected` —
+//! neither says anything about connection health, and you will only churn.
+//!
+//! This is a broadcast channel, so anything sent while you hold no receiver is
+//! gone. Keep it for as long as the plant lives.
+//!
+//! ### When a plant stops
+//!
+//! Only transport failure takes one down: a broken socket, a keep-alive
+//! timeout, a forced logout, or your own `abort()`. You get the matching
+//! connection-health event and every pending call fails with `ConnectionClosed`.
+//!
+//! Bad data never does. An undecodable frame, an unmapped template, a rejected
+//! request — the plant keeps running and your other in-flight requests are
+//! untouched. A decode failure usually comes back from the call it belongs to,
+//! and arrives as `Unknown` when the frame names no request. A frame too
+//! damaged to carry a template id at all is logged and dropped.
+//!
+//! `disconnect().await` is the clean shutdown and emits none of those events.
+//! Pending calls still fail with `ConnectionClosed`.
 //!
 //! `RithmicError` implements [`std::error::Error`], so `?` works in functions
 //! returning `Box<dyn Error>`.
