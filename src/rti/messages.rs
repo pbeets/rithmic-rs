@@ -58,7 +58,8 @@ pub enum RithmicMessage {
     /// Delivered as a subscription update with `error: None` and an empty
     /// `request_id`: it matches no request this client sent, and the frame's own
     /// `user_msg` is the server's token, which can collide with the ids this
-    /// client hands out. The library does not reply to it.
+    /// client hands out. The plant answers it with a `ResponseHeartbeat`
+    /// echoing the frame's `user_msg`; no caller action is needed.
     ///
     /// The heartbeats this client sends are answered by the server with
     /// [`ResponseHeartbeat`](Self::ResponseHeartbeat) instead.

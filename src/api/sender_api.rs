@@ -26,7 +26,7 @@ use crate::{
         RequestSubscribeToBracketUpdates, RequestTickBarReplay, RequestTickBarUpdate,
         RequestTimeBarReplay, RequestTimeBarUpdate, RequestTradeRoutes,
         RequestUpdateStopBracketLevel, RequestUpdateTargetBracketLevel,
-        RequestVolumeProfileMinuteBars,
+        RequestVolumeProfileMinuteBars, ResponseHeartbeat,
         request_account_list::UserType,
         request_account_rms_updates, request_cancel_all_orders, request_depth_by_order_updates,
         request_easy_to_borrow_list,
@@ -142,6 +142,28 @@ impl RithmicSenderApi {
         };
 
         self.request_to_buf(req, id)
+    }
+
+    /// Build a `ResponseHeartbeat` (template 19) answering a server-sent
+    /// `RequestHeartbeat` (template 18).
+    ///
+    /// `user_msg` is echoed from the inbound frame so the server can correlate
+    /// the answer with the probe it sent. No id is returned and none is taken
+    /// from the counter: this frame answers the server's request rather than
+    /// opening one of ours, so it is never registered with the request handler,
+    /// and the echoed token must not reach any call that resolves a request by
+    /// id — the server chooses it, and it can collide with the ids this client
+    /// hands out.
+    pub fn response_heartbeat(&self, user_msg: Vec<String>) -> Vec<u8> {
+        let resp = ResponseHeartbeat {
+            template_id: 19,
+            user_msg,
+            ..ResponseHeartbeat::default()
+        };
+
+        let (buf, _) = self.request_to_buf(resp, String::new());
+
+        buf
     }
 
     /// Request Rithmic system gateway information

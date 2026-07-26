@@ -368,8 +368,16 @@ where
                     Ok(response) => {
                         let forced_logout =
                             matches!(response.message, RithmicMessage::ForcedLogout(_));
+                        let heartbeat_request = match &response.message {
+                            RithmicMessage::RequestHeartbeat(req) => Some(req.user_msg.clone()),
+                            _ => None,
+                        };
 
                         self.forward_response(&source, response);
+
+                        if let Some(user_msg) = heartbeat_request {
+                            self.answer_heartbeat_request(user_msg).await;
+                        }
 
                         if forced_logout {
                             stop = self.handle_forced_logout();
@@ -471,6 +479,30 @@ where
         }
 
         stop
+    }
+
+    /// Answer a server-sent `RequestHeartbeat` (template 18) with a
+    /// `ResponseHeartbeat` (template 19) echoing the inbound `user_msg`, so the
+    /// server can correlate the answer with the frame it sent.
+    ///
+    /// Skips when a close has been requested, matching `send_heartbeat` and
+    /// `send_ping`: after `handle_close` has written the WebSocket Close frame,
+    /// a data frame would be a send-after-close.
+    ///
+    /// The send is tagged with a constant, not the echoed `user_msg`. That
+    /// token is chosen by the server and can collide with the ids this client
+    /// hands out, and `send_or_fail` resolves the pending request named by its
+    /// tag when the sink errors — so echoing it here could fail an unrelated
+    /// in-flight order request that was actually transmitted.
+    pub(crate) async fn answer_heartbeat_request(&mut self, user_msg: Vec<String>) {
+        if self.close_requested {
+            return;
+        }
+
+        let heartbeat_buf = self.rithmic_sender_api.response_heartbeat(user_msg);
+
+        self.send_or_fail(Message::Binary(heartbeat_buf.into()), "heartbeat_response")
+            .await;
     }
 
     /// Terminate the session after a server-sent `ForcedLogout` (template 77).
@@ -1354,11 +1386,111 @@ mod tests {
             broadcast_msg.request_id.is_empty(),
             "the frame matches no request of ours, so request_id stays empty"
         );
-        // Decoding the frame is the whole of this change: nothing is written
-        // back. Answering it is a separate, unshipped change.
+        // The frame is answered, but the answer is tagged with a constant, so
+        // routing the frame and replying to it stay independent of the
+        // colliding token.
+        assert!(
+            !core.rithmic_sender.sent_messages.is_empty(),
+            "an inbound heartbeat must be answered"
+        );
+    }
+
+    /// Decode the `template_id` of a binary frame the mock sink captured.
+    fn sent_template_id(msg: &Message) -> i32 {
+        use crate::rti::MessageType;
+        use prost::Message as _;
+
+        let Message::Binary(bytes) = msg else {
+            panic!("expected a binary frame, got {:?}", msg);
+        };
+        MessageType::decode(&bytes[4..])
+            .expect("sent frame should carry a template_id")
+            .template_id
+    }
+
+    /// A server-sent heartbeat (template 18) is answered with a
+    /// `ResponseHeartbeat` (template 19) written to the sink, echoing the
+    /// inbound `user_msg` so the server can correlate the answer.
+    #[tokio::test]
+    async fn inbound_heartbeat_request_is_answered_with_template_19() {
+        use crate::rti::ResponseHeartbeat;
+        use prost::Message as _;
+
+        let reader = make_dormant_ws_reader().await;
+        let (mut core, _sub_rx) = make_test_core(MockMessageSink::ready(), reader);
+
+        let stop = core
+            .handle_rithmic_message(Ok(Message::Binary(
+                inbound_heartbeat_frame(&["srv-probe-7"]).into(),
+            )))
+            .await;
+
+        assert!(!stop, "a heartbeat frame must not stop the actor");
+
+        let sent = core
+            .rithmic_sender
+            .sent_messages
+            .last()
+            .expect("the plant must write an answer back to the sink");
+        assert_eq!(
+            sent_template_id(sent),
+            19,
+            "the answer must be a ResponseHeartbeat (template 19)"
+        );
+
+        let Message::Binary(bytes) = sent else {
+            panic!("expected a binary frame");
+        };
+        let answer = ResponseHeartbeat::decode(&bytes[4..]).expect("answer should decode");
+        assert_eq!(
+            answer.user_msg,
+            vec!["srv-probe-7".to_string()],
+            "the answer must echo the inbound user_msg so the server can correlate it"
+        );
+    }
+
+    /// When the sink errors while answering, `send_or_fail` fails the request
+    /// named by its tag. The tag must be a constant, never the echoed
+    /// `user_msg`: the server chooses that token and it can collide with the
+    /// ids this client hands out, so echoing it would resolve an unrelated
+    /// in-flight request — on an order plant, reporting a send failure for an
+    /// order that was actually transmitted.
+    #[tokio::test]
+    async fn heartbeat_reply_send_failure_does_not_fail_a_colliding_request() {
+        let reader = make_dormant_ws_reader().await;
+        let (mut core, _sub_rx) = make_test_core(MockMessageSink::error(), reader);
+
+        // Request "1" stands in for an in-flight order request; the inbound
+        // frame carries the same token.
+        let mut rx = register_request(&mut core, "1");
+
+        core.handle_rithmic_message(Ok(Message::Binary(inbound_heartbeat_frame(&["1"]).into())))
+            .await;
+
+        assert!(
+            matches!(rx.try_recv(), Err(oneshot::error::TryRecvError::Empty)),
+            "a failed heartbeat answer must not resolve the caller's request"
+        );
+    }
+
+    /// The answer is skipped once a close has been requested, matching
+    /// `send_heartbeat` and `send_ping`: writing a data frame after the
+    /// WebSocket Close frame is a send-after-close.
+    #[tokio::test]
+    async fn heartbeat_reply_skips_when_close_requested() {
+        let reader = make_dormant_ws_reader().await;
+        let (mut core, _sub_rx) = make_test_core(MockMessageSink::ready(), reader);
+
+        core.close_requested = true;
+
+        core.handle_rithmic_message(Ok(Message::Binary(
+            inbound_heartbeat_frame(&["srv-probe-7"]).into(),
+        )))
+        .await;
+
         assert!(
             core.rithmic_sender.sent_messages.is_empty(),
-            "an inbound heartbeat must not be answered, got {:?}",
+            "no frame should be written after a close has been requested, got {:?}",
             core.rithmic_sender.sent_messages
         );
     }
