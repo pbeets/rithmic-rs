@@ -1,4 +1,7 @@
-use crate::rti::messages::RithmicMessage;
+use crate::{
+    error::{RithmicError, RithmicRequestError},
+    rti::messages::RithmicMessage,
+};
 
 /// Classified outcome of a Rithmic `rp_code` tuple.
 ///
@@ -12,7 +15,7 @@ pub(crate) enum RpCodeClassification {
     /// Benign empty result — currently only `["7", "no data"]` (case-insensitive).
     KnownBenignEmpty,
     /// Protocol-level rejection (rp_code reports a non-zero failure code).
-    RequestRejected(crate::error::RithmicRequestError),
+    RequestRejected(RithmicRequestError),
 }
 
 impl RpCodeClassification {
@@ -20,10 +23,10 @@ impl RpCodeClassification {
     /// `Success` / `KnownBenignEmpty` yield `None`; `RequestRejected` yields
     /// `Some(RithmicError::RequestRejected(..))` preserving the full rp_code
     /// payload (including the `None` message for single-element rp_codes).
-    pub(crate) fn into_error(self) -> Option<crate::error::RithmicError> {
+    pub(crate) fn into_error(self) -> Option<RithmicError> {
         match self {
             Self::Success | Self::KnownBenignEmpty => None,
-            Self::RequestRejected(err) => Some(crate::error::RithmicError::RequestRejected(err)),
+            Self::RequestRejected(err) => Some(RithmicError::RequestRejected(err)),
         }
     }
 }
@@ -32,6 +35,8 @@ impl RpCodeClassification {
 // inner proto. If you add a Response* variant to RithmicMessage whose
 // proto carries rp_code, add it here AND add a decode-time
 // `classify_rp_code_error(&resp.rp_code)` call in the matching decoder arm.
+// `Reject` is the one listed variant that is not a Response*; its decoder arm
+// uses `reject_error` instead.
 macro_rules! rp_code_response_variants {
     ($macro:ident) => {
         $macro! {
@@ -144,21 +149,30 @@ pub(crate) fn classify_rp_code(rp_code: &[String]) -> RpCodeClassification {
     // `message = None`; consumers see no spurious empty string.
     let message = rp_code.get(1).cloned();
 
-    RpCodeClassification::RequestRejected(crate::error::RithmicRequestError {
+    RpCodeClassification::RequestRejected(RithmicRequestError {
         rp_code: rp_code.to_vec(),
         code,
         message,
     })
 }
 
-pub(crate) fn classify_rp_code_error(rp_code: &[String]) -> Option<crate::error::RithmicError> {
+pub(crate) fn classify_rp_code_error(rp_code: &[String]) -> Option<RithmicError> {
     classify_rp_code(rp_code).into_error()
+}
+
+/// Builds the error for a `Reject`, which reports a rejection whatever its
+/// rp_code says, so there is nothing to classify. `code` and `message` are the
+/// first two elements; an empty rp_code leaves both `None`.
+pub(crate) fn reject_error(rp_code: &[String]) -> RithmicError {
+    RithmicError::RequestRejected(RithmicRequestError {
+        rp_code: rp_code.to_vec(),
+        code: rp_code.first().cloned(),
+        message: rp_code.get(1).cloned(),
+    })
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::error::{RithmicError, RithmicRequestError};
-
     use crate::rti::{
         Reject, ResponseAcceptAgreement, ResponseAccountList, ResponseAccountRmsInfo,
         ResponseAccountRmsUpdates, ResponseAuxilliaryReferenceData, ResponseBracketOrder,
@@ -387,6 +401,79 @@ mod tests {
                 rp_code: rp_code.clone(),
                 code: Some("7".to_string()),
                 message: Some("an error occurred while parsing data.".to_string()),
+            })
+        );
+    }
+
+    #[test]
+    fn reject_error_empty_rp_code_has_no_code_or_message() {
+        // Nothing is put in `message` to stand in for the absent rp_code: the
+        // field carries only what the server sent, and `rp_code.is_empty()`
+        // identifies this case.
+        assert_eq!(
+            reject_error(&[]),
+            RithmicError::RequestRejected(RithmicRequestError {
+                rp_code: vec![],
+                code: None,
+                message: None,
+            })
+        );
+    }
+
+    #[test]
+    fn reject_error_does_not_apply_the_response_success_code() {
+        // The rp_code `classify_rp_code` reports as `Success`, passed through
+        // unread rather than classified.
+        assert_eq!(
+            classify_rp_code(&["0".to_string()]),
+            RpCodeClassification::Success
+        );
+        assert_eq!(
+            reject_error(&["0".to_string()]),
+            RithmicError::RequestRejected(RithmicRequestError {
+                rp_code: vec!["0".to_string()],
+                code: Some("0".to_string()),
+                message: None,
+            })
+        );
+    }
+
+    #[test]
+    fn reject_error_does_not_apply_the_response_benign_empty_code() {
+        // The rp_code `classify_rp_code` reports as `KnownBenignEmpty`, passed
+        // through unread rather than classified.
+        let rp_code = vec!["7".to_string(), "no data".to_string()];
+
+        assert_eq!(
+            classify_rp_code(&rp_code),
+            RpCodeClassification::KnownBenignEmpty
+        );
+        assert_eq!(
+            reject_error(&rp_code),
+            RithmicError::RequestRejected(RithmicRequestError {
+                rp_code: rp_code.clone(),
+                code: Some("7".to_string()),
+                message: Some("no data".to_string()),
+            })
+        );
+    }
+
+    #[test]
+    fn reject_error_keeps_every_element_of_the_rp_code() {
+        // `code` and `message` take the first two elements; anything past them
+        // is still readable on `rp_code`.
+        let rp_code = vec![
+            "5".to_string(),
+            "permission denied".to_string(),
+            "trailing detail".to_string(),
+        ];
+
+        assert_eq!(
+            reject_error(&rp_code),
+            RithmicError::RequestRejected(RithmicRequestError {
+                rp_code,
+                code: Some("5".to_string()),
+                message: Some("permission denied".to_string()),
             })
         );
     }

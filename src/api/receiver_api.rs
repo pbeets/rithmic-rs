@@ -32,7 +32,7 @@ use crate::rti::{
 };
 
 pub use super::response::RithmicResponse;
-use super::rp_code::classify_rp_code_error;
+use super::rp_code::{classify_rp_code_error, reject_error};
 use crate::error::RithmicError;
 use crate::util::unknown_message::UnknownTemplateMessage;
 
@@ -183,10 +183,23 @@ impl RithmicReceiverApi {
             75 => {
                 let resp =
                     Reject::decode(payload).map_err(|e| decode_error(&self.source, e, false))?;
-                let error = classify_rp_code_error(&resp.rp_code);
+                let error = Some(reject_error(&resp.rp_code));
+                let request_id = resp.user_msg.first().cloned().unwrap_or_default();
+
+                if request_id.is_empty() {
+                    // A request-correlated reject reaches its caller as
+                    // `resp.error`. This one has no caller to reach and is
+                    // dropped in `forward_response`, so the log is the only
+                    // record of it. `Reject` carries nothing but `template_id`,
+                    // `user_msg` and `rp_code`, and `user_msg` is empty here.
+                    warn!(
+                        "{}: unsolicited reject, rp_code {:?}",
+                        self.source, resp.rp_code
+                    );
+                }
 
                 RithmicResponse {
-                    request_id: resp.user_msg.first().cloned().unwrap_or_default(),
+                    request_id,
                     message: RithmicMessage::Reject(resp),
                     is_update: false,
                     has_more: false,
@@ -1539,14 +1552,63 @@ mod tests {
     }
 
     #[test]
-    fn reject_decodes_as_non_update() {
+    fn unsolicited_reject_decodes_without_a_request_id() {
+        // No echoed `user_msg` means no request id to correlate against, and
+        // the rejection is not a subscription update either. `forward_response`
+        // drops it; decoding it must not fail or panic.
         let response = decode_with_api(&Reject {
             template_id: 75,
-            ..Reject::default()
+            user_msg: vec![],
+            rp_code: vec!["5".to_string(), "permission denied".to_string()],
         });
 
         assert!(matches!(response.message, RithmicMessage::Reject(_)));
         assert!(!response.is_update);
+        assert_eq!(response.request_id, "");
+        assert_eq!(
+            response.error,
+            Some(RithmicError::RequestRejected(RithmicRequestError {
+                rp_code: vec!["5".to_string(), "permission denied".to_string()],
+                code: Some("5".to_string()),
+                message: Some("permission denied".to_string()),
+            }))
+        );
+    }
+
+    #[test]
+    fn reject_with_user_msg_decodes_as_request_correlated() {
+        let response = decode_with_api(&Reject {
+            template_id: 75,
+            user_msg: vec!["req-9".to_string()],
+            rp_code: vec!["5".to_string(), "permission denied".to_string()],
+        });
+
+        assert!(matches!(response.message, RithmicMessage::Reject(_)));
+        assert!(!response.is_update);
+        assert_eq!(response.request_id, "req-9");
+    }
+
+    #[test]
+    fn reject_carrying_a_response_success_rp_code_still_carries_an_error() {
+        // The rp_code a `Response*` decodes as a success, on a request-
+        // correlated `Reject`: the caller's oneshot resolves with `error` set,
+        // so the documented `resp.error` check sees the rejection. The rp_code
+        // reaches the caller unread, to interpret as it sees fit.
+        let response = decode_with_api(&Reject {
+            template_id: 75,
+            user_msg: vec!["req-9".to_string()],
+            rp_code: vec!["0".to_string()],
+        });
+
+        assert!(!response.is_update);
+        assert_eq!(
+            response.error,
+            Some(RithmicError::RequestRejected(RithmicRequestError {
+                rp_code: vec!["0".to_string()],
+                code: Some("0".to_string()),
+                message: None,
+            }))
+        );
     }
 
     #[test]

@@ -17,8 +17,8 @@ pub struct RithmicRequestError {
     pub code: Option<String>,
     /// Human-readable message, when present.
     ///
-    /// `None` when the response carried a code with no message. Symmetric with
-    /// [`Self::code`].
+    /// `None` when the response carried a code with no message, or no
+    /// `rp_code` at all. Symmetric with [`Self::code`].
     pub message: Option<String>,
 }
 
@@ -164,7 +164,15 @@ impl fmt::Display for RithmicError {
             RithmicError::ConnectionClosed => write!(f, "connection closed"),
             RithmicError::SendFailed => write!(f, "WebSocket send failed or timed out"),
             RithmicError::EmptyResponse => write!(f, "empty response"),
-            RithmicError::RequestRejected(err) => write!(f, "request rejected: {err}"),
+            RithmicError::RequestRejected(err) => {
+                let detail = err.to_string();
+
+                if detail.is_empty() {
+                    write!(f, "request rejected")
+                } else {
+                    write!(f, "request rejected: {detail}")
+                }
+            }
             RithmicError::ProtocolError(msg) => write!(f, "protocol error: {msg}"),
             RithmicError::InvalidArgument(msg) => write!(f, "invalid argument: {msg}"),
             RithmicError::HeartbeatTimeout => write!(f, "heartbeat timeout"),
@@ -352,6 +360,19 @@ mod tests {
             err.to_string(),
             "request rejected: [7] an error occurred while parsing data."
         );
+    }
+
+    #[test]
+    fn rithmic_error_request_rejected_display_omits_the_separator_when_empty() {
+        // A Reject carrying no rp_code leaves both fields `None`, so the inner
+        // error renders as an empty string.
+        let err = RithmicError::RequestRejected(RithmicRequestError {
+            rp_code: vec![],
+            code: None,
+            message: None,
+        });
+
+        assert_eq!(err.to_string(), "request rejected");
     }
 
     #[test]

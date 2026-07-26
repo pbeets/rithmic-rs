@@ -332,6 +332,11 @@ where
             return;
         }
 
+        // An unsolicited reject echoes no request id, so nothing is waiting on it.
+        if response.request_id.is_empty() && matches!(response.message, RithmicMessage::Reject(_)) {
+            return;
+        }
+
         if response.is_update {
             if let Err(e) = self.subscription_sender.send(response) {
                 warn!("{}: no active subscribers: {:?}", source, e);
@@ -1418,5 +1423,47 @@ mod tests {
             &result[1].error,
             Some(RithmicError::RequestRejected(e)) if e.message.as_deref() == Some("bad")
         ));
+    }
+
+    #[tokio::test]
+    async fn unsolicited_reject_is_dropped() {
+        // A Reject that echoes no user_msg decodes with an empty request id,
+        // so nothing is waiting on it and it goes no further.
+        //
+        // The responder registered under that empty id is what makes the drop
+        // observable: with `is_update` false, an undropped reject reaches the
+        // request handler, which correlates on request id and would resolve
+        // it. A real request id is a counter and never empty, so nothing else
+        // can claim this responder.
+        use crate::rti::Reject;
+        use prost::Message as _;
+
+        let reader = make_dormant_ws_reader().await;
+        let (mut core, mut sub_rx) = make_test_core(MockMessageSink::ready(), reader);
+        let mut rx = register_request(&mut core, "");
+
+        let reject = Reject {
+            template_id: 75,
+            user_msg: vec![],
+            rp_code: vec!["5".to_string(), "permission denied".to_string()],
+        };
+        let mut payload = Vec::new();
+        reject.encode(&mut payload).unwrap();
+        let mut framed = (payload.len() as u32).to_be_bytes().to_vec();
+        framed.extend(payload);
+
+        let stop = core
+            .handle_rithmic_message(Ok(Message::Binary(framed.into())))
+            .await;
+
+        assert!(!stop, "an unsolicited reject must not stop the actor");
+        assert!(
+            sub_rx.try_recv().is_err(),
+            "an unsolicited reject must not reach the subscription channel"
+        );
+        assert!(
+            rx.try_recv().is_err(),
+            "an unsolicited reject must not reach the request handler"
+        );
     }
 }
