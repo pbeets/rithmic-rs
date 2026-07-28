@@ -573,12 +573,10 @@ where
         &mut self,
         response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
     ) {
-        // Flip `close_requested` before handing control to any later async step.
-        // The actor processes commands sequentially, so any command queued by a
-        // cloned handle *after* we dequeued `Logout` will find `close_requested`
-        // set and be rejected by `handle_command`'s guard. This closes the
-        // disconnect race where a concurrent `subscribe()` could slip between
-        // the Logout oneshot resolving and the Close command being sent.
+        // Flip `close_requested` before any later async step: the actor handles
+        // commands sequentially, so anything a cloned handle queues after
+        // `Logout` was dequeued finds it set and is dropped by the guard in
+        // every plant's `handle_command`.
         self.close_requested = true;
 
         let (logout_buf, id) = self.rithmic_sender_api.request_logout();

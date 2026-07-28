@@ -1,6 +1,6 @@
 use futures_util::StreamExt;
 use tokio_tungstenite::tungstenite::Message;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::{
     ConnectStrategy,
@@ -88,46 +88,6 @@ pub(crate) enum HistoryPlantCommand {
         request: request_tick_bar_update::Request,
         response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
     },
-}
-
-impl HistoryPlantCommand {
-    /// If the command carries a response sender, extract it; otherwise return
-    /// the command back to the caller unchanged.
-    ///
-    /// Used by the `close_requested` guard in `handle_command` to fail queued
-    /// requests fast once a disconnect is in flight.
-    fn into_response_sender_or_command(
-        self,
-    ) -> Result<oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>, Self> {
-        match self {
-            Self::ListSystemInfo { response_sender }
-            | Self::Login {
-                response_sender, ..
-            }
-            | Self::Logout { response_sender }
-            | Self::LoadTicks {
-                response_sender, ..
-            }
-            | Self::LoadTimeBars {
-                response_sender, ..
-            }
-            | Self::LoadVolumeProfileMinuteBars {
-                response_sender, ..
-            }
-            | Self::ResumeBars {
-                response_sender, ..
-            }
-            | Self::SubscribeTimeBarUpdates {
-                response_sender, ..
-            }
-            | Self::SubscribeTickBarUpdates {
-                response_sender, ..
-            } => Ok(response_sender),
-            other @ (Self::Close | Self::SetLogin | Self::UpdateHeartbeat { .. } | Self::Abort) => {
-                Err(other)
-            }
-        }
-    }
 }
 
 /// The RithmicHistoryPlant provides access to historical market data through the Rithmic API.
@@ -338,20 +298,21 @@ impl PlantActor for HistoryPlant {
     }
 
     async fn handle_command(&mut self, command: HistoryPlantCommand) {
-        // Disconnect race guard — see `TickerPlant::handle_command` for the
-        // rationale.
-        let command = if self.core.close_requested {
-            match command.into_response_sender_or_command() {
-                Ok(tx) => {
-                    let _ = tx.send(Err(RithmicError::ConnectionClosed));
+        // Disconnect race guard — see `TickerPlant::handle_command`.
+        if self.core.close_requested
+            && !matches!(
+                command,
+                HistoryPlantCommand::Close
+                    | HistoryPlantCommand::SetLogin
+                    | HistoryPlantCommand::UpdateHeartbeat { .. }
+                    | HistoryPlantCommand::Abort
+            )
+        {
+            debug!("history_plant: dropping a command queued after close was requested");
 
-                    return;
-                }
-                Err(cmd) => cmd,
-            }
-        } else {
-            command
-        };
+            return;
+        }
+
         match command {
             HistoryPlantCommand::Close => {
                 self.core.handle_close().await;
@@ -667,13 +628,15 @@ impl RithmicHistoryPlantHandle {
         };
 
         let _ = self.sender.send(command).await;
-        let response = rx
-            .await
-            .map_err(|_| RithmicError::ConnectionClosed)??
+        // Held rather than propagated here so that `Close` is queued either way —
+        // see `RithmicOrderPlantHandle::disconnect`.
+        let outcome = rx.await.map_err(|_| RithmicError::ConnectionClosed);
+        let _ = self.sender.send(HistoryPlantCommand::Close).await;
+
+        let response = outcome??
             .into_iter()
             .next()
             .ok_or(RithmicError::EmptyResponse)?;
-        let _ = self.sender.send(HistoryPlantCommand::Close).await;
 
         Ok(response)
     }
@@ -955,59 +918,4 @@ impl Clone for RithmicHistoryPlantHandle {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{HistoryPlantCommand, *};
-    use crate::error::RithmicError;
-
-    /// See the analogous ticker_plant test: the disconnect race guard in
-    /// `handle_command` depends on this contract.
-    #[test]
-    fn responder_bearing_variants_surface_sender() {
-        let (tx, _rx) = oneshot::channel();
-        let cmd = HistoryPlantCommand::LoadTicks {
-            bar_type_specifier: "1".to_string(),
-            end_time_sec: 1000,
-            exchange: "CME".to_string(),
-            response_sender: tx,
-            start_time_sec: 0,
-            symbol: "ESH6".to_string(),
-        };
-        assert!(cmd.into_response_sender_or_command().is_ok());
-    }
-
-    #[test]
-    fn fire_and_forget_variants_are_preserved() {
-        assert!(matches!(
-            HistoryPlantCommand::Close.into_response_sender_or_command(),
-            Err(HistoryPlantCommand::Close)
-        ));
-        assert!(matches!(
-            HistoryPlantCommand::Abort.into_response_sender_or_command(),
-            Err(HistoryPlantCommand::Abort)
-        ));
-    }
-
-    #[tokio::test]
-    async fn responder_drained_with_connection_closed() {
-        let (tx, rx) = oneshot::channel::<Result<Vec<RithmicResponse>, RithmicError>>();
-        let cmd = HistoryPlantCommand::LoadTicks {
-            bar_type_specifier: "1".to_string(),
-            end_time_sec: 1000,
-            exchange: "CME".to_string(),
-            response_sender: tx,
-            start_time_sec: 0,
-            symbol: "ESH6".to_string(),
-        };
-
-        if let Ok(sender) = cmd.into_response_sender_or_command() {
-            let _ = sender.send(Err(RithmicError::ConnectionClosed));
-        } else {
-            panic!("LoadTicks must carry a responder");
-        }
-
-        assert!(matches!(
-            rx.await.unwrap(),
-            Err(RithmicError::ConnectionClosed)
-        ));
-    }
-}
+mod tests;

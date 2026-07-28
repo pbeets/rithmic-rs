@@ -62,6 +62,14 @@ Public struct fields and a method signature change, so this lands in a major rel
 
 ### Fixed
 
+- **The order and PnL plants now reject queued commands once a disconnect is in flight.** A
+  `PlaceOrder`, `ModifyOrder` or `CancelOrder` submitted from a cloned handle concurrently with
+  `disconnect()` was still serialized to Rithmic while its caller saw `ConnectionClosed` — a
+  recorded failure for an order that was live at the exchange. All four plants now apply the same
+  guard; no caller-visible change on the ticker and history plants, which already had one.
+- **`disconnect()` now sends `Close` even when the logout fails.** It returned early on a logout
+  error, leaving an actor that had already set `close_requested`: no heartbeats, every later command
+  dropped, pending requests never drained. All four plants send `Close` before propagating the error.
 - **The `heartbeat_interval` in a login response is now used as the heartbeat period.** All four
   plants took `hb.max(HEARTBEAT_SECS as f64)`, so the server's value only ever applied when it was
   longer than the 60-second default: a server asking for a heartbeat every 30 seconds got one every

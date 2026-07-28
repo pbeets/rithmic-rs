@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use futures_util::StreamExt;
 use tokio_tungstenite::tungstenite::Message;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::{
     ConnectStrategy,
@@ -271,6 +271,21 @@ impl PlantActor for PnlPlant {
     }
 
     async fn handle_command(&mut self, command: PnlPlantCommand) {
+        // Disconnect race guard — see `TickerPlant::handle_command`.
+        if self.core.close_requested
+            && !matches!(
+                command,
+                PnlPlantCommand::Close
+                    | PnlPlantCommand::SetLogin
+                    | PnlPlantCommand::UpdateHeartbeat { .. }
+                    | PnlPlantCommand::Abort
+            )
+        {
+            debug!("pnl_plant: dropping a command queued after close was requested");
+
+            return;
+        }
+
         match command {
             PnlPlantCommand::Close => {
                 self.core.handle_close().await;
@@ -485,10 +500,15 @@ impl RithmicPnlPlantHandle {
         };
 
         let _ = self.sender.send(command).await;
-        let r = rx.await.map_err(|_| RithmicError::ConnectionClosed)??;
+        // Held rather than propagated here so that `Close` is queued either way —
+        // see `RithmicOrderPlantHandle::disconnect`.
+        let outcome = rx.await.map_err(|_| RithmicError::ConnectionClosed);
         let _ = self.sender.send(PnlPlantCommand::Close).await;
 
-        r.into_iter().next().ok_or(RithmicError::EmptyResponse)
+        outcome??
+            .into_iter()
+            .next()
+            .ok_or(RithmicError::EmptyResponse)
     }
 
     /// Immediately shut down the PnL plant actor without a graceful logout.
@@ -563,3 +583,6 @@ impl RithmicPnlPlantHandle {
             .ok_or(RithmicError::EmptyResponse)
     }
 }
+
+#[cfg(test)]
+mod tests;

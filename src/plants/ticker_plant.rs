@@ -1,6 +1,6 @@
 use futures_util::StreamExt;
 use tokio_tungstenite::tungstenite::Message;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::{
     ConnectStrategy,
@@ -119,74 +119,6 @@ pub(crate) enum TickerPlantCommand {
         system_name: Option<String>,
         response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
     },
-}
-
-impl TickerPlantCommand {
-    /// If the command carries a response sender, extract it; otherwise return
-    /// the command back to the caller unchanged.
-    ///
-    /// Used by the `close_requested` guard in `handle_command` to fail queued
-    /// requests fast once a disconnect is in flight, rather than sending them
-    /// to a server we're about to leave. Non-responder commands (`Close`,
-    /// `SetLogin`, `UpdateHeartbeat`, `Abort`) are returned so the actor can
-    /// still process them — `Close` in particular must still reach
-    /// `handle_close()` to send the WS Close frame.
-    fn into_response_sender_or_command(
-        self,
-    ) -> Result<oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>, Self> {
-        match self {
-            Self::ListSystemInfo { response_sender }
-            | Self::Login {
-                response_sender, ..
-            }
-            | Self::Logout { response_sender }
-            | Self::Subscribe {
-                response_sender, ..
-            }
-            | Self::SubscribeOrderBook {
-                response_sender, ..
-            }
-            | Self::RequestDepthByOrderSnapshot {
-                response_sender, ..
-            }
-            | Self::SearchSymbols {
-                response_sender, ..
-            }
-            | Self::ListExchanges {
-                response_sender, ..
-            }
-            | Self::GetInstrumentByUnderlying {
-                response_sender, ..
-            }
-            | Self::SubscribeByUnderlying {
-                response_sender, ..
-            }
-            | Self::GetTickSizeTypeTable {
-                response_sender, ..
-            }
-            | Self::GetProductCodes {
-                response_sender, ..
-            }
-            | Self::GetVolumeAtPrice {
-                response_sender, ..
-            }
-            | Self::GetAuxilliaryReferenceData {
-                response_sender, ..
-            }
-            | Self::GetReferenceData {
-                response_sender, ..
-            }
-            | Self::GetFrontMonthContract {
-                response_sender, ..
-            }
-            | Self::GetSystemGatewayInfo {
-                response_sender, ..
-            } => Ok(response_sender),
-            other @ (Self::Close | Self::SetLogin | Self::UpdateHeartbeat { .. } | Self::Abort) => {
-                Err(other)
-            }
-        }
-    }
 }
 
 /// The RithmicTickerPlant provides access to real-time market data.
@@ -441,25 +373,23 @@ impl PlantActor for TickerPlant {
     }
 
     async fn handle_command(&mut self, command: TickerPlantCommand) {
-        // Disconnect race guard: once `close_requested` is set (by `handle_logout`
-        // or `handle_close`), any request-bearing command queued by a cloned
-        // handle is rejected fast instead of being sent to a server we're
-        // about to leave. `Close` / `SetLogin` / `UpdateHeartbeat` / `Abort`
-        // have no responder, so they fall through and execute normally — in
-        // particular, `Close` still reaches `handle_close()` to send the WS
-        // Close frame.
-        let command = if self.core.close_requested {
-            match command.into_response_sender_or_command() {
-                Ok(tx) => {
-                    let _ = tx.send(Err(RithmicError::ConnectionClosed));
+        // Drop a request queued after `close_requested`; handles report the dropped
+        // responder as `ConnectionClosed`. The listed variants carry none and must
+        // still run — `Close` has to reach `handle_close()`. All four plants alike.
+        if self.core.close_requested
+            && !matches!(
+                command,
+                TickerPlantCommand::Close
+                    | TickerPlantCommand::SetLogin
+                    | TickerPlantCommand::UpdateHeartbeat { .. }
+                    | TickerPlantCommand::Abort
+            )
+        {
+            debug!("ticker_plant: dropping a command queued after close was requested");
 
-                    return;
-                }
-                Err(cmd) => cmd,
-            }
-        } else {
-            command
-        };
+            return;
+        }
+
         match command {
             TickerPlantCommand::Close => {
                 self.core.handle_close().await;
@@ -910,9 +840,15 @@ impl RithmicTickerPlantHandle {
         };
 
         let _ = self.sender.send(command).await;
-        let r = rx.await.map_err(|_| RithmicError::ConnectionClosed)??;
+        // Held rather than propagated here so that `Close` is queued either way —
+        // see `RithmicOrderPlantHandle::disconnect`.
+        let outcome = rx.await.map_err(|_| RithmicError::ConnectionClosed);
         let _ = self.sender.send(TickerPlantCommand::Close).await;
-        let response = r.into_iter().next().ok_or(RithmicError::EmptyResponse)?;
+
+        let response = outcome??
+            .into_iter()
+            .next()
+            .ok_or(RithmicError::EmptyResponse)?;
         let _ = self.subscription_sender.send(response.clone());
 
         Ok(response)
@@ -1902,71 +1838,4 @@ impl Clone for RithmicTickerPlantHandle {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{TickerPlantCommand, *};
-    use crate::{
-        error::RithmicError,
-        rti::request_market_data_update::{Request, UpdateBits},
-    };
-
-    /// The disconnect race is closed by `handle_command` guarding on
-    /// `core.close_requested`. That guard uses `into_response_sender_or_command`
-    /// to pluck the responder out of request-bearing commands and drop them
-    /// with `ConnectionClosed` — so every request-bearing variant MUST return
-    /// `Ok(sender)`, and every fire-and-forget variant MUST return `Err(cmd)`
-    /// so that, e.g., `Close` still reaches `handle_close`.
-    #[test]
-    fn responder_bearing_variants_surface_sender() {
-        let (tx, _rx) = oneshot::channel();
-        let cmd = TickerPlantCommand::Subscribe {
-            symbol: "ESH6".to_string(),
-            exchange: "CME".to_string(),
-            fields: vec![UpdateBits::LastTrade],
-            request_type: Request::Subscribe,
-            response_sender: tx,
-        };
-        assert!(cmd.into_response_sender_or_command().is_ok());
-    }
-
-    #[test]
-    fn fire_and_forget_variants_are_preserved() {
-        assert!(matches!(
-            TickerPlantCommand::Close.into_response_sender_or_command(),
-            Err(TickerPlantCommand::Close)
-        ));
-        assert!(matches!(
-            TickerPlantCommand::Abort.into_response_sender_or_command(),
-            Err(TickerPlantCommand::Abort)
-        ));
-        assert!(matches!(
-            TickerPlantCommand::SetLogin.into_response_sender_or_command(),
-            Err(TickerPlantCommand::SetLogin)
-        ));
-    }
-
-    /// Reproduces the guard's outcome for a Subscribe queued after
-    /// `close_requested=true`: the responder resolves with
-    /// `RithmicError::ConnectionClosed` instead of hitting Rithmic.
-    #[tokio::test]
-    async fn responder_drained_with_connection_closed() {
-        let (tx, rx) = oneshot::channel::<Result<Vec<RithmicResponse>, RithmicError>>();
-        let cmd = TickerPlantCommand::Subscribe {
-            symbol: "ESH6".to_string(),
-            exchange: "CME".to_string(),
-            fields: vec![UpdateBits::LastTrade],
-            request_type: Request::Subscribe,
-            response_sender: tx,
-        };
-
-        if let Ok(sender) = cmd.into_response_sender_or_command() {
-            let _ = sender.send(Err(RithmicError::ConnectionClosed));
-        } else {
-            panic!("Subscribe must carry a responder");
-        }
-
-        assert!(matches!(
-            rx.await.unwrap(),
-            Err(RithmicError::ConnectionClosed)
-        ));
-    }
-}
+mod tests;

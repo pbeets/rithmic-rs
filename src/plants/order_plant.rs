@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use futures_util::StreamExt;
 use tokio_tungstenite::tungstenite::Message;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::{
     ConnectStrategy,
@@ -482,6 +482,21 @@ impl PlantActor for OrderPlant {
     }
 
     async fn handle_command(&mut self, command: OrderPlantCommand) {
+        // Disconnect race guard — see `TickerPlant::handle_command`.
+        if self.core.close_requested
+            && !matches!(
+                command,
+                OrderPlantCommand::Close
+                    | OrderPlantCommand::SetLogin
+                    | OrderPlantCommand::UpdateHeartbeat { .. }
+                    | OrderPlantCommand::Abort
+            )
+        {
+            debug!("order_plant: dropping a command queued after close was requested");
+
+            return;
+        }
+
         match command {
             OrderPlantCommand::Close => {
                 self.core.handle_close().await;
@@ -1305,10 +1320,17 @@ impl RithmicOrderPlantHandle {
         };
 
         let _ = self.sender.send(command).await;
-        let r = rx.await.map_err(|_| RithmicError::ConnectionClosed)??;
+        // Held rather than propagated here so that `Close` is queued either way:
+        // `handle_logout` has already set `close_requested`, so an actor that
+        // never receives `Close` stops sending heartbeats, drops every later
+        // command, and never drains its pending requests.
+        let outcome = rx.await.map_err(|_| RithmicError::ConnectionClosed);
         let _ = self.sender.send(OrderPlantCommand::Close).await;
 
-        r.into_iter().next().ok_or(RithmicError::EmptyResponse)
+        outcome??
+            .into_iter()
+            .next()
+            .ok_or(RithmicError::EmptyResponse)
     }
 
     /// Immediately shut down the order plant actor without a graceful logout.
@@ -2261,85 +2283,4 @@ impl RithmicOrderPlantHandle {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::api::rithmic_command_types::RithmicOcoOrderLeg;
-
-    fn test_handle() -> (RithmicOrderPlantHandle, mpsc::Receiver<OrderPlantCommand>) {
-        let account = Arc::new(RithmicAccount::new("FCM_A", "IB_A", "ACCOUNT_A"));
-        let (sender, command_receiver) = mpsc::channel(4);
-        let (_, subscription_receiver) = broadcast::channel(4);
-
-        let handle = RithmicOrderPlantHandle {
-            account: account.clone(),
-            sender,
-            subscription_receiver: SubscriptionFilter::new(account, subscription_receiver),
-        };
-
-        (handle, command_receiver)
-    }
-
-    fn leg(tag: &str) -> RithmicOcoOrderLeg {
-        RithmicOcoOrderLeg {
-            symbol: "ESM6".to_string(),
-            exchange: "CME".to_string(),
-            quantity: 1,
-            price: 5000.0,
-            trigger_price: None,
-            transaction_type: crate::rti::request_oco_order::TransactionType::Buy,
-            duration: crate::rti::request_oco_order::Duration::Day,
-            price_type: crate::rti::request_oco_order::PriceType::Limit,
-            user_tag: tag.to_string(),
-            trailing_stop: None,
-        }
-    }
-
-    #[tokio::test]
-    async fn place_oco_order_multi_rejects_fewer_than_two_legs() {
-        for legs in [vec![], vec![leg("only")]] {
-            let (handle, mut command_receiver) = test_handle();
-
-            // Without the guard the command reaches the actor, which is not
-            // running here, and the call parks on its response channel. The
-            // timeout turns that into a failure instead of a hung suite.
-            let err = tokio::time::timeout(
-                std::time::Duration::from_secs(5),
-                handle.place_oco_order_multi(legs),
-            )
-            .await
-            .expect("must be rejected without reaching the actor")
-            .expect_err("fewer than two legs must be rejected");
-
-            assert!(matches!(err, RithmicError::InvalidArgument(_)));
-            // Rejected before reaching the actor, so nothing was queued.
-            assert!(command_receiver.try_recv().is_err());
-        }
-    }
-
-    #[tokio::test]
-    async fn place_oco_order_multi_forwards_two_or_more_legs() {
-        let (handle, mut command_receiver) = test_handle();
-
-        // The call parks on its response channel until the actor answers, so it
-        // has to run alongside the receive below rather than before it.
-        let call = tokio::spawn(async move {
-            handle
-                .place_oco_order_multi(vec![leg("a"), leg("b"), leg("c")])
-                .await
-        });
-
-        match command_receiver.recv().await {
-            Some(OrderPlantCommand::PlaceOcoOrderMulti { legs, .. }) => {
-                assert_eq!(legs.len(), 3);
-                assert_eq!(legs[2].user_tag, "c");
-                // Dropping the command drops the responder, which unparks the call.
-            }
-            _ => panic!("expected PlaceOcoOrderMulti to be queued"),
-        }
-
-        assert!(matches!(
-            call.await.expect("call task panicked"),
-            Err(RithmicError::ConnectionClosed)
-        ));
-    }
-}
+mod tests;
