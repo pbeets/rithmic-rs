@@ -9,7 +9,12 @@ use crate::{
     },
     plants::test_support::{
         self, Responder, assert_close_still_sent, assert_rejected_after_close,
-        assert_sent_while_open, assert_wire_silent, read_wire_request, test_account,
+        assert_sent_while_open, assert_update_routed_to_subscribers, assert_wire_silent,
+        read_wire_request, test_account,
+    },
+    rti::{
+        AccountListUpdates, AccountRmsUpdates, BracketUpdates, ExchangeOrderNotification,
+        RithmicOrderNotification, TradeRoute, UpdateEasyToBorrowList,
     },
 };
 
@@ -456,4 +461,162 @@ async fn a_logged_in_actor_scopes_every_request_that_carries_a_user_type() {
         cancel_all.user_type,
         Some(crate::rti::request_cancel_all_orders::UserType::Ib.into())
     );
+}
+
+/// Every template the order plant receives unsolicited, i.e. every one the
+/// receiver API marks `is_update`, belongs on the subscription broadcast and
+/// must never reach the request handler.
+mod update_routing {
+    use super::*;
+
+    /// Template 350 — trade route availability.
+    #[tokio::test]
+    async fn trade_route_reaches_subscribers() {
+        assert_update_routed_to_subscribers(
+            "order_plant",
+            TradeRoute {
+                template_id: 350,
+                exchange: Some("CME".to_string()),
+                trade_route: Some("globex".to_string()),
+                ..TradeRoute::default()
+            },
+            |message| {
+                matches!(
+                    message,
+                    RithmicMessage::TradeRoute(update)
+                        if update.trade_route.as_deref() == Some("globex")
+                )
+            },
+        )
+        .await;
+    }
+
+    /// Template 351 — Rithmic-side order notification.
+    #[tokio::test]
+    async fn rithmic_order_notification_reaches_subscribers() {
+        assert_update_routed_to_subscribers(
+            "order_plant",
+            RithmicOrderNotification {
+                template_id: 351,
+                account_id: Some("ACCOUNT_A".to_string()),
+                basket_id: Some("basket-1".to_string()),
+                ..RithmicOrderNotification::default()
+            },
+            |message| {
+                matches!(
+                    message,
+                    RithmicMessage::RithmicOrderNotification(update)
+                        if update.basket_id.as_deref() == Some("basket-1")
+                )
+            },
+        )
+        .await;
+    }
+
+    /// Template 352 — exchange-side order notification.
+    #[tokio::test]
+    async fn exchange_order_notification_reaches_subscribers() {
+        assert_update_routed_to_subscribers(
+            "order_plant",
+            ExchangeOrderNotification {
+                template_id: 352,
+                account_id: Some("ACCOUNT_A".to_string()),
+                exchange_order_id: Some("exch-1".to_string()),
+                ..ExchangeOrderNotification::default()
+            },
+            |message| {
+                matches!(
+                    message,
+                    RithmicMessage::ExchangeOrderNotification(update)
+                        if update.exchange_order_id.as_deref() == Some("exch-1")
+                )
+            },
+        )
+        .await;
+    }
+
+    /// Template 353 — bracket target/stop updates.
+    #[tokio::test]
+    async fn bracket_updates_reach_subscribers() {
+        assert_update_routed_to_subscribers(
+            "order_plant",
+            BracketUpdates {
+                template_id: 353,
+                account_id: Some("ACCOUNT_A".to_string()),
+                target_ticks: Some(8),
+                ..BracketUpdates::default()
+            },
+            |message| {
+                matches!(
+                    message,
+                    RithmicMessage::BracketUpdates(update) if update.target_ticks == Some(8)
+                )
+            },
+        )
+        .await;
+    }
+
+    /// Template 354 — account list updates.
+    #[tokio::test]
+    async fn account_list_updates_reach_subscribers() {
+        assert_update_routed_to_subscribers(
+            "order_plant",
+            AccountListUpdates {
+                template_id: 354,
+                account_id: Some("ACCOUNT_A".to_string()),
+                ..AccountListUpdates::default()
+            },
+            |message| {
+                matches!(
+                    message,
+                    RithmicMessage::AccountListUpdates(update)
+                        if update.account_id.as_deref() == Some("ACCOUNT_A")
+                )
+            },
+        )
+        .await;
+    }
+
+    /// Template 355 — easy-to-borrow list updates.
+    #[tokio::test]
+    async fn update_easy_to_borrow_list_reaches_subscribers() {
+        assert_update_routed_to_subscribers(
+            "order_plant",
+            UpdateEasyToBorrowList {
+                template_id: 355,
+                symbol: Some("ESM6".to_string()),
+                ..UpdateEasyToBorrowList::default()
+            },
+            |message| {
+                matches!(
+                    message,
+                    RithmicMessage::UpdateEasyToBorrowList(update)
+                        if update.symbol.as_deref() == Some("ESM6")
+                )
+            },
+        )
+        .await;
+    }
+
+    /// Template 356 — account RMS updates, including auto-liquidation.
+    #[tokio::test]
+    async fn account_rms_updates_reach_subscribers() {
+        assert_update_routed_to_subscribers(
+            "order_plant",
+            AccountRmsUpdates {
+                template_id: 356,
+                account_id: Some("ACCOUNT_A".to_string()),
+                auto_liq_threshold_current_value: Some("1000".to_string()),
+                ..AccountRmsUpdates::default()
+            },
+            |message| {
+                matches!(
+                    message,
+                    RithmicMessage::AccountRmsUpdates(update)
+                        if update.auto_liq_threshold_current_value.as_deref() == Some("1000")
+                )
+            },
+        )
+        .await;
+    }
 }

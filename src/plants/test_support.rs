@@ -8,7 +8,10 @@ use tokio::{
     net::{TcpListener, TcpStream},
     sync::{broadcast, mpsc, oneshot},
 };
-use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, tungstenite::protocol::Role};
+use tokio_tungstenite::{
+    MaybeTlsStream, WebSocketStream,
+    tungstenite::{Message, protocol::Role},
+};
 
 use crate::{
     api::{
@@ -19,7 +22,8 @@ use crate::{
     error::RithmicError,
     ping_manager::PingManager,
     plants::core::PlantCore,
-    request_handler::RithmicRequestHandler,
+    request_handler::{RithmicRequest, RithmicRequestHandler},
+    rti::messages::RithmicMessage,
     ws::{PING_TIMEOUT_SECS, PlantActor, get_heartbeat_interval, get_ping_interval},
 };
 
@@ -212,6 +216,72 @@ pub(crate) async fn read_wire_request(client: &mut TcpStream) -> Vec<u8> {
     assert!(payload.len() >= 4, "a request carries a length header");
 
     payload.split_off(4)
+}
+
+/// Prefixes an encoded message with the 4-byte big-endian length header that
+/// precedes every Rithmic frame on the wire.
+pub(crate) fn framed<M: prost::Message>(message: &M) -> Vec<u8> {
+    let mut payload = Vec::new();
+    message.encode(&mut payload).unwrap();
+
+    let mut frame = (payload.len() as u32).to_be_bytes().to_vec();
+    frame.extend(payload);
+    frame
+}
+
+/// Feeds one unsolicited update frame through the same decode-and-route call a
+/// plant's `run` loop makes for an inbound binary message, and asserts what an
+/// update template must hold: it reaches the subscription channel intact, it
+/// carries no request id or error, it does not stop the actor, and it leaves a
+/// registered request oneshot pending.
+///
+/// The oneshot is registered under the *empty* request id the update itself
+/// carries. Routing that handed updates to the request handler would therefore
+/// resolve it, rather than find no responder and leave the assertion satisfied
+/// by accident.
+pub(crate) async fn assert_update_routed_to_subscribers<M: prost::Message>(
+    source: &str,
+    update: M,
+    is_expected: fn(&RithmicMessage) -> bool,
+) {
+    // `_client` holds the client half of the socket open for the whole test.
+    let (mut core, _client) = core_with_wire(source).await;
+    let mut subscription = core.subscription_sender.subscribe();
+
+    let (responder, mut pending) = oneshot::channel();
+    core.request_handler.register_request(RithmicRequest {
+        request_id: String::new(),
+        responder,
+    });
+
+    let stop = core
+        .handle_rithmic_message(Ok(Message::Binary(framed(&update).into())))
+        .await;
+
+    assert!(!stop, "an update must not stop the actor");
+
+    let response = subscription
+        .try_recv()
+        .unwrap_or_else(|e| panic!("update did not reach the subscription channel: {e:?}"));
+
+    assert!(
+        is_expected(&response.message),
+        "unexpected message on the subscription channel: {:?}",
+        response.message
+    );
+    assert_eq!(
+        response.request_id, "",
+        "an unsolicited update answers no request and must carry no request id"
+    );
+    assert!(
+        response.error.is_none(),
+        "an update must not carry an error: {:?}",
+        response.error
+    );
+    assert!(
+        matches!(pending.try_recv(), Err(oneshot::error::TryRecvError::Empty)),
+        "an update must not resolve a registered request oneshot"
+    );
 }
 
 /// Resolves a response channel the way every plant handle method does: a

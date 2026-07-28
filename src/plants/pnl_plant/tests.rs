@@ -1,9 +1,13 @@
 use tokio::net::TcpStream;
 
 use super::*;
-use crate::plants::test_support::{
-    self, Responder, assert_close_still_sent, assert_rejected_after_close, assert_sent_while_open,
-    assert_wire_silent, test_account,
+use crate::{
+    plants::test_support::{
+        self, Responder, assert_close_still_sent, assert_rejected_after_close,
+        assert_sent_while_open, assert_update_routed_to_subscribers, assert_wire_silent,
+        test_account,
+    },
+    rti::{AccountPnLPositionUpdate, InstrumentPnLPositionUpdate},
 };
 
 async fn plant_with_wire() -> (PnlPlant, mpsc::Sender<PnlPlantCommand>, TcpStream) {
@@ -125,4 +129,53 @@ async fn disconnect_sends_close_even_when_logout_fails() {
         call.await.expect("call task panicked"),
         Err(RithmicError::SendFailed)
     ));
+}
+
+/// Every template the PnL plant receives unsolicited belongs on the
+/// subscription broadcast and must never reach the request handler.
+mod update_routing {
+    use super::*;
+
+    /// Template 450 — instrument-level P&L update.
+    #[tokio::test]
+    async fn instrument_pnl_position_update_reaches_subscribers() {
+        assert_update_routed_to_subscribers(
+            "pnl_plant",
+            InstrumentPnLPositionUpdate {
+                template_id: 450,
+                account_id: Some("ACCOUNT_A".to_string()),
+                symbol: Some("ESM6".to_string()),
+                ..InstrumentPnLPositionUpdate::default()
+            },
+            |message| {
+                matches!(
+                    message,
+                    RithmicMessage::InstrumentPnLPositionUpdate(update)
+                        if update.symbol.as_deref() == Some("ESM6")
+                )
+            },
+        )
+        .await;
+    }
+
+    /// Template 451 — account-level P&L update.
+    #[tokio::test]
+    async fn account_pnl_position_update_reaches_subscribers() {
+        assert_update_routed_to_subscribers(
+            "pnl_plant",
+            AccountPnLPositionUpdate {
+                template_id: 451,
+                account_id: Some("ACCOUNT_A".to_string()),
+                ..AccountPnLPositionUpdate::default()
+            },
+            |message| {
+                matches!(
+                    message,
+                    RithmicMessage::AccountPnLPositionUpdate(update)
+                        if update.account_id.as_deref() == Some("ACCOUNT_A")
+                )
+            },
+        )
+        .await;
+    }
 }
