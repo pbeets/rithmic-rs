@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use futures_util::StreamExt;
 use tokio_tungstenite::tungstenite::Message;
@@ -12,6 +12,7 @@ use crate::{
             LoginConfig, RithmicAdvancedBracketOrder, RithmicBracketOrder, RithmicCancelOrder,
             RithmicModifyOrder, RithmicOcoOrderLeg, RithmicOrder,
         },
+        sender_api::LoginScope,
     },
     config::{RithmicAccount, RithmicConfig},
     error::RithmicError,
@@ -324,6 +325,8 @@ pub struct RithmicOrderPlant {
     pub(crate) connection_handle: JoinHandle<()>,
     sender: mpsc::Sender<OrderPlantCommand>,
     subscription_sender: broadcast::Sender<RithmicResponse>,
+    /// Shared with the actor and every handle, so one login scopes them all.
+    login_scope: Arc<OnceLock<LoginScope>>,
 }
 
 impl RithmicOrderPlant {
@@ -346,7 +349,15 @@ impl RithmicOrderPlant {
     ) -> Result<RithmicOrderPlant, RithmicError> {
         let (req_tx, req_rx) = mpsc::channel::<OrderPlantCommand>(64);
         let (sub_tx, _sub_rx) = broadcast::channel(10_000);
-        let mut order_plant = OrderPlant::new(req_rx, sub_tx.clone(), config, strategy).await?;
+        let login_scope = Arc::new(OnceLock::new());
+        let mut order_plant = OrderPlant::new(
+            req_rx,
+            sub_tx.clone(),
+            config,
+            strategy,
+            Arc::clone(&login_scope),
+        )
+        .await?;
 
         let connection_handle = tokio::spawn(async move {
             order_plant.run().await;
@@ -356,6 +367,7 @@ impl RithmicOrderPlant {
             connection_handle,
             sender: req_tx,
             subscription_sender: sub_tx,
+            login_scope,
         })
     }
 }
@@ -376,6 +388,7 @@ impl RithmicOrderPlant {
 
         RithmicOrderPlantHandle {
             account,
+            login_scope: Arc::clone(&self.login_scope),
             sender: self.sender.clone(),
             subscription_receiver: SubscriptionFilter::new(
                 account_for_filter,
@@ -389,6 +402,7 @@ impl RithmicOrderPlant {
 struct OrderPlant {
     core: PlantCore,
     request_receiver: mpsc::Receiver<OrderPlantCommand>,
+    login_scope: Arc<OnceLock<LoginScope>>,
 }
 
 impl OrderPlant {
@@ -397,12 +411,14 @@ impl OrderPlant {
         subscription_sender: broadcast::Sender<RithmicResponse>,
         config: &RithmicConfig,
         strategy: ConnectStrategy,
+        login_scope: Arc<OnceLock<LoginScope>>,
     ) -> Result<OrderPlant, RithmicError> {
         let core = PlantCore::new(subscription_sender, config, strategy, "order_plant").await?;
 
         Ok(OrderPlant {
             core,
             request_receiver,
+            login_scope,
         })
     }
 }
@@ -522,7 +538,10 @@ impl PlantActor for OrderPlant {
                 self.core.handle_update_heartbeat(seconds);
             }
             OrderPlantCommand::AccountList { response_sender } => {
-                let (req_buf, id) = self.core.rithmic_sender_api.request_account_list();
+                let (req_buf, id) = self
+                    .core
+                    .rithmic_sender_api
+                    .request_account_list(self.login_scope.get());
 
                 self.core.request_handler.register_request(RithmicRequest {
                     request_id: id.clone(),
@@ -574,10 +593,11 @@ impl PlantActor for OrderPlant {
                 account,
                 response_sender,
             } => {
-                let (req_buf, id) = self
-                    .core
-                    .rithmic_sender_api
-                    .request_bracket_order(bracket_order, &account);
+                let (req_buf, id) = self.core.rithmic_sender_api.request_bracket_order(
+                    bracket_order,
+                    &account,
+                    self.login_scope.get(),
+                );
 
                 self.core.request_handler.register_request(RithmicRequest {
                     request_id: id.clone(),
@@ -593,10 +613,11 @@ impl PlantActor for OrderPlant {
                 account,
                 response_sender,
             } => {
-                let (req_buf, id) = self
-                    .core
-                    .rithmic_sender_api
-                    .request_advanced_bracket_order(bracket_order, &account);
+                let (req_buf, id) = self.core.rithmic_sender_api.request_advanced_bracket_order(
+                    bracket_order,
+                    &account,
+                    self.login_scope.get(),
+                );
 
                 self.core.request_handler.register_request(RithmicRequest {
                     request_id: id.clone(),
@@ -713,7 +734,7 @@ impl PlantActor for OrderPlant {
                 let (req_buf, id) = self
                     .core
                     .rithmic_sender_api
-                    .request_cancel_all_orders(&account);
+                    .request_cancel_all_orders(&account, self.login_scope.get());
 
                 self.core.request_handler.register_request(RithmicRequest {
                     request_id: id.clone(),
@@ -731,7 +752,7 @@ impl PlantActor for OrderPlant {
                 let (req_buf, id) = self
                     .core
                     .rithmic_sender_api
-                    .request_account_rms_info(&account);
+                    .request_account_rms_info(&account, self.login_scope.get());
 
                 self.core.request_handler.register_request(RithmicRequest {
                     request_id: id.clone(),
@@ -1206,6 +1227,8 @@ impl PlantActor for OrderPlant {
 /// updates arrive on [`subscription_receiver`](Self::subscription_receiver).
 pub struct RithmicOrderPlantHandle {
     account: Arc<RithmicAccount>,
+    /// Set by the first successful login on any handle from this plant.
+    login_scope: Arc<OnceLock<LoginScope>>,
     sender: mpsc::Sender<OrderPlantCommand>,
     /// Receiver for real-time order updates and responses.
     pub subscription_receiver: SubscriptionFilter,
@@ -1303,6 +1326,23 @@ impl RithmicOrderPlantHandle {
             }
         }
 
+        // Non-fatal: the login already succeeded, so failing to get the scope just
+        // leaves later requests unscoped rather than failing the connection.
+        match self.get_login_info().await {
+            Ok(response) => {
+                if let Some(err) = &response.error {
+                    warn!(
+                        "order_plant: login info rejected, account list will be unscoped: {:?}",
+                        err
+                    );
+                }
+            }
+            Err(err) => warn!(
+                "order_plant: login info unavailable, account list will be unscoped: {:?}",
+                err
+            ),
+        }
+
         info!("order_plant: logged in");
 
         Ok(response)
@@ -1344,10 +1384,18 @@ impl RithmicOrderPlantHandle {
 
     /// Get a list of available trading accounts
     ///
+    /// Returns the accounts the login covers. Unscoped, and so possibly wider, if
+    /// [`Self::login`] could not retrieve the login info.
+    ///
     /// # Returns
     /// A vector of account list responses or an error message
     pub async fn get_account_list(&self) -> Result<Vec<RithmicResponse>, RithmicError> {
         let (tx, rx) = oneshot::channel::<Result<Vec<RithmicResponse>, RithmicError>>();
+
+        // Warn here too, not just at login: this is where the wider list comes back.
+        if self.login_scope.get().is_none() {
+            warn!("order_plant: no login info retained, listing accounts unscoped");
+        }
 
         let command = OrderPlantCommand::AccountList {
             response_sender: tx,
@@ -1615,6 +1663,9 @@ impl RithmicOrderPlantHandle {
     }
 
     /// Get account RMS (Risk Management System) information
+    ///
+    /// Template 304 names no account, so like [`get_account_list`](Self::get_account_list)
+    /// this covers every account the login reaches, not just this handle's.
     ///
     /// # Returns
     /// A vector of RMS info responses or an error message
@@ -2118,6 +2169,9 @@ impl RithmicOrderPlantHandle {
 
     /// Get login information for the current session
     ///
+    /// [`Self::login`] already calls this once and the first success is what scopes
+    /// later requests, so calling it again returns the response but changes nothing.
+    ///
     /// # Returns
     /// The login info response or an error message
     pub async fn get_login_info(&self) -> Result<RithmicResponse, RithmicError> {
@@ -2129,11 +2183,27 @@ impl RithmicOrderPlantHandle {
 
         let _ = self.sender.send(command).await;
 
-        rx.await
+        let response = rx
+            .await
             .map_err(|_| RithmicError::ConnectionClosed)??
             .into_iter()
             .next()
-            .ok_or(RithmicError::EmptyResponse)
+            .ok_or(RithmicError::EmptyResponse)?;
+
+        // A rejected response has no usable identity in it. (A `match` rather than a
+        // let-chain: those need Rust 1.88 and the MSRV is 1.85.)
+        let scope = match &response.message {
+            RithmicMessage::ResponseLoginInfo(info) if response.error.is_none() => {
+                LoginScope::from_login_info(info)
+            }
+            _ => None,
+        };
+
+        if let Some(scope) = scope {
+            let _ = self.login_scope.set(scope);
+        }
+
+        Ok(response)
     }
 
     /// List unaccepted agreements

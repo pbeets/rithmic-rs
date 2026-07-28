@@ -26,22 +26,89 @@ use crate::{
         RequestSubscribeToBracketUpdates, RequestTickBarReplay, RequestTickBarUpdate,
         RequestTimeBarReplay, RequestTimeBarUpdate, RequestTradeRoutes,
         RequestUpdateStopBracketLevel, RequestUpdateTargetBracketLevel,
-        RequestVolumeProfileMinuteBars,
-        request_account_list::UserType,
-        request_account_rms_updates, request_cancel_all_orders, request_depth_by_order_updates,
-        request_easy_to_borrow_list,
+        RequestVolumeProfileMinuteBars, ResponseLoginInfo, request_account_list,
+        request_account_rms_info, request_account_rms_updates, request_bracket_order,
+        request_cancel_all_orders, request_depth_by_order_updates, request_easy_to_borrow_list,
         request_login::SysInfraType,
         request_market_data_update::{Request, UpdateBits},
         request_market_data_update_by_underlying, request_modify_order, request_oco_order,
         request_pn_l_position_updates, request_search_symbols,
         request_tick_bar_replay::{BarSubType, BarType, Direction, TimeOrder},
         request_tick_bar_update, request_time_bar_replay, request_time_bar_update,
+        response_login_info,
     },
 };
 
 pub(crate) const TRADE_ROUTE_LIVE: &str = "globex";
 pub(crate) const TRADE_ROUTE_DEMO: &str = "simulator";
-pub(crate) const USER_TYPE: i32 = 3;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LoginUserType {
+    Fcm,
+    Ib,
+    Trader,
+}
+
+// Each request proto declares its own `UserType`. List every one here so no request is
+// left hardcoding a user type the login never granted.
+//
+// Mapped by name, not by cast — the numbers agree today, but a cast would keep sending
+// the old one if a proto were renumbered.
+macro_rules! login_user_type_accessors {
+    ($($accessor:ident => $request:ty),+ $(,)?) => {
+        impl LoginUserType {
+            $(
+                fn $accessor(self) -> $request {
+                    match self {
+                        LoginUserType::Fcm => <$request>::Fcm,
+                        LoginUserType::Ib => <$request>::Ib,
+                        LoginUserType::Trader => <$request>::Trader,
+                    }
+                }
+            )+
+        }
+    };
+}
+
+login_user_type_accessors! {
+    account_list => request_account_list::UserType,
+    account_rms_info => request_account_rms_info::UserType,
+    bracket_order => request_bracket_order::UserType,
+    cancel_all_orders => request_cancel_all_orders::UserType,
+}
+
+/// What a login grants, used to scope requests by it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct LoginScope {
+    pub(crate) fcm_id: Option<String>,
+    pub(crate) ib_id: Option<String>,
+    pub(crate) user_type: LoginUserType,
+}
+
+impl LoginScope {
+    /// The only way to build one, so a scope that exists is always one the requests can
+    /// send. `None` for a user type they can't: `Admin`, out of range, or absent.
+    ///
+    /// `Admin` is missing from the account-list and RMS-info protos entirely, so a scope
+    /// only half the requests could use would be worse than none.
+    pub(crate) fn from_login_info(info: &ResponseLoginInfo) -> Option<Self> {
+        let user_type = match info
+            .user_type
+            .and_then(|ty| response_login_info::UserType::try_from(ty).ok())?
+        {
+            response_login_info::UserType::Fcm => LoginUserType::Fcm,
+            response_login_info::UserType::Ib => LoginUserType::Ib,
+            response_login_info::UserType::Trader => LoginUserType::Trader,
+            response_login_info::UserType::Admin => return None,
+        };
+
+        Some(LoginScope {
+            fcm_id: info.fcm_id.clone(),
+            ib_id: info.ib_id.clone(),
+            user_type,
+        })
+    }
+}
 
 #[derive(Debug, Clone)]
 pub(crate) struct RithmicSenderApi {
@@ -388,14 +455,26 @@ impl RithmicSenderApi {
         self.request_to_buf(req, id)
     }
 
-    pub fn request_account_list(&mut self) -> (Vec<u8>, String) {
+    /// Request the accounts visible to the logged-in user
+    ///
+    /// # Arguments
+    /// * `scope` - Narrows the query to the login. `None` sends no ids and `Trader`.
+    ///
+    /// # Returns
+    /// A tuple of (serialized request buffer, request ID)
+    pub fn request_account_list(&mut self, scope: Option<&LoginScope>) -> (Vec<u8>, String) {
         let id = self.get_next_message_id();
 
         let req = RequestAccountList {
             template_id: 302,
-            fcm_id: None,
-            ib_id: None,
-            user_type: Some(UserType::Trader.into()),
+            fcm_id: scope.and_then(|s| s.fcm_id.clone()),
+            ib_id: scope.and_then(|s| s.ib_id.clone()),
+            user_type: Some(
+                scope
+                    .map_or(LoginUserType::Trader, |s| s.user_type)
+                    .account_list()
+                    .into(),
+            ),
             user_msg: vec![id.clone()],
         };
 
@@ -488,14 +567,16 @@ impl RithmicSenderApi {
         &mut self,
         bracket_order: RithmicBracketOrder,
         account: &RithmicAccount,
+        scope: Option<&LoginScope>,
     ) -> (Vec<u8>, String) {
-        self.request_advanced_bracket_order(bracket_order.into(), account)
+        self.request_advanced_bracket_order(bracket_order.into(), account, scope)
     }
 
     pub fn request_advanced_bracket_order(
         &mut self,
         bracket_order: RithmicAdvancedBracketOrder,
         account: &RithmicAccount,
+        scope: Option<&LoginScope>,
     ) -> (Vec<u8>, String) {
         let id = self.get_next_message_id();
 
@@ -512,7 +593,12 @@ impl RithmicSenderApi {
             trade_route: Some(trade_route.into()),
             exchange: Some(bracket_order.exchange),
             symbol: Some(bracket_order.symbol),
-            user_type: Some(USER_TYPE),
+            user_type: Some(
+                scope
+                    .map_or(LoginUserType::Trader, |s| s.user_type)
+                    .bracket_order()
+                    .into(),
+            ),
             quantity: Some(bracket_order.quantity),
             transaction_type: Some(bracket_order.action.into()),
             price_type: Some(bracket_order.price_type.into()),
@@ -988,7 +1074,11 @@ impl RithmicSenderApi {
     ///
     /// # Returns
     /// A tuple of (serialized request buffer, request ID)
-    pub fn request_cancel_all_orders(&mut self, account: &RithmicAccount) -> (Vec<u8>, String) {
+    pub fn request_cancel_all_orders(
+        &mut self,
+        account: &RithmicAccount,
+        scope: Option<&LoginScope>,
+    ) -> (Vec<u8>, String) {
         let id = self.get_next_message_id();
 
         let req = RequestCancelAllOrders {
@@ -996,7 +1086,12 @@ impl RithmicSenderApi {
             fcm_id: Some(account.fcm_id.clone()),
             ib_id: Some(account.ib_id.clone()),
             account_id: Some(account.account_id.clone()),
-            user_type: Some(USER_TYPE),
+            user_type: Some(
+                scope
+                    .map_or(LoginUserType::Trader, |s| s.user_type)
+                    .cancel_all_orders()
+                    .into(),
+            ),
             manual_or_auto: Some(request_cancel_all_orders::OrderPlacement::Manual.into()),
             user_msg: vec![id.clone()],
         };
@@ -1006,19 +1101,39 @@ impl RithmicSenderApi {
 
     /// Request account RMS (Risk Management System) information
     ///
-    /// Returns risk management limits and settings for the account.
+    /// Template 304 has no `account_id` field, so this covers every account the login
+    /// reaches rather than one account.
+    ///
+    /// # Arguments
+    /// * `account` - Supplies the ids only when there is no scope.
+    /// * `scope` - Narrows the query to the login.
     ///
     /// # Returns
     /// A tuple of (serialized request buffer, request ID)
-    pub fn request_account_rms_info(&mut self, account: &RithmicAccount) -> (Vec<u8>, String) {
+    pub fn request_account_rms_info(
+        &mut self,
+        account: &RithmicAccount,
+        scope: Option<&LoginScope>,
+    ) -> (Vec<u8>, String) {
         let id = self.get_next_message_id();
 
         let req = RequestAccountRmsInfo {
             template_id: 304,
             user_msg: vec![id.clone()],
-            fcm_id: Some(account.fcm_id.clone()),
-            ib_id: Some(account.ib_id.clone()),
-            user_type: Some(USER_TYPE),
+            fcm_id: match scope {
+                Some(scope) => scope.fcm_id.clone(),
+                None => Some(account.fcm_id.clone()),
+            },
+            ib_id: match scope {
+                Some(scope) => scope.ib_id.clone(),
+                None => Some(account.ib_id.clone()),
+            },
+            user_type: Some(
+                scope
+                    .map_or(LoginUserType::Trader, |s| s.user_type)
+                    .account_rms_info()
+                    .into(),
+            ),
         };
 
         self.request_to_buf(req, id)
@@ -1902,7 +2017,7 @@ mod tests {
             symbol: "ESM6".to_string(),
         };
 
-        let (buf, _) = api.request_bracket_order(bracket, &override_account());
+        let (buf, _) = api.request_bracket_order(bracket, &override_account(), None);
         let request: RequestBracketOrder = decode_request(&buf);
 
         assert_eq!(request.fcm_id.as_deref(), Some("FCM_B"));
@@ -1925,7 +2040,8 @@ mod tests {
     fn advanced_bracket_request_sets_account_and_trade_route_fields() {
         let mut api = RithmicSenderApi::new(&test_config());
 
-        let (buf, _) = api.request_advanced_bracket_order(advanced_bracket(), &override_account());
+        let (buf, _) =
+            api.request_advanced_bracket_order(advanced_bracket(), &override_account(), None);
         let request: RequestBracketOrder = decode_request(&buf);
 
         assert_eq!(request.fcm_id.as_deref(), Some("FCM_B"));
@@ -1939,7 +2055,8 @@ mod tests {
     fn advanced_bracket_request_encodes_trigger_and_if_touched_fields() {
         let mut api = RithmicSenderApi::new(&test_config());
 
-        let (buf, _) = api.request_advanced_bracket_order(advanced_bracket(), &default_account());
+        let (buf, _) =
+            api.request_advanced_bracket_order(advanced_bracket(), &default_account(), None);
         let request: RequestBracketOrder = decode_request(&buf);
         assert_eq!(request.price, Some(5000.25));
         assert_eq!(request.trigger_price, Some(4999.75));
@@ -1972,7 +2089,8 @@ mod tests {
     fn advanced_bracket_request_encodes_management_and_timing_fields() {
         let mut api = RithmicSenderApi::new(&test_config());
 
-        let (buf, _) = api.request_advanced_bracket_order(advanced_bracket(), &default_account());
+        let (buf, _) =
+            api.request_advanced_bracket_order(advanced_bracket(), &default_account(), None);
         let request: RequestBracketOrder = decode_request(&buf);
 
         assert_eq!(request.break_even_ticks, Some(2));
@@ -2288,5 +2406,156 @@ mod tests {
         let request: RequestModifyOrder = decode_request(&buf);
 
         assert_eq!(request.trigger_price, Some(5005.0));
+    }
+
+    /// A login granting `user_type`.
+    fn test_login_info(user_type: response_login_info::UserType) -> ResponseLoginInfo {
+        ResponseLoginInfo {
+            template_id: 301,
+            fcm_id: Some("FCM_LOGIN".to_string()),
+            ib_id: Some("IB_LOGIN".to_string()),
+            user_type: Some(user_type.into()),
+            ..ResponseLoginInfo::default()
+        }
+    }
+
+    #[test]
+    fn login_scope_maps_each_expressible_user_type() {
+        for (from, expected) in [
+            (response_login_info::UserType::Fcm, LoginUserType::Fcm),
+            (response_login_info::UserType::Ib, LoginUserType::Ib),
+            (response_login_info::UserType::Trader, LoginUserType::Trader),
+        ] {
+            let scope = LoginScope::from_login_info(&test_login_info(from))
+                .unwrap_or_else(|| panic!("{from:?} is expressible"));
+
+            assert_eq!(scope.user_type, expected);
+            assert_eq!(scope.fcm_id.as_deref(), Some("FCM_LOGIN"));
+            assert_eq!(scope.ib_id.as_deref(), Some("IB_LOGIN"));
+        }
+    }
+
+    #[test]
+    fn login_scope_rejects_a_user_type_it_cannot_express() {
+        // Carrying the ids under a substituted `Trader` would narrow the query to a
+        // scope the login never granted, so there is no partial scope to build.
+        for info in [
+            test_login_info(response_login_info::UserType::Admin),
+            ResponseLoginInfo {
+                user_type: Some(99),
+                ..test_login_info(response_login_info::UserType::Ib)
+            },
+            ResponseLoginInfo {
+                user_type: None,
+                ..test_login_info(response_login_info::UserType::Ib)
+            },
+        ] {
+            assert!(
+                LoginScope::from_login_info(&info).is_none(),
+                "{:?} must not produce a scope",
+                info.user_type
+            );
+        }
+    }
+
+    /// A scope as a successful login would leave it.
+    fn test_scope(user_type: LoginUserType) -> LoginScope {
+        LoginScope {
+            fcm_id: Some("FCM_LOGIN".to_string()),
+            ib_id: Some("IB_LOGIN".to_string()),
+            user_type,
+        }
+    }
+
+    #[test]
+    fn account_list_carries_the_scope() {
+        let mut api = RithmicSenderApi::new(&test_config());
+
+        // Trader is included on purpose: those logins carry ids too, so their bytes
+        // change as well.
+        for (user_type, expected) in [
+            (LoginUserType::Fcm, request_account_list::UserType::Fcm),
+            (LoginUserType::Ib, request_account_list::UserType::Ib),
+            (
+                LoginUserType::Trader,
+                request_account_list::UserType::Trader,
+            ),
+        ] {
+            let (buf, _) = api.request_account_list(Some(&test_scope(user_type)));
+            let request: RequestAccountList = decode_request(&buf);
+
+            assert_eq!(request.fcm_id.as_deref(), Some("FCM_LOGIN"));
+            assert_eq!(request.ib_id.as_deref(), Some("IB_LOGIN"));
+            assert_eq!(request.user_type, Some(expected.into()));
+        }
+    }
+
+    /// 304 has no `account_id`, so the login wins over the account passed in.
+    #[test]
+    fn account_rms_info_carries_the_scope_over_the_account() {
+        let mut api = RithmicSenderApi::new(&test_config());
+
+        for (user_type, expected) in [
+            (LoginUserType::Fcm, request_account_rms_info::UserType::Fcm),
+            (LoginUserType::Ib, request_account_rms_info::UserType::Ib),
+            (
+                LoginUserType::Trader,
+                request_account_rms_info::UserType::Trader,
+            ),
+        ] {
+            let (buf, _) =
+                api.request_account_rms_info(&override_account(), Some(&test_scope(user_type)));
+            let request: RequestAccountRmsInfo = decode_request(&buf);
+
+            assert_eq!(request.fcm_id.as_deref(), Some("FCM_LOGIN"));
+            assert_eq!(request.ib_id.as_deref(), Some("IB_LOGIN"));
+            assert_eq!(request.user_type, Some(expected.into()));
+        }
+    }
+
+    /// 330 and 346 name an account, so only the user type comes from the scope.
+    #[test]
+    fn account_requests_take_only_the_user_type_from_the_scope() {
+        let mut api = RithmicSenderApi::new(&test_config());
+
+        for (user_type, bracket, cancel_all) in [
+            (
+                LoginUserType::Fcm,
+                request_bracket_order::UserType::Fcm,
+                request_cancel_all_orders::UserType::Fcm,
+            ),
+            (
+                LoginUserType::Ib,
+                request_bracket_order::UserType::Ib,
+                request_cancel_all_orders::UserType::Ib,
+            ),
+            (
+                LoginUserType::Trader,
+                request_bracket_order::UserType::Trader,
+                request_cancel_all_orders::UserType::Trader,
+            ),
+        ] {
+            let scope = test_scope(user_type);
+
+            let (buf, _) = api.request_advanced_bracket_order(
+                advanced_bracket(),
+                &override_account(),
+                Some(&scope),
+            );
+            let request: RequestBracketOrder = decode_request(&buf);
+
+            assert_eq!(request.fcm_id.as_deref(), Some("FCM_B"));
+            assert_eq!(request.ib_id.as_deref(), Some("IB_B"));
+            assert_eq!(request.account_id.as_deref(), Some("ACCOUNT_B"));
+            assert_eq!(request.user_type, Some(bracket.into()));
+
+            let (buf, _) = api.request_cancel_all_orders(&override_account(), Some(&scope));
+            let request: RequestCancelAllOrders = decode_request(&buf);
+
+            assert_eq!(request.fcm_id.as_deref(), Some("FCM_B"));
+            assert_eq!(request.ib_id.as_deref(), Some("IB_B"));
+            assert_eq!(request.account_id.as_deref(), Some("ACCOUNT_B"));
+            assert_eq!(request.user_type, Some(cancel_all.into()));
+        }
     }
 }

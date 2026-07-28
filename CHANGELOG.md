@@ -82,6 +82,10 @@ Public struct fields and a method signature change, so this lands in a major rel
 - **`request_account_rms_updates` sent `update_bits: None`**, so `auto_liq_threshold_current_value`
   never streamed even when subscribed.
 - **A server `ForcedLogout` (template 77) now stops the plant actor.** All four plants drain their pending requests with `ConnectionClosed`, set `close_requested` and stop the loop, instead of heartbeating a session the server has ended while callers await oneshots that never resolve. Subscribers receive the `ForcedLogout` frame unchanged, followed by the `ConnectionError` actor-lifecycle event every stopping path emits — stopping the loop means no later path raises it.
+- **Requests sent a hardcoded `Trader` user type,** and the account list sent no `fcm_id`/`ib_id`, so
+  FCM and IB logins listed no accounts. `login()` now retrieves the login info once and scopes the
+  account list, account RMS info, bracket orders and cancel-all with it — so **`get_account_list` and
+  `get_account_rms_info` may return fewer accounts than before**, including for `Trader` logins.
 
 ## [2.0.0]
 

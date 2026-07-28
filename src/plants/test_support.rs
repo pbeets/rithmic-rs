@@ -184,6 +184,36 @@ pub(crate) async fn assert_wire_wrote(client: &mut TcpStream, expectation: &str)
     assert!(matches!(read, Ok(Ok(n)) if n > 0), "{expectation}");
 }
 
+/// Reads one frame the plant wrote and returns the protobuf inside it, so a test can
+/// assert on the request itself rather than just on bytes having moved.
+pub(crate) async fn read_wire_request(client: &mut TcpStream) -> Vec<u8> {
+    let mut header = [0u8; 2];
+    tokio::time::timeout(WIRE_WRITE_TIMEOUT, client.read_exact(&mut header))
+        .await
+        .expect("timed out waiting for the request to reach the wire")
+        .expect("the connection closed before the request arrived");
+
+    assert_eq!(header[0], 0x82, "expected one final binary frame");
+    assert_eq!(header[1] & 0x80, 0, "a server frame must not be masked");
+
+    let len = match header[1] & 0x7f {
+        126 => {
+            let mut extended = [0u8; 2];
+            client.read_exact(&mut extended).await.unwrap();
+            u16::from_be_bytes(extended) as usize
+        }
+        127 => panic!("a request larger than 64 KiB is not something a plant sends"),
+        len => len as usize,
+    };
+
+    let mut payload = vec![0u8; len];
+    client.read_exact(&mut payload).await.unwrap();
+
+    assert!(payload.len() >= 4, "a request carries a length header");
+
+    payload.split_off(4)
+}
+
 /// Resolves a response channel the way every plant handle method does: a
 /// dropped responder becomes `ConnectionClosed`. Fails rather than hangs.
 pub(crate) async fn awaited_caller_outcome(
