@@ -20,8 +20,14 @@ Public struct fields and a method signature change, so this lands in a major rel
 - **`RithmicOrderPlantHandle::subscribe_account_rms_updates` gains a required `update_bits` parameter.**
   Pass `vec![]` for the prior behavior, or `vec![RmsUpdateBits::AutoLiqThresholdCurrentValue]` to
   stream auto-liq threshold updates.
+- **`RithmicOrderPlantHandle::adjust_profit` and `adjust_stop` take a `RithmicBracketLevelAdjustment`**
+  instead of `(id, ticks)`, adding a `level` that selects the bracket leg. `level: None` keeps the
+  prior behavior.
 
 ### Added
+
+- **`RithmicBracketLevelAdjustment`** — the command struct for `adjust_profit` and `adjust_stop`:
+  the basket `id`, the new `ticks` distance, and the `level` selecting a bracket leg.
 
 - **`RithmicMessage::RequestHeartbeat(RequestHeartbeat)`** — a keep-alive frame (template 18) sent by the server, which previously arrived as `UnknownTemplate`. Delivered on the subscription channel with `error: None` and an empty `request_id`: it answers no request you made, and its `user_msg` is the server's own token rather than an id this client handed out. The library does not reply to it. `RithmicMessage` is `#[non_exhaustive]`, so the new variant does not break existing matches.
 - **`RithmicMessage::UnknownTemplate(UnknownTemplateMessage)`** — a frame whose `template_id` has no message definition in this crate. Delivered with `error: None` and the message body kept as received. `RithmicMessage` is `#[non_exhaustive]`, so the new variant does not break existing matches.
@@ -86,6 +92,8 @@ Public struct fields and a method signature change, so this lands in a major rel
   FCM and IB logins listed no accounts. `login()` now retrieves the login info once and scopes the
   account list, account RMS info, bracket orders and cancel-all with it — so **`get_account_list` and
   `get_account_rms_info` may return fewer accounts than before**, including for `Trader` logins.
+- **Bracket target/stop level updates omitted the `level` field**, so on a multi-leg bracket every
+  adjustment landed on the server's default leg and the other legs were unreachable.
 
 ## [2.0.0]
 

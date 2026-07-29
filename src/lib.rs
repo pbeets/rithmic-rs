@@ -310,9 +310,9 @@ pub use api::{
     BracketCondition, BracketDuration, BracketPriceField, BracketPriceType, BracketTransactionType,
     BracketType, EasyToBorrowRequest, LoginConfig, ModifyPriceType, NewOrderDuration,
     NewOrderPriceType, NewOrderTransactionType, OcoDuration, OcoPriceType, OcoTransactionType,
-    RithmicAdvancedBracketOrder, RithmicBracketOrder, RithmicCancelOrder, RithmicIfTouchedTrigger,
-    RithmicModifyOrder, RithmicOcoOrderLeg, RithmicOrder, RithmicResponse, RmsUpdateBits,
-    TrailingStop,
+    RithmicAdvancedBracketOrder, RithmicBracketLevelAdjustment, RithmicBracketOrder,
+    RithmicCancelOrder, RithmicIfTouchedTrigger, RithmicModifyOrder, RithmicOcoOrderLeg,
+    RithmicOrder, RithmicResponse, RmsUpdateBits, TrailingStop,
 };
 
 // Re-export utility types for convenience

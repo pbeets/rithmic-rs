@@ -26,8 +26,9 @@ pub use crate::config::RithmicAccount;
 pub use receiver_api::RithmicResponse;
 
 pub use rithmic_command_types::{
-    LoginConfig, RithmicAdvancedBracketOrder, RithmicBracketOrder, RithmicCancelOrder,
-    RithmicIfTouchedTrigger, RithmicModifyOrder, RithmicOcoOrderLeg, RithmicOrder, TrailingStop,
+    LoginConfig, RithmicAdvancedBracketOrder, RithmicBracketLevelAdjustment, RithmicBracketOrder,
+    RithmicCancelOrder, RithmicIfTouchedTrigger, RithmicModifyOrder, RithmicOcoOrderLeg,
+    RithmicOrder, TrailingStop,
 };
 
 // Re-export bracket order enums

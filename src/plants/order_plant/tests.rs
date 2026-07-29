@@ -28,6 +28,14 @@ fn test_handle() -> (RithmicOrderPlantHandle, mpsc::Receiver<OrderPlantCommand>)
     (handle, command_receiver)
 }
 
+fn adjustment(id: &str, ticks: i32, level: Option<i32>) -> RithmicBracketLevelAdjustment {
+    RithmicBracketLevelAdjustment {
+        id: id.to_string(),
+        ticks,
+        level,
+    }
+}
+
 fn leg(tag: &str) -> RithmicOcoOrderLeg {
     RithmicOcoOrderLeg {
         symbol: "ESM6".to_string(),
@@ -114,6 +122,50 @@ async fn place_oco_order_multi_forwards_two_or_more_legs() {
         call.await.expect("call task panicked"),
         Err(RithmicError::ConnectionClosed)
     ));
+}
+
+/// Both calls park on their response channels, so they run alongside the
+/// receives below. Dropping each command drops its responder and unparks one.
+#[tokio::test]
+async fn adjust_profit_and_stop_forward_the_bracket_level() {
+    let (handle, mut command_receiver) = test_handle();
+
+    let call = tokio::spawn(async move {
+        let _ = handle
+            .adjust_profit(adjustment("basket-1", 16, Some(2)))
+            .await;
+        let _ = handle.adjust_stop(adjustment("basket-2", 8, None)).await;
+    });
+
+    match command_receiver.recv().await {
+        Some(OrderPlantCommand::ModifyProfit {
+            basket_id,
+            ticks,
+            level,
+            ..
+        }) => {
+            assert_eq!(basket_id, "basket-1");
+            assert_eq!(ticks, 16);
+            assert_eq!(level, Some(2));
+        }
+        _ => panic!("expected ModifyProfit to be queued"),
+    }
+
+    match command_receiver.recv().await {
+        Some(OrderPlantCommand::ModifyStop {
+            basket_id,
+            ticks,
+            level,
+            ..
+        }) => {
+            assert_eq!(basket_id, "basket-2");
+            assert_eq!(ticks, 8);
+            assert_eq!(level, None);
+        }
+        _ => panic!("expected ModifyStop to be queued"),
+    }
+
+    call.await.expect("call task panicked");
 }
 
 #[tokio::test]
@@ -456,4 +508,43 @@ async fn a_logged_in_actor_scopes_every_request_that_carries_a_user_type() {
         cancel_all.user_type,
         Some(crate::rti::request_cancel_all_orders::UserType::Ib.into())
     );
+}
+
+/// The hop the handle-level test cannot see. Its two arms are adjacent
+/// near-copies, so every value differs: a crossed arm fails rather than passes.
+#[tokio::test]
+async fn bracket_level_commands_carry_their_level_to_the_wire() {
+    let (mut plant, _sender, mut client) = plant_with_wire().await;
+
+    let target: crate::rti::RequestUpdateTargetBracketLevel =
+        sent_request(&mut plant, &mut client, |response_sender| {
+            OrderPlantCommand::ModifyProfit {
+                basket_id: "basket-1".to_string(),
+                ticks: 16,
+                level: Some(2),
+                account: test_account(),
+                response_sender,
+            }
+        })
+        .await;
+
+    assert_eq!(target.basket_id.as_deref(), Some("basket-1"));
+    assert_eq!(target.target_ticks, Some(16));
+    assert_eq!(target.level, Some(2));
+
+    let stop: crate::rti::RequestUpdateStopBracketLevel =
+        sent_request(&mut plant, &mut client, |response_sender| {
+            OrderPlantCommand::ModifyStop {
+                basket_id: "basket-2".to_string(),
+                ticks: 8,
+                level: Some(3),
+                account: test_account(),
+                response_sender,
+            }
+        })
+        .await;
+
+    assert_eq!(stop.basket_id.as_deref(), Some("basket-2"));
+    assert_eq!(stop.stop_ticks, Some(8));
+    assert_eq!(stop.level, Some(3));
 }

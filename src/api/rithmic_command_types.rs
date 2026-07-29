@@ -421,6 +421,34 @@ pub struct RithmicCancelOrder {
     pub id: String,
 }
 
+/// Adjust one leg of a bracket's profit target or stop loss.
+///
+/// The same shape serves `adjust_profit` and `adjust_stop`.
+///
+/// # Example
+///
+/// ```ignore
+/// use rithmic_rs::RithmicBracketLevelAdjustment;
+///
+/// let adjustment = RithmicBracketLevelAdjustment {
+///     id: "123456".to_string(),  // basket_id from order notification
+///     ticks: 16,
+///     level: Some(2),
+/// };
+/// handle.adjust_profit(adjustment).await?;
+/// ```
+#[derive(Debug, Clone)]
+pub struct RithmicBracketLevelAdjustment {
+    /// The `basket_id` from the order notification
+    pub id: String,
+    /// The new distance in ticks
+    pub ticks: i32,
+    /// Which bracket leg to adjust, in the order the legs were placed (see
+    /// [`RithmicAdvancedBracketOrder`]). Sent verbatim; the crate defines no
+    /// numbering. `None` omits the field.
+    pub level: Option<i32>,
+}
+
 /// Configuration for trailing stop orders.
 ///
 /// Used both by [`RithmicOrder::trailing_stop`] for a standalone order and by

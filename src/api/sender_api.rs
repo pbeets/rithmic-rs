@@ -748,10 +748,22 @@ impl RithmicSenderApi {
         self.request_to_buf(req, id)
     }
 
+    /// Update the profit target level of a bracket
+    ///
+    /// # Arguments
+    /// * `basket_id` - The basket the bracket belongs to
+    /// * `profit_ticks` - The new profit target distance in ticks
+    /// * `level` - Which bracket leg to adjust, in the order the legs were placed.
+    ///   Sent verbatim; the crate defines no numbering. `None` omits the field.
+    /// * `account` - The account the bracket belongs to
+    ///
+    /// # Returns
+    /// A tuple of (serialized request buffer, request ID)
     pub fn request_update_target_bracket_level(
         &mut self,
         basket_id: &str,
         profit_ticks: i32,
+        level: Option<i32>,
         account: &RithmicAccount,
     ) -> (Vec<u8>, String) {
         let id = self.get_next_message_id();
@@ -762,18 +774,30 @@ impl RithmicSenderApi {
             ib_id: Some(account.ib_id.clone()),
             account_id: Some(account.account_id.clone()),
             basket_id: Some(basket_id.into()),
+            level,
             target_ticks: Some(profit_ticks),
             user_msg: vec![id.clone()],
-            ..RequestUpdateTargetBracketLevel::default()
         };
 
         self.request_to_buf(req, id)
     }
 
+    /// Update the stop loss level of a bracket
+    ///
+    /// # Arguments
+    /// * `basket_id` - The basket the bracket belongs to
+    /// * `stop_ticks` - The new stop loss distance in ticks
+    /// * `level` - Which bracket leg to adjust, in the order the legs were placed.
+    ///   Sent verbatim; the crate defines no numbering. `None` omits the field.
+    /// * `account` - The account the bracket belongs to
+    ///
+    /// # Returns
+    /// A tuple of (serialized request buffer, request ID)
     pub fn request_update_stop_bracket_level(
         &mut self,
         basket_id: &str,
         stop_ticks: i32,
+        level: Option<i32>,
         account: &RithmicAccount,
     ) -> (Vec<u8>, String) {
         let id = self.get_next_message_id();
@@ -784,9 +808,9 @@ impl RithmicSenderApi {
             ib_id: Some(account.ib_id.clone()),
             account_id: Some(account.account_id.clone()),
             basket_id: Some(basket_id.into()),
+            level,
             stop_ticks: Some(stop_ticks),
             user_msg: vec![id.clone()],
-            ..RequestUpdateStopBracketLevel::default()
         };
 
         self.request_to_buf(req, id)
@@ -2557,5 +2581,62 @@ mod tests {
             assert_eq!(request.account_id.as_deref(), Some("ACCOUNT_B"));
             assert_eq!(request.user_type, Some(cancel_all.into()));
         }
+    }
+
+    /// Every field is asserted, not just `level`: the builder now names them all
+    /// outright rather than leaning on `Default`.
+    #[test]
+    fn update_target_bracket_level_carries_requested_level() {
+        let mut api = RithmicSenderApi::new(&test_config());
+
+        let (buf, _) =
+            api.request_update_target_bracket_level("basket-1", 16, Some(2), &default_account());
+        let request: RequestUpdateTargetBracketLevel = decode_request(&buf);
+
+        assert_eq!(request.fcm_id.as_deref(), Some("FCM_A"));
+        assert_eq!(request.ib_id.as_deref(), Some("IB_A"));
+        assert_eq!(request.account_id.as_deref(), Some("ACCOUNT_A"));
+        assert_eq!(request.basket_id.as_deref(), Some("basket-1"));
+        assert_eq!(request.target_ticks, Some(16));
+        assert_eq!(request.level, Some(2));
+    }
+
+    #[test]
+    fn update_stop_bracket_level_carries_requested_level() {
+        let mut api = RithmicSenderApi::new(&test_config());
+
+        let (buf, _) =
+            api.request_update_stop_bracket_level("basket-1", 8, Some(2), &default_account());
+        let request: RequestUpdateStopBracketLevel = decode_request(&buf);
+
+        assert_eq!(request.fcm_id.as_deref(), Some("FCM_A"));
+        assert_eq!(request.ib_id.as_deref(), Some("IB_A"));
+        assert_eq!(request.account_id.as_deref(), Some("ACCOUNT_A"));
+        assert_eq!(request.basket_id.as_deref(), Some("basket-1"));
+        assert_eq!(request.stop_ticks, Some(8));
+        assert_eq!(request.level, Some(2));
+    }
+
+    /// `level` is proto2 `optional`, so a decoded `None` proves the field never
+    /// reached the wire — an explicit zero comes back as `Some(0)`.
+    #[test]
+    fn bracket_level_requests_omit_level_when_unset() {
+        let mut api = RithmicSenderApi::new(&test_config());
+
+        let target = |api: &mut RithmicSenderApi, level| {
+            let (buf, _) =
+                api.request_update_target_bracket_level("basket-1", 16, level, &default_account());
+            decode_request::<RequestUpdateTargetBracketLevel>(&buf).level
+        };
+        let stop = |api: &mut RithmicSenderApi, level| {
+            let (buf, _) =
+                api.request_update_stop_bracket_level("basket-1", 8, level, &default_account());
+            decode_request::<RequestUpdateStopBracketLevel>(&buf).level
+        };
+
+        assert_eq!(target(&mut api, None), None);
+        assert_eq!(target(&mut api, Some(0)), Some(0));
+        assert_eq!(stop(&mut api, None), None);
+        assert_eq!(stop(&mut api, Some(0)), Some(0));
     }
 }

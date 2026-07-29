@@ -9,8 +9,9 @@ use crate::{
     api::{
         receiver_api::RithmicResponse,
         rithmic_command_types::{
-            LoginConfig, RithmicAdvancedBracketOrder, RithmicBracketOrder, RithmicCancelOrder,
-            RithmicModifyOrder, RithmicOcoOrderLeg, RithmicOrder,
+            LoginConfig, RithmicAdvancedBracketOrder, RithmicBracketLevelAdjustment,
+            RithmicBracketOrder, RithmicCancelOrder, RithmicModifyOrder, RithmicOcoOrderLeg,
+            RithmicOrder,
         },
         sender_api::LoginScope,
     },
@@ -78,14 +79,16 @@ pub(crate) enum OrderPlantCommand {
         response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
     },
     ModifyStop {
-        order_id: String,
+        basket_id: String,
         ticks: i32,
+        level: Option<i32>,
         account: Arc<RithmicAccount>,
         response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
     },
     ModifyProfit {
-        order_id: String,
+        basket_id: String,
         ticks: i32,
+        level: Option<i32>,
         account: Arc<RithmicAccount>,
         response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
     },
@@ -673,15 +676,16 @@ impl PlantActor for OrderPlant {
                     .await;
             }
             OrderPlantCommand::ModifyStop {
-                order_id,
+                basket_id,
                 ticks,
+                level,
                 account,
                 response_sender,
             } => {
                 let (req_buf, id) = self
                     .core
                     .rithmic_sender_api
-                    .request_update_stop_bracket_level(&order_id, ticks, &account);
+                    .request_update_stop_bracket_level(&basket_id, ticks, level, &account);
 
                 self.core.request_handler.register_request(RithmicRequest {
                     request_id: id.clone(),
@@ -693,15 +697,16 @@ impl PlantActor for OrderPlant {
                     .await;
             }
             OrderPlantCommand::ModifyProfit {
-                order_id,
+                basket_id,
                 ticks,
+                level,
                 account,
                 response_sender,
             } => {
                 let (req_buf, id) = self
                     .core
                     .rithmic_sender_api
-                    .request_update_target_bracket_level(&order_id, ticks, &account);
+                    .request_update_target_bracket_level(&basket_id, ticks, level, &account);
 
                 self.core.request_handler.register_request(RithmicRequest {
                     request_id: id.clone(),
@@ -1556,21 +1561,20 @@ impl RithmicOrderPlantHandle {
     /// Adjust the profit target level of a bracket order
     ///
     /// # Arguments
-    /// * `id` - The order ID
-    /// * `ticks` - Number of ticks to adjust the profit target
+    /// * `adjustment` - The bracket, the new tick distance, and the leg to adjust
     ///
     /// # Returns
     /// The adjustment response or an error message
     pub async fn adjust_profit(
         &self,
-        id: &str,
-        ticks: i32,
+        adjustment: RithmicBracketLevelAdjustment,
     ) -> Result<RithmicResponse, RithmicError> {
         let (tx, rx) = oneshot::channel::<Result<Vec<RithmicResponse>, RithmicError>>();
 
         let command = OrderPlantCommand::ModifyProfit {
-            order_id: id.to_string(),
-            ticks,
+            basket_id: adjustment.id,
+            ticks: adjustment.ticks,
+            level: adjustment.level,
             account: self.account.clone(),
             response_sender: tx,
         };
@@ -1587,17 +1591,20 @@ impl RithmicOrderPlantHandle {
     /// Adjust the stop loss level of a bracket order
     ///
     /// # Arguments
-    /// * `id` - The order ID
-    /// * `ticks` - Number of ticks to adjust the stop loss
+    /// * `adjustment` - The bracket, the new tick distance, and the leg to adjust
     ///
     /// # Returns
     /// The adjustment response or an error message
-    pub async fn adjust_stop(&self, id: &str, ticks: i32) -> Result<RithmicResponse, RithmicError> {
+    pub async fn adjust_stop(
+        &self,
+        adjustment: RithmicBracketLevelAdjustment,
+    ) -> Result<RithmicResponse, RithmicError> {
         let (tx, rx) = oneshot::channel::<Result<Vec<RithmicResponse>, RithmicError>>();
 
         let command = OrderPlantCommand::ModifyStop {
-            order_id: id.to_string(),
-            ticks,
+            basket_id: adjustment.id,
+            ticks: adjustment.ticks,
+            level: adjustment.level,
             account: self.account.clone(),
             response_sender: tx,
         };
