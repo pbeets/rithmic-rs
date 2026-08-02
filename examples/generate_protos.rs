@@ -32,14 +32,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .strip_prefix(GENERATED_HEADER)
         .ok_or("pool output does not start with the prost-build header")?;
 
-    // Rithmic's vendored `.proto` files carry literal tabs in their trailing
-    // comments, which prost copies into doc comments. Allow it at the module
-    // level rather than editing the vendored protos, so the next refresh from
-    // Rithmic does not reintroduce a clippy failure under `-D warnings`.
-    let combined = format!(
-        "#![allow(clippy::tabs_in_doc_comments)]\n\npub mod messages;\n\n{message_type_code}{pool_body}"
-    );
-    std::fs::write(&pool_path, combined)?;
+    let combined = format!("pub mod messages;\n\n{message_type_code}{pool_body}");
+
+    // Rithmic's vendored `.proto` files carry literal tabs in some trailing
+    // comments, which prost copies verbatim into doc comments and clippy then
+    // rejects under `-D warnings`. Replace them where they land rather than
+    // editing the vendored protos or muting the lint for the whole module, so
+    // the next refresh from Rithmic cannot reintroduce the failure. Only doc
+    // comments are touched; prost indents the code itself with spaces.
+    let mut detabbed = String::with_capacity(combined.len());
+
+    for line in combined.lines() {
+        let trimmed = line.trim_start();
+
+        if trimmed.starts_with("///") || trimmed.starts_with("//!") {
+            detabbed.push_str(&line.replace('\t', " "));
+        } else {
+            detabbed.push_str(line);
+        }
+
+        detabbed.push('\n');
+    }
+
+    std::fs::write(&pool_path, detabbed)?;
 
     println!("Generated src/rti.rs — run `cargo fmt` to format it.");
     Ok(())
