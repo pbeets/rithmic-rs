@@ -20,6 +20,9 @@ Public struct fields and a method signature change, so this lands in a major rel
 - **`RithmicOrderPlantHandle::subscribe_account_rms_updates` gains a required `update_bits` parameter.**
   Pass `vec![]` for the prior behavior, or `vec![RmsUpdateBits::AutoLiqThresholdCurrentValue]` to
   stream auto-liq threshold updates.
+- **`RithmicConfig` gains a required `request_timeout: Duration` field.** Use
+  `RithmicConfig::builder(..)` or add `request_timeout: DEFAULT_REQUEST_TIMEOUT` to existing
+  struct literals.
 - **`RithmicOrderPlantHandle::adjust_profit` and `adjust_stop` take a `RithmicBracketLevelAdjustment`**
   instead of `(id, ticks)`, adding a `level` that selects the bracket leg. `level: None` keeps the
   prior behavior.
@@ -30,9 +33,12 @@ Public struct fields and a method signature change, so this lands in a major rel
 
 ### Added
 
+- **`rithmic_rs::DEFAULT_REQUEST_TIMEOUT`**, `RithmicConfigBuilder::request_timeout` and the
+  `RITHMIC_REQUEST_TIMEOUT_SECS` environment variable — how long a request waits for a response.
+  Defaults to 30 seconds, and zero selects the default. The environment variable takes plain
+  digits only — anything else is an error rather than a silent fallback.
 - **`RithmicBracketLevelAdjustment`** — the command struct for `adjust_profit` and `adjust_stop`:
   the basket `id`, the new `ticks` distance, and the `level` selecting a bracket leg.
-
 - **`RithmicMessage::RequestHeartbeat(RequestHeartbeat)`** — a keep-alive frame (template 18) sent by the server, which previously arrived as `UnknownTemplate`. Delivered on the subscription channel with `error: None` and an empty `request_id`: it answers no request you made, and its `user_msg` is the server's own token rather than an id this client handed out. The library does not reply to it. `RithmicMessage` is `#[non_exhaustive]`, so the new variant does not break existing matches.
 - **`RithmicMessage::UnknownTemplate(UnknownTemplateMessage)`** — a frame whose `template_id` has no message definition in this crate. Delivered with `error: None` and the message body kept as received. `RithmicMessage` is `#[non_exhaustive]`, so the new variant does not break existing matches.
 - **`UnknownTemplateMessage::decode_as<M>()`** — decode the payload into a caller-supplied `prost` type, so an unmapped template can be handled downstream without a change here. `Ok` is not proof the type was guessed right: protobuf skips undeclared fields, so an unrelated payload usually decodes into a mostly-empty value.
@@ -117,6 +123,10 @@ Public struct fields and a method signature change, so this lands in a major rel
   preferring one it marks default; `login()` reads them once and orders route off that snapshot for
   the life of the connection. Login logs each route it loaded, and the count, at `info`, or logs at
   `error` if none were published; the route each order takes logs at `debug`.
+- **Waits that never ended now end.** A request whose response never arrives fails after 30 seconds
+  of silence with the new `RithmicError::RequestTimeout` instead of parking its caller forever —
+  reconcile a timed-out order rather than re-sending it — and a missing pong reports a dead link
+  instead of spinning the plant's loop at the deadline.
 
 ## [2.0.0]
 

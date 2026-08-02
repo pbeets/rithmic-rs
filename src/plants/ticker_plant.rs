@@ -1,4 +1,3 @@
-use futures_util::StreamExt;
 use tokio_tungstenite::tungstenite::Message;
 use tracing::{debug, error, info, warn};
 
@@ -19,10 +18,7 @@ use crate::{
     ws::PlantActor,
 };
 
-use tokio::{
-    sync::{broadcast, mpsc, oneshot},
-    time::sleep_until,
-};
+use tokio::sync::{broadcast, mpsc, oneshot};
 
 pub(crate) enum TickerPlantCommand {
     Close,
@@ -305,50 +301,24 @@ impl PlantActor for TickerPlant {
     /// Execute the ticker plant actor loop.
     async fn run(&mut self) {
         loop {
-            let result = {
-                let interval = &mut self.core.interval;
-                let ping_interval = &mut self.core.ping_interval;
-                let ping_manager = &mut self.core.ping_manager;
-                let reader = &mut self.core.rithmic_reader;
-                let receiver = &mut self.request_receiver;
-                tokio::select! {
-                    _ = interval.tick()      => SelectResult::HeartbeatFired,
-                    _ = ping_interval.tick() => SelectResult::PingFired,
-                    _ = async {
-                        if let Some(t) = ping_manager.next_timeout_at() {
-                            sleep_until(t).await
-                        } else {
-                            std::future::pending::<()>().await
-                        }
-                    } => SelectResult::PingTimeout,
-                    Some(cmd) = receiver.recv() => SelectResult::Command(cmd),
-                    msg = reader.next() => match msg {
-                        Some(m) => SelectResult::RithmicMessage(m),
-                        None => SelectResult::StreamClosed,
-                    },
-                }
-            };
+            let result = self.core.next_event(&mut self.request_receiver).await;
             let stop = match result {
                 SelectResult::HeartbeatFired => self.core.send_heartbeat().await,
                 SelectResult::PingFired => self.core.send_ping().await,
                 SelectResult::PingTimeout => {
-                    if self.core.ping_manager.check_timeout() {
-                        if self.core.close_requested {
-                            warn!(
-                                "ticker_plant: ping timed out while waiting for server close echo — terminating"
-                            );
+                    if self.core.close_requested {
+                        warn!(
+                            "ticker_plant: ping timed out while waiting for server close echo — terminating"
+                        );
 
-                            self.core.request_handler.drain_and_drop();
-                        } else {
-                            self.core.fail_connection_and_drain(
-                                "websocket_ping_timeout",
-                                RithmicError::HeartbeatTimeout,
-                            );
-                        }
-                        true
+                        self.core.request_handler.drain_and_drop();
                     } else {
-                        false
+                        self.core.fail_connection_and_drain(
+                            "websocket_ping_timeout",
+                            RithmicError::HeartbeatTimeout,
+                        );
                     }
+                    true
                 }
                 SelectResult::Command(cmd) => {
                     if matches!(cmd, TickerPlantCommand::Abort) {
@@ -856,7 +826,8 @@ impl RithmicTickerPlantHandle {
 
     /// Immediately shut down the ticker plant actor without a graceful logout.
     ///
-    /// Use when the connection is known to be dead and `disconnect()` would hang.
+    /// Use when the connection is known to be dead and a graceful `disconnect()`
+    /// would not get through.
     /// All pending request callers will receive an error. The subscription channel
     /// receives a `ConnectionError` notification. Safe to call if the actor is already dead.
     pub fn abort(&self) {

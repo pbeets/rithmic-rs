@@ -60,6 +60,8 @@ pub(crate) async fn core_with_wire(source: &str) -> (PlantCore, TcpStream) {
     let (subscription_sender, _sub_rx) = broadcast::channel(16);
     let rithmic_sender_api = RithmicSenderApi::new(&config);
 
+    let request_handler = RithmicRequestHandler::new(config.request_timeout);
+
     let core = PlantCore {
         config,
         close_requested: false,
@@ -67,7 +69,7 @@ pub(crate) async fn core_with_wire(source: &str) -> (PlantCore, TcpStream) {
         logged_in: true,
         ping_interval: get_ping_interval(None),
         ping_manager: PingManager::new(PING_TIMEOUT_SECS),
-        request_handler: RithmicRequestHandler::new(),
+        request_handler,
         rithmic_reader,
         rithmic_receiver_api: RithmicReceiverApi {
             source: source.to_string(),

@@ -2,8 +2,6 @@
 //!
 //! Run with: cargo run --example error_handling
 
-use std::time::Duration;
-
 use tokio::sync::broadcast::error::RecvError;
 use tracing::{error, info, warn};
 
@@ -58,16 +56,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Err(e) => error!("subscribe: {e}"),
     }
 
-    // There's no per-request timeout, so add one if a hung call would hurt.
-    let front_month = tokio::time::timeout(
-        Duration::from_secs(5),
-        handle.get_front_month_contract("ES", "CME", false),
-    )
-    .await;
-    match front_month {
-        Ok(Ok(resp)) => info!("front month: {:?}", resp.message),
-        Ok(Err(e)) => error!("front month: {e}"),
-        Err(_) => warn!("front month timed out"),
+    match handle.get_front_month_contract("ES", "CME", false).await {
+        Ok(resp) => info!("front month: {:?}", resp.message),
+        Err(RithmicError::RequestTimeout) => warn!("front month: no response"),
+        Err(e) => error!("front month: {e}"),
     }
 
     loop {

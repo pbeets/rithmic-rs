@@ -24,6 +24,9 @@ Set your environment variables:
 RITHMIC_APP_NAME=your_app_name
 RITHMIC_APP_VERSION=1
 
+# Optional: seconds a request waits for a response (default 30; 0 selects the default)
+RITHMIC_REQUEST_TIMEOUT_SECS=30
+
 RITHMIC_DEMO_USER=your_username
 RITHMIC_DEMO_PW=your_password
 RITHMIC_DEMO_URL=<provided_by_rithmic>

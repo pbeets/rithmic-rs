@@ -115,6 +115,8 @@ pub enum RithmicError {
     SendFailed,
     /// Server returned an empty response where at least one was expected.
     EmptyResponse,
+    /// The request was sent but no response came back in time.
+    RequestTimeout,
     /// The server turned the request down, with the code and message it gave.
     /// Request-level only — not a reason to reconnect.
     RequestRejected(RithmicRequestError),
@@ -175,6 +177,7 @@ impl fmt::Display for RithmicError {
             RithmicError::ConnectionClosed => write!(f, "connection closed"),
             RithmicError::SendFailed => write!(f, "WebSocket send failed or timed out"),
             RithmicError::EmptyResponse => write!(f, "empty response"),
+            RithmicError::RequestTimeout => write!(f, "request timed out"),
             RithmicError::RequestRejected(err) => {
                 let detail = err.to_string();
 
@@ -411,6 +414,14 @@ mod tests {
     }
 
     #[test]
+    fn request_timeout_display() {
+        assert_eq!(
+            RithmicError::RequestTimeout.to_string(),
+            "request timed out"
+        );
+    }
+
+    #[test]
     fn heartbeat_timeout_display() {
         assert_eq!(
             RithmicError::HeartbeatTimeout.to_string(),
@@ -497,6 +508,13 @@ mod tests {
             err.to_string(),
             "no trade route for exchange CBOT; cached: C[31mME"
         );
+    }
+
+    #[test]
+    fn request_timeout_is_not_a_connection_issue() {
+        // Otherwise callers that reconnect on `is_connection_issue()` would tear
+        // down a live session, and its subscriptions, over one lost request.
+        assert!(!RithmicError::RequestTimeout.is_connection_issue());
     }
 
     #[test]

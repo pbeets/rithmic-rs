@@ -24,7 +24,9 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
-use std::{env, fmt, str::FromStr};
+use std::{env, fmt, str::FromStr, time::Duration};
+
+use crate::request_handler::DEFAULT_REQUEST_TIMEOUT;
 
 /// Trading environment selector.
 ///
@@ -185,6 +187,21 @@ impl RithmicAccount {
     }
 }
 
+const REQUEST_TIMEOUT_VAR: &str = "RITHMIC_REQUEST_TIMEOUT_SECS";
+
+/// Parse a duration given as a plain decimal count of seconds.
+///
+/// Stricter than `u64::from_str`, which also takes a sign and leading zeros:
+/// only canonical digits pass, so a mangled value cannot slip through as a
+/// plausible number.
+fn parse_whole_seconds(value: &str) -> Option<u64> {
+    let canonical = !value.is_empty()
+        && value.bytes().all(|b| b.is_ascii_digit())
+        && (value == "0" || !value.starts_with('0'));
+
+    if canonical { value.parse().ok() } else { None }
+}
+
 /// Configuration for Rithmic connections.
 ///
 /// This struct contains session-level connection and login details.
@@ -206,6 +223,9 @@ pub struct RithmicConfig {
     pub app_name: String,
     /// Application version string.
     pub app_version: String,
+    /// How long to wait for a response before a request times out.
+    /// A zero duration selects [`DEFAULT_REQUEST_TIMEOUT`].
+    pub request_timeout: Duration,
 }
 
 impl fmt::Debug for RithmicConfig {
@@ -219,6 +239,7 @@ impl fmt::Debug for RithmicConfig {
             .field("env", &self.env)
             .field("app_name", &self.app_name)
             .field("app_version", &self.app_version)
+            .field("request_timeout", &self.request_timeout)
             .finish()
     }
 }
@@ -306,6 +327,27 @@ impl RithmicConfig {
         let app_version = env::var("RITHMIC_APP_VERSION")
             .map_err(|_| ConfigError::MissingEnvVar("RITHMIC_APP_VERSION".to_string()))?;
 
+        let request_timeout = match env::var(REQUEST_TIMEOUT_VAR) {
+            Err(env::VarError::NotPresent) => DEFAULT_REQUEST_TIMEOUT,
+            Err(env::VarError::NotUnicode(_)) => {
+                return Err(ConfigError::InvalidValue {
+                    var: REQUEST_TIMEOUT_VAR.to_string(),
+                    reason: "expected whole seconds, got a non-unicode value".to_string(),
+                });
+            }
+            Ok(value) => match parse_whole_seconds(value.trim()) {
+                // Zero selects the default, consistent with the builder.
+                Some(0) => DEFAULT_REQUEST_TIMEOUT,
+                Some(secs) => Duration::from_secs(secs),
+                None => {
+                    return Err(ConfigError::InvalidValue {
+                        var: REQUEST_TIMEOUT_VAR.to_string(),
+                        reason: format!("expected whole seconds (digits only), got {value:?}"),
+                    });
+                }
+            },
+        };
+
         Ok(Self {
             url,
             beta_url,
@@ -315,6 +357,7 @@ impl RithmicConfig {
             env,
             app_name,
             app_version,
+            request_timeout,
         })
     }
 
@@ -349,6 +392,7 @@ pub struct RithmicConfigBuilder {
     system_name: Option<String>,
     app_name: Option<String>,
     app_version: Option<String>,
+    request_timeout: Duration,
 }
 
 impl RithmicConfigBuilder {
@@ -370,6 +414,7 @@ impl RithmicConfigBuilder {
             system_name: Some(system_name),
             app_name: None,
             app_version: None,
+            request_timeout: DEFAULT_REQUEST_TIMEOUT,
         }
     }
 
@@ -409,7 +454,20 @@ impl RithmicConfigBuilder {
         self
     }
 
-    /// Set the application version string.
+    /// Set how long to wait for a response before a request times out.
+    ///
+    /// A zero duration selects the default,
+    /// [`DEFAULT_REQUEST_TIMEOUT`].
+    pub fn request_timeout(mut self, request_timeout: Duration) -> Self {
+        self.request_timeout = if request_timeout.is_zero() {
+            DEFAULT_REQUEST_TIMEOUT
+        } else {
+            request_timeout
+        };
+        self
+    }
+
+    /// Set the application version string registered with Rithmic.
     pub fn app_version(mut self, app_version: impl Into<String>) -> Self {
         self.app_version = Some(app_version.into());
         self
@@ -444,12 +502,14 @@ impl RithmicConfigBuilder {
             app_version: self
                 .app_version
                 .ok_or_else(|| ConfigError::MissingField("app_version".to_string()))?,
+            request_timeout: self.request_timeout,
         })
     }
 }
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
 
     fn demo_env_vars() -> Vec<(&'static str, Option<&'static str>)> {
@@ -544,6 +604,76 @@ mod tests {
             assert_eq!(account.fcm_id, "test_fcm");
             assert_eq!(account.ib_id, "test_ib");
         });
+    }
+
+    #[test]
+    fn from_env_reads_the_request_timeout_when_set() {
+        let mut vars = demo_env_vars();
+        vars.push((REQUEST_TIMEOUT_VAR, Some("5")));
+
+        temp_env::with_vars(vars, || {
+            let config = RithmicConfig::from_env(RithmicEnv::Demo).unwrap();
+
+            assert_eq!(config.request_timeout, Duration::from_secs(5));
+        });
+    }
+
+    #[test]
+    fn from_env_defaults_the_request_timeout_when_unset() {
+        let mut vars = demo_env_vars();
+        vars.push((REQUEST_TIMEOUT_VAR, None));
+
+        temp_env::with_vars(vars, || {
+            let config = RithmicConfig::from_env(RithmicEnv::Demo).unwrap();
+
+            assert_eq!(config.request_timeout, DEFAULT_REQUEST_TIMEOUT);
+        });
+    }
+
+    #[test]
+    fn from_env_rejects_an_unusable_request_timeout() {
+        for value in ["soon", "+30", "-30", "007", "30.5", "30s", ""] {
+            let mut vars = demo_env_vars();
+            vars.push((REQUEST_TIMEOUT_VAR, Some(value)));
+
+            temp_env::with_vars(vars, || {
+                assert!(
+                    matches!(
+                        RithmicConfig::from_env(RithmicEnv::Demo),
+                        Err(ConfigError::InvalidValue { .. })
+                    ),
+                    "{value:?} should have been rejected"
+                );
+            });
+        }
+    }
+
+    #[test]
+    fn from_env_treats_a_zero_request_timeout_as_the_default() {
+        let mut vars = demo_env_vars();
+        vars.push((REQUEST_TIMEOUT_VAR, Some("0")));
+
+        temp_env::with_vars(vars, || {
+            let config = RithmicConfig::from_env(RithmicEnv::Demo).unwrap();
+
+            assert_eq!(config.request_timeout, DEFAULT_REQUEST_TIMEOUT);
+        });
+    }
+
+    #[test]
+    fn the_builder_treats_a_zero_request_timeout_as_the_default() {
+        let config = RithmicConfig::builder(RithmicEnv::Demo)
+            .user("u")
+            .password("p")
+            .url("ws://localhost:9999")
+            .beta_url("ws://localhost:9998")
+            .app_name("a")
+            .app_version("1")
+            .request_timeout(Duration::ZERO)
+            .build()
+            .unwrap();
+
+        assert_eq!(config.request_timeout, DEFAULT_REQUEST_TIMEOUT);
     }
 
     #[test]

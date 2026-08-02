@@ -164,13 +164,16 @@
 //!   connection problem rather than retrying in a loop.
 //! - [`ConnectionClosed`](RithmicError::ConnectionClosed) — the plant is gone.
 //!   Reconnect; calling again will not work.
+//! - [`RequestTimeout`](RithmicError::RequestTimeout) — no response came back in
+//!   time. The plant keeps running; check the subscription channel for
+//!   connection health.
 //!
 //! When a connection drops, everything in flight fails with `ConnectionClosed`
 //! whatever the real cause was. The cause goes out on the subscription channel,
 //! so look there if you need to tell a heartbeat timeout from a dead socket.
 //!
-//! There is no per-request timeout — if a response never arrives, the call
-//! waits. Wrap calls in `tokio::time::timeout` if you need a bound.
+//! Requests time out after 30 seconds by default; set
+//! [`RithmicConfigBuilder::request_timeout`] to change it.
 //!
 //! ([`ConnectionFailed`](RithmicError::ConnectionFailed) comes from `connect()`
 //! rather than a handle method, and only under [`ConnectStrategy::Simple`] —
@@ -301,6 +304,7 @@ pub use plants::ticker_plant::{RithmicTickerPlant, RithmicTickerPlantHandle};
 
 // Re-export modern configuration types for convenience
 pub use config::{ConfigError, RithmicAccount, RithmicConfig, RithmicConfigBuilder, RithmicEnv};
+pub use request_handler::DEFAULT_REQUEST_TIMEOUT;
 
 // Re-export error types
 pub use error::{RithmicError, RithmicRequestError};

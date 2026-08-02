@@ -1,5 +1,5 @@
 use std::time::Duration;
-use tokio::time::Instant;
+use tokio::time::{Instant, sleep_until};
 use tracing::warn;
 
 /// Manages WebSocket ping/pong timeout detection for plant actors.
@@ -52,24 +52,22 @@ impl PingManager {
         self.pending = None;
     }
 
-    /// Checks if the pending ping has timed out.
+    /// Resolves once the pending ping has gone unanswered for the timeout.
     ///
-    /// Returns `true` and clears pending state if timeout exceeded.
-    /// Call when the instant from `next_timeout_at()` is reached.
-    pub fn check_timeout(&mut self) -> bool {
-        if let Some(sent_at) = self.pending {
-            if sent_at.elapsed() > self.timeout {
+    /// Never resolves while no ping is pending, so it can sit in a `select!` arm.
+    /// Clears the pending ping before returning, so a timeout is reported once.
+    pub async fn timed_out(&mut self) {
+        match self.pending {
+            Some(sent_at) => {
+                sleep_until(sent_at + self.timeout).await;
                 self.pending = None;
-                return true;
             }
+            None => std::future::pending().await,
         }
-        false
     }
 
     /// Returns the instant when the pending ping will timeout, if any.
-    ///
-    /// Use with `tokio::time::sleep_until()` in a select! loop.
-    /// Returns `None` if no ping is pending.
+    #[cfg(test)]
     pub fn next_timeout_at(&self) -> Option<Instant> {
         self.pending.map(|sent_at| sent_at + self.timeout)
     }
@@ -82,9 +80,8 @@ mod tests {
 
     #[test]
     fn new_has_no_pending() {
-        let mut mgr = PingManager::new(60);
+        let mgr = PingManager::new(60);
         assert!(mgr.next_timeout_at().is_none());
-        assert!(!mgr.check_timeout());
     }
 
     #[test]
@@ -100,21 +97,27 @@ mod tests {
         mgr.sent();
         mgr.received();
         assert!(mgr.next_timeout_at().is_none());
-        assert!(!mgr.check_timeout());
     }
 
-    #[test]
-    fn check_timeout_returns_false_before_deadline() {
+    #[tokio::test(start_paused = true)]
+    async fn timed_out_waits_for_the_timeout() {
         let mut mgr = PingManager::new(60);
         mgr.sent();
-        // Called immediately — timeout has not elapsed yet.
-        assert!(!mgr.check_timeout());
+
+        let started = Instant::now();
+        mgr.timed_out().await;
+
+        assert_eq!(Instant::now() - started, Duration::from_secs(60));
     }
 
-    #[test]
-    fn check_timeout_false_when_no_pending() {
+    #[tokio::test(start_paused = true)]
+    async fn timed_out_never_resolves_without_a_pending_ping() {
         let mut mgr = PingManager::new(60);
-        assert!(!mgr.check_timeout());
+
+        tokio::select! {
+            _ = mgr.timed_out() => panic!("resolved with no ping pending"),
+            _ = tokio::time::sleep(Duration::from_secs(3600)) => {}
+        }
     }
 
     #[test]
@@ -125,45 +128,19 @@ mod tests {
         assert!(mgr.next_timeout_at().is_some());
     }
 
-    #[tokio::test]
-    async fn check_timeout_returns_true_after_deadline() {
-        tokio::time::pause();
+    #[tokio::test(start_paused = true)]
+    async fn timed_out_clears_pending_so_it_reports_once() {
         let mut mgr = PingManager::new(1);
         mgr.sent();
-        tokio::time::advance(Duration::from_secs(2)).await;
-        assert!(mgr.check_timeout());
-    }
 
-    #[tokio::test]
-    async fn check_timeout_clears_pending_after_trigger() {
-        tokio::time::pause();
-        let mut mgr = PingManager::new(1);
-        mgr.sent();
-        tokio::time::advance(Duration::from_secs(2)).await;
-        assert!(mgr.check_timeout());
-        // State must be cleared — no double-trigger.
+        mgr.timed_out().await;
+
         assert!(mgr.next_timeout_at().is_none());
-        assert!(!mgr.check_timeout());
-    }
 
-    #[tokio::test]
-    async fn next_timeout_at_is_sent_at_plus_timeout() {
-        tokio::time::pause();
-        let timeout_secs = 30_u64;
-        let mut mgr = PingManager::new(timeout_secs);
-        let before = Instant::now();
-        mgr.sent();
-        let deadline = mgr.next_timeout_at().expect("should have a deadline");
-        let expected = before + Duration::from_secs(timeout_secs);
-        // Allow a tiny delta (1 ms) for any sub-millisecond clock granularity.
-        let delta = if deadline >= expected {
-            deadline - expected
-        } else {
-            expected - deadline
-        };
-        assert!(
-            delta <= Duration::from_millis(1),
-            "deadline delta too large: {delta:?}"
-        );
+        // A second wait must not resolve off the ping already reported.
+        tokio::select! {
+            _ = mgr.timed_out() => panic!("reported the same ping twice"),
+            _ = tokio::time::sleep(Duration::from_secs(3600)) => {}
+        }
     }
 }
