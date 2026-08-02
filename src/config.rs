@@ -451,6 +451,15 @@ impl RithmicConfigBuilder {
     /// Create a builder pre-filled from the same environment variables
     /// [`RithmicConfig::from_env`] reads, so a single field can be overridden.
     /// Rejects whatever [`RithmicConfig::from_env`] rejects.
+    ///
+    /// ```no_run
+    /// use rithmic_rs::{RithmicConfigBuilder, RithmicEnv};
+    ///
+    /// let config = RithmicConfigBuilder::from_env(RithmicEnv::Demo)?
+    ///     .system_name("Rithmic Paper Trading")
+    ///     .build()?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn from_env(env: RithmicEnv) -> Result<Self, ConfigError> {
         let config = RithmicConfig::from_env(env)?;
 
