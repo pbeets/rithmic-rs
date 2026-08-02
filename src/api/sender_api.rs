@@ -28,10 +28,11 @@ use crate::{
         RequestUpdateStopBracketLevel, RequestUpdateTargetBracketLevel,
         RequestVolumeProfileMinuteBars, ResponseLoginInfo, request_account_list,
         request_account_rms_info, request_account_rms_updates, request_bracket_order,
-        request_cancel_all_orders, request_depth_by_order_updates, request_easy_to_borrow_list,
+        request_cancel_all_orders, request_cancel_order, request_depth_by_order_updates,
+        request_easy_to_borrow_list, request_exit_position,
         request_login::SysInfraType,
         request_market_data_update::{Request, UpdateBits},
-        request_market_data_update_by_underlying, request_modify_order, request_oco_order,
+        request_market_data_update_by_underlying, request_modify_order,
         request_pn_l_position_updates, request_search_symbols,
         request_tick_bar_replay::{BarSubType, BarType, Direction, TimeOrder},
         request_tick_bar_update, request_time_bar_replay, request_time_bar_update,
@@ -105,6 +106,30 @@ impl LoginScope {
             user_type,
         })
     }
+}
+
+/// An empty caller-supplied identifier carries no more information than an
+/// absent field, so it is left off the wire rather than sent as `""`.
+fn omit_if_empty(value: String) -> Option<String> {
+    (!value.is_empty()).then_some(value)
+}
+
+/// Collapse a per-leg optional price into the repeated field that goes on the
+/// wire.
+///
+/// A repeated price is index-aligned with the other per-leg fields, so once one
+/// leg carries a price every leg needs a slot and the ones without a price take
+/// `0.0`. When no leg carries one the field is left out entirely rather than
+/// sent as a run of zeroes, which would price every leg at zero.
+fn align_optional_prices(prices: Vec<Option<f64>>) -> Vec<f64> {
+    if prices.iter().all(Option::is_none) {
+        return vec![];
+    }
+
+    prices
+        .into_iter()
+        .map(|price| price.unwrap_or(0.0))
+        .collect()
 }
 
 #[derive(Debug, Clone)]
@@ -542,18 +567,40 @@ impl RithmicSenderApi {
             exchange: Some(order.exchange.clone()),
             symbol: Some(order.symbol.clone()),
             quantity: Some(order.quantity),
-            price: Some(order.price),
+            price: order.price,
             transaction_type: Some(order.transaction_type.into()),
             price_type: Some(order.price_type.into()),
-            manual_or_auto: Some(2),
+            manual_or_auto: Some(order.manual_or_auto.into()),
             duration: order.duration.map(|d| d.into()).or(Some(1)),
             user_msg: vec![id.clone()],
-            user_tag: Some(order.user_tag.clone()),
+            user_tag: omit_if_empty(order.user_tag.clone()),
             trigger_price: order.trigger_price,
             trailing_stop: order.trailing_stop.as_ref().map(|_| true),
             trail_by_ticks: order.trailing_stop.as_ref().map(|ts| ts.trail_by_ticks),
             trail_by_price_id: order.trailing_stop.as_ref().map(|ts| ts.trail_by_price_id),
-            ..RequestNewOrder::default()
+            window_name: order.window_name.clone(),
+            release_at_ssboe: order.release_at_ssboe,
+            release_at_usecs: order.release_at_usecs,
+            cancel_at_ssboe: order.cancel_at_ssboe,
+            cancel_at_usecs: order.cancel_at_usecs,
+            cancel_after_secs: order.cancel_after_secs,
+            if_touched_symbol: order
+                .if_touched
+                .as_ref()
+                .map(|trigger| trigger.symbol.clone()),
+            if_touched_exchange: order
+                .if_touched
+                .as_ref()
+                .map(|trigger| trigger.exchange.clone()),
+            if_touched_condition: order
+                .if_touched
+                .as_ref()
+                .map(|trigger| trigger.condition.into()),
+            if_touched_price_field: order
+                .if_touched
+                .as_ref()
+                .map(|trigger| trigger.price_field.into()),
+            if_touched_price: order.if_touched.as_ref().map(|trigger| trigger.price),
         };
 
         self.request_to_buf(req, id)
@@ -616,7 +663,7 @@ impl RithmicSenderApi {
             quantity: Some(bracket_order.quantity),
             transaction_type: Some(bracket_order.action.into()),
             price_type: Some(bracket_order.price_type.into()),
-            manual_or_auto: Some(2),
+            manual_or_auto: Some(bracket_order.manual_or_auto.into()),
             duration: Some(bracket_order.duration.into()),
             bracket_type: Some(bracket_order.bracket_type.into()),
             break_even_ticks: bracket_order.break_even_ticks,
@@ -662,7 +709,7 @@ impl RithmicSenderApi {
             price: bracket_order.price,
             trigger_price: bracket_order.trigger_price,
             user_msg: vec![id.clone()],
-            user_tag: Some(bracket_order.localid),
+            user_tag: omit_if_empty(bracket_order.localid),
             ..RequestBracketOrder::default()
         };
 
@@ -679,6 +726,7 @@ impl RithmicSenderApi {
         price: f64,
         price_type: request_modify_order::PriceType,
         trigger_price: Option<f64>,
+        manual_or_auto: request_modify_order::OrderPlacement,
         account: &RithmicAccount,
     ) -> (Vec<u8>, String) {
         let id = self.get_next_message_id();
@@ -689,7 +737,7 @@ impl RithmicSenderApi {
             ib_id: Some(account.ib_id.clone()),
             account_id: Some(account.account_id.clone()),
             basket_id: Some(basket_id.into()),
-            manual_or_auto: Some(2),
+            manual_or_auto: Some(manual_or_auto.into()),
             exchange: Some(exchange.into()),
             symbol: Some(symbol.into()),
             price_type: Some(price_type.into()),
@@ -710,6 +758,7 @@ impl RithmicSenderApi {
     pub fn request_cancel_order(
         &mut self,
         basket_id: &str,
+        manual_or_auto: request_cancel_order::OrderPlacement,
         account: &RithmicAccount,
     ) -> (Vec<u8>, String) {
         let id = self.get_next_message_id();
@@ -720,7 +769,7 @@ impl RithmicSenderApi {
             ib_id: Some(account.ib_id.clone()),
             account_id: Some(account.account_id.clone()),
             basket_id: Some(basket_id.into()),
-            manual_or_auto: Some(2),
+            manual_or_auto: Some(manual_or_auto.into()),
             user_msg: vec![id.clone()],
             ..RequestCancelOrder::default()
         };
@@ -736,6 +785,9 @@ impl RithmicSenderApi {
     /// # Arguments
     /// * `symbol` - The trading symbol (e.g., "ESH6")
     /// * `exchange` - The exchange code (e.g., "CME")
+    /// * `manual_or_auto` - How the exit is attributed to its originator.
+    ///   `None` omits the field, leaving the attribution to the server's own
+    ///   default rather than asserting one.
     ///
     /// # Returns
     /// A tuple of (serialized request buffer, request ID)
@@ -744,6 +796,7 @@ impl RithmicSenderApi {
         symbol: &str,
         exchange: &str,
         account: &RithmicAccount,
+        manual_or_auto: Option<request_exit_position::OrderPlacement>,
     ) -> (Vec<u8>, String) {
         let id = self.get_next_message_id();
 
@@ -754,7 +807,7 @@ impl RithmicSenderApi {
             account_id: Some(account.account_id.clone()),
             symbol: Some(symbol.into()),
             exchange: Some(exchange.into()),
-            manual_or_auto: Some(2),
+            manual_or_auto: manual_or_auto.map(Into::into),
             user_msg: vec![id.clone()],
             ..RequestExitPosition::default()
         };
@@ -1114,6 +1167,7 @@ impl RithmicSenderApi {
     /// A tuple of (serialized request buffer, request ID)
     pub fn request_cancel_all_orders(
         &mut self,
+        manual_or_auto: request_cancel_all_orders::OrderPlacement,
         account: &RithmicAccount,
         scope: Option<&LoginScope>,
     ) -> (Vec<u8>, String) {
@@ -1130,7 +1184,7 @@ impl RithmicSenderApi {
                     .cancel_all_orders()
                     .into(),
             ),
-            manual_or_auto: Some(request_cancel_all_orders::OrderPlacement::Manual.into()),
+            manual_or_auto: Some(manual_or_auto.into()),
             user_msg: vec![id.clone()],
         };
 
@@ -1561,6 +1615,9 @@ impl RithmicSenderApi {
     ///   that leg's exchange, which keeps the repeated route field index-aligned
     /// * `account` - The account to place the order for
     ///
+    /// `price` and `trigger_price` are sent for every leg once any leg carries
+    /// one, and omitted entirely when none does.
+    ///
     /// # Returns
     /// A tuple of (serialized request buffer, request ID)
     pub fn request_oco_order_multi(
@@ -1574,8 +1631,8 @@ impl RithmicSenderApi {
         let mut symbol = Vec::new();
         let mut exchange = Vec::new();
         let mut quantity = Vec::new();
-        let mut price = Vec::new();
-        let mut trigger_price = Vec::new();
+        let mut price: Vec<Option<f64>> = Vec::new();
+        let mut trigger_price: Vec<Option<f64>> = Vec::new();
         let mut transaction_type = Vec::new();
         let mut duration = Vec::new();
         let mut price_type = Vec::new();
@@ -1591,12 +1648,12 @@ impl RithmicSenderApi {
             exchange.push(leg.exchange);
             quantity.push(leg.quantity);
             price.push(leg.price);
-            trigger_price.push(leg.trigger_price.unwrap_or(0.0));
+            trigger_price.push(leg.trigger_price);
             transaction_type.push(leg.transaction_type.into());
             duration.push(leg.duration.into());
             price_type.push(leg.price_type.into());
             trade_routes.push(trade_route);
-            manual_or_auto.push(request_oco_order::OrderPlacement::Auto.into());
+            manual_or_auto.push(leg.manual_or_auto.into());
             trailing_stop.push(leg.trailing_stop.is_some());
             trail_by_ticks.push(leg.trailing_stop.as_ref().map_or(0, |ts| ts.trail_by_ticks));
             trail_by_price_id.push(
@@ -1614,6 +1671,18 @@ impl RithmicSenderApi {
             (trailing_stop, trail_by_ticks, trail_by_price_id)
         } else {
             (vec![], vec![], vec![])
+        };
+
+        let price = align_optional_prices(price);
+        let trigger_price = align_optional_prices(trigger_price);
+
+        // `user_tag` is index-aligned with the other per-leg fields, so a group
+        // where any leg is tagged keeps a slot for the untagged ones. A group
+        // where no leg is tagged sends no tags at all.
+        let user_tag = if user_tag.iter().any(|tag| !tag.is_empty()) {
+            user_tag
+        } else {
+            vec![]
         };
 
         let req = RequestOcoOrder {
@@ -1897,7 +1966,11 @@ impl RithmicSenderApi {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{api::rithmic_command_types::TrailingStop, config::RithmicEnv};
+    use crate::{
+        api::rithmic_command_types::TrailingStop,
+        config::RithmicEnv,
+        rti::{request_new_order, request_oco_order},
+    };
 
     fn test_config() -> RithmicConfig {
         RithmicConfig::builder(RithmicEnv::Demo)
@@ -1975,7 +2048,7 @@ mod tests {
             symbol: "ESM6".to_string(),
             exchange: "CME".to_string(),
             quantity: 1,
-            price: 5000.0,
+            price: Some(5000.0),
             transaction_type: crate::rti::request_new_order::TransactionType::Buy,
             price_type: crate::rti::request_new_order::PriceType::Limit,
             user_tag: "order-1".to_string(),
@@ -1983,6 +2056,7 @@ mod tests {
             trigger_price: None,
             trailing_stop: None,
             trade_route: None,
+            ..RithmicOrder::default()
         };
 
         let (buf, _) = api.request_order(&order, &override_account(), "globex");
@@ -2031,6 +2105,7 @@ mod tests {
             quantity: 1,
             stop_ticks: 10,
             symbol: "ESM6".to_string(),
+            manual_or_auto: crate::rti::request_bracket_order::OrderPlacement::Auto,
         };
 
         let (buf, _) = api.request_bracket_order(bracket, &override_account(), None, "globex");
@@ -2146,7 +2221,7 @@ mod tests {
             symbol: "ESM6".to_string(),
             exchange: "CME".to_string(),
             quantity: 1,
-            price: 5000.0,
+            price: Some(5000.0),
             trigger_price: None,
             transaction_type: crate::rti::request_oco_order::TransactionType::Buy,
             duration: crate::rti::request_oco_order::Duration::Day,
@@ -2154,12 +2229,13 @@ mod tests {
             user_tag: "oco-1".to_string(),
             trailing_stop: None,
             trade_route: None,
+            manual_or_auto: crate::rti::request_oco_order::OrderPlacement::Auto,
         };
         let leg2 = RithmicOcoOrderLeg {
             symbol: "ESM6".to_string(),
             exchange: "CME".to_string(),
             quantity: 1,
-            price: 4990.0,
+            price: Some(4990.0),
             trigger_price: Some(4990.0),
             transaction_type: crate::rti::request_oco_order::TransactionType::Sell,
             duration: crate::rti::request_oco_order::Duration::Day,
@@ -2167,6 +2243,7 @@ mod tests {
             user_tag: "oco-2".to_string(),
             trailing_stop: None,
             trade_route: None,
+            manual_or_auto: crate::rti::request_oco_order::OrderPlacement::Auto,
         };
 
         let (buf, _) = api.request_oco_order_multi(
@@ -2190,7 +2267,12 @@ mod tests {
     fn exit_position_override_uses_supplied_account() {
         let mut api = RithmicSenderApi::new(&test_config());
 
-        let (buf, _) = api.request_exit_position("ESM6", "CME", &override_account());
+        let (buf, _) = api.request_exit_position(
+            "ESM6",
+            "CME",
+            &override_account(),
+            Some(request_exit_position::OrderPlacement::Auto),
+        );
         let request: RequestExitPosition = decode_request(&buf);
 
         assert_eq!(request.fcm_id.as_deref(), Some("FCM_B"));
@@ -2281,7 +2363,7 @@ mod tests {
             symbol: "ESM6".to_string(),
             exchange: "CME".to_string(),
             quantity: 1,
-            price: 5000.0,
+            price: Some(5000.0),
             trigger_price: None,
             transaction_type: crate::rti::request_oco_order::TransactionType::Buy,
             duration: crate::rti::request_oco_order::Duration::Day,
@@ -2289,12 +2371,13 @@ mod tests {
             user_tag: "leg-0".to_string(),
             trailing_stop: None,
             trade_route: None,
+            manual_or_auto: crate::rti::request_oco_order::OrderPlacement::Auto,
         };
         let leg1 = RithmicOcoOrderLeg {
             symbol: "NQM6".to_string(),
             exchange: "CME".to_string(),
             quantity: 2,
-            price: 18000.0,
+            price: Some(18000.0),
             trigger_price: Some(17990.0),
             transaction_type: crate::rti::request_oco_order::TransactionType::Sell,
             duration: crate::rti::request_oco_order::Duration::Gtc,
@@ -2305,12 +2388,13 @@ mod tests {
                 trail_by_price_id: 7,
             }),
             trade_route: None,
+            manual_or_auto: crate::rti::request_oco_order::OrderPlacement::Auto,
         };
         let leg2 = RithmicOcoOrderLeg {
             symbol: "CLM6".to_string(),
             exchange: "NYMEX".to_string(),
             quantity: 3,
-            price: 75.0,
+            price: Some(75.0),
             trigger_price: Some(74.5),
             transaction_type: crate::rti::request_oco_order::TransactionType::Sell,
             duration: crate::rti::request_oco_order::Duration::Day,
@@ -2321,6 +2405,7 @@ mod tests {
                 trail_by_price_id: 9,
             }),
             trade_route: None,
+            manual_or_auto: crate::rti::request_oco_order::OrderPlacement::Auto,
         };
 
         let (buf, _) = api.request_oco_order_multi(
@@ -2404,7 +2489,7 @@ mod tests {
             symbol: "ESM6".to_string(),
             exchange: "CME".to_string(),
             quantity: 1,
-            price: 0.0,
+            price: Some(0.0),
             transaction_type: crate::rti::request_new_order::TransactionType::Sell,
             price_type: crate::rti::request_new_order::PriceType::StopMarket,
             user_tag: "trailing-stop".to_string(),
@@ -2415,6 +2500,7 @@ mod tests {
                 trail_by_price_id: 3,
             }),
             trade_route: None,
+            ..RithmicOrder::default()
         };
 
         let (buf, _) = api.request_order(&order, &default_account(), "globex");
@@ -2437,6 +2523,7 @@ mod tests {
             5005.0,
             request_modify_order::PriceType::StopLimit,
             Some(4999.0),
+            request_modify_order::OrderPlacement::Auto,
             &default_account(),
         );
         let request: RequestModifyOrder = decode_request(&buf);
@@ -2452,6 +2539,7 @@ mod tests {
             5005.0,
             request_modify_order::PriceType::StopLimit,
             None,
+            request_modify_order::OrderPlacement::Auto,
             &default_account(),
         );
         let request: RequestModifyOrder = decode_request(&buf);
@@ -2601,7 +2689,11 @@ mod tests {
             assert_eq!(request.account_id.as_deref(), Some("ACCOUNT_B"));
             assert_eq!(request.user_type, Some(bracket.into()));
 
-            let (buf, _) = api.request_cancel_all_orders(&override_account(), Some(&scope));
+            let (buf, _) = api.request_cancel_all_orders(
+                request_cancel_all_orders::OrderPlacement::Auto,
+                &override_account(),
+                Some(&scope),
+            );
             let request: RequestCancelAllOrders = decode_request(&buf);
 
             assert_eq!(request.fcm_id.as_deref(), Some("FCM_B"));
@@ -2666,5 +2758,473 @@ mod tests {
         assert_eq!(target(&mut api, Some(0)), Some(0));
         assert_eq!(stop(&mut api, None), None);
         assert_eq!(stop(&mut api, Some(0)), Some(0));
+    }
+
+    fn oco_leg_priced(
+        tag: &str,
+        price: Option<f64>,
+        trigger_price: Option<f64>,
+    ) -> RithmicOcoOrderLeg {
+        RithmicOcoOrderLeg {
+            symbol: "ESM6".to_string(),
+            exchange: "CME".to_string(),
+            quantity: 1,
+            price,
+            trigger_price,
+            transaction_type: crate::rti::request_oco_order::TransactionType::Buy,
+            duration: crate::rti::request_oco_order::Duration::Day,
+            price_type: crate::rti::request_oco_order::PriceType::Market,
+            user_tag: tag.to_string(),
+            trailing_stop: None,
+            trade_route: None,
+            manual_or_auto: crate::rti::request_oco_order::OrderPlacement::Auto,
+        }
+    }
+
+    fn oco_request(legs: Vec<RithmicOcoOrderLeg>) -> RequestOcoOrder {
+        let mut api = RithmicSenderApi::new(&test_config());
+        let routed = legs
+            .into_iter()
+            .map(|leg| (leg, "globex".to_string()))
+            .collect();
+        let (buf, _) = api.request_oco_order_multi(routed, &default_account());
+
+        decode_request(&buf)
+    }
+
+    #[test]
+    fn order_request_omits_price_when_the_order_has_none() {
+        let mut api = RithmicSenderApi::new(&test_config());
+        let mut order = RithmicOrder {
+            symbol: "ESM6".to_string(),
+            exchange: "CME".to_string(),
+            quantity: 1,
+            price: None,
+            transaction_type: crate::rti::request_new_order::TransactionType::Buy,
+            price_type: crate::rti::request_new_order::PriceType::Market,
+            user_tag: "market-order".to_string(),
+            duration: None,
+            trigger_price: None,
+            trailing_stop: None,
+            trade_route: None,
+            ..RithmicOrder::default()
+        };
+
+        let (buf, _) = api.request_order(&order, &default_account(), "globex");
+        let request: RequestNewOrder = decode_request(&buf);
+        assert_eq!(request.price, None);
+
+        // `price` is a proto2 `optional double`, so an explicit zero is
+        // distinguishable on the wire from an absent field.
+        order.price = Some(0.0);
+        let (buf, _) = api.request_order(&order, &default_account(), "globex");
+        let request: RequestNewOrder = decode_request(&buf);
+        assert_eq!(request.price, Some(0.0));
+
+        order.price = Some(5000.0);
+        let (buf, _) = api.request_order(&order, &default_account(), "globex");
+        let request: RequestNewOrder = decode_request(&buf);
+        assert_eq!(request.price, Some(5000.0));
+    }
+
+    #[test]
+    fn default_order_carries_no_price() {
+        let mut api = RithmicSenderApi::new(&test_config());
+        let order = RithmicOrder {
+            symbol: "ESM6".to_string(),
+            exchange: "CME".to_string(),
+            quantity: 1,
+            price_type: crate::rti::request_new_order::PriceType::Market,
+            ..RithmicOrder::default()
+        };
+
+        let (buf, _) = api.request_order(&order, &default_account(), "globex");
+        let request: RequestNewOrder = decode_request(&buf);
+
+        assert_eq!(request.price, None);
+    }
+
+    #[test]
+    fn oco_request_omits_prices_when_no_leg_carries_one() {
+        let request = oco_request(vec![
+            oco_leg_priced("a", None, None),
+            oco_leg_priced("b", None, None),
+        ]);
+
+        assert_eq!(request.price, Vec::<f64>::new());
+        assert_eq!(request.trigger_price, Vec::<f64>::new());
+        // The rest of the per-leg fields still describe both legs.
+        assert_eq!(request.quantity, vec![1, 1]);
+    }
+
+    #[test]
+    fn oco_request_zero_fills_prices_once_any_leg_carries_one() {
+        let request = oco_request(vec![
+            oco_leg_priced("a", None, None),
+            oco_leg_priced("b", Some(5000.0), None),
+            oco_leg_priced("c", None, Some(4990.0)),
+        ]);
+
+        assert_eq!(request.price, vec![0.0, 5000.0, 0.0]);
+        assert_eq!(request.trigger_price, vec![0.0, 0.0, 4990.0]);
+    }
+
+    #[test]
+    fn order_request_omits_an_empty_user_tag() {
+        let mut api = RithmicSenderApi::new(&test_config());
+        let mut order = RithmicOrder {
+            symbol: "ESM6".to_string(),
+            exchange: "CME".to_string(),
+            quantity: 1,
+            price: Some(5000.0),
+            transaction_type: crate::rti::request_new_order::TransactionType::Buy,
+            price_type: crate::rti::request_new_order::PriceType::Limit,
+            user_tag: String::new(),
+            duration: None,
+            trigger_price: None,
+            trailing_stop: None,
+            trade_route: None,
+            ..RithmicOrder::default()
+        };
+
+        let (buf, _) = api.request_order(&order, &default_account(), "globex");
+        let request: RequestNewOrder = decode_request(&buf);
+        assert_eq!(request.user_tag, None);
+
+        order.user_tag = "order-1".to_string();
+        let (buf, _) = api.request_order(&order, &default_account(), "globex");
+        let request: RequestNewOrder = decode_request(&buf);
+        assert_eq!(request.user_tag.as_deref(), Some("order-1"));
+    }
+
+    #[test]
+    fn bracket_request_omits_an_empty_localid() {
+        let mut api = RithmicSenderApi::new(&test_config());
+
+        let mut order = advanced_bracket();
+        order.localid = String::new();
+        let (buf, _) =
+            api.request_advanced_bracket_order(order, &default_account(), None, "globex");
+        let request: RequestBracketOrder = decode_request(&buf);
+        assert_eq!(request.user_tag, None);
+
+        let (buf, _) = api.request_advanced_bracket_order(
+            advanced_bracket(),
+            &default_account(),
+            None,
+            "globex",
+        );
+        let request: RequestBracketOrder = decode_request(&buf);
+        assert_eq!(request.user_tag.as_deref(), Some("advanced-bracket-1"));
+    }
+
+    #[test]
+    fn oco_request_omits_user_tags_when_no_leg_is_tagged() {
+        let request = oco_request(vec![
+            oco_leg_priced("", Some(5000.0), None),
+            oco_leg_priced("", Some(4990.0), None),
+        ]);
+        assert_eq!(request.user_tag, Vec::<String>::new());
+
+        let request = oco_request(vec![
+            oco_leg_priced("", Some(5000.0), None),
+            oco_leg_priced("tagged", Some(4990.0), None),
+        ]);
+        assert_eq!(
+            request.user_tag,
+            vec![String::new(), "tagged".to_string()],
+            "an untagged leg keeps its slot once any leg is tagged"
+        );
+    }
+
+    #[test]
+    fn order_request_carries_the_requested_order_placement() {
+        let mut api = RithmicSenderApi::new(&test_config());
+        let mut order = RithmicOrder {
+            symbol: "ESM6".to_string(),
+            exchange: "CME".to_string(),
+            quantity: 1,
+            price_type: crate::rti::request_new_order::PriceType::Market,
+            ..RithmicOrder::default()
+        };
+
+        let (buf, _) = api.request_order(&order, &default_account(), "globex");
+        let request: RequestNewOrder = decode_request(&buf);
+        assert_eq!(
+            request.manual_or_auto,
+            Some(request_new_order::OrderPlacement::Auto as i32)
+        );
+
+        order.manual_or_auto = request_new_order::OrderPlacement::Manual;
+        let (buf, _) = api.request_order(&order, &default_account(), "globex");
+        let request: RequestNewOrder = decode_request(&buf);
+        assert_eq!(
+            request.manual_or_auto,
+            Some(request_new_order::OrderPlacement::Manual as i32)
+        );
+    }
+
+    #[test]
+    fn bracket_request_carries_the_requested_order_placement_and_trader_user_type() {
+        let mut api = RithmicSenderApi::new(&test_config());
+
+        let (buf, _) = api.request_advanced_bracket_order(
+            advanced_bracket(),
+            &default_account(),
+            None,
+            "globex",
+        );
+        let request: RequestBracketOrder = decode_request(&buf);
+        assert_eq!(
+            request.manual_or_auto,
+            Some(request_bracket_order::OrderPlacement::Auto as i32)
+        );
+        assert_eq!(
+            request.user_type,
+            Some(request_bracket_order::UserType::Trader as i32)
+        );
+
+        let mut order = advanced_bracket();
+        order.manual_or_auto = request_bracket_order::OrderPlacement::Manual;
+        let (buf, _) =
+            api.request_advanced_bracket_order(order, &default_account(), None, "globex");
+        let request: RequestBracketOrder = decode_request(&buf);
+        assert_eq!(
+            request.manual_or_auto,
+            Some(request_bracket_order::OrderPlacement::Manual as i32)
+        );
+    }
+
+    #[test]
+    fn oco_request_carries_each_legs_order_placement() {
+        let mut leg_manual = oco_leg_priced("a", Some(5000.0), None);
+        leg_manual.manual_or_auto = request_oco_order::OrderPlacement::Manual;
+
+        let request = oco_request(vec![leg_manual, oco_leg_priced("b", Some(4990.0), None)]);
+
+        assert_eq!(
+            request.manual_or_auto,
+            vec![
+                request_oco_order::OrderPlacement::Manual as i32,
+                request_oco_order::OrderPlacement::Auto as i32,
+            ]
+        );
+    }
+
+    #[test]
+    fn cancel_all_orders_encodes_the_requested_placement() {
+        let mut api = RithmicSenderApi::new(&test_config());
+
+        let (buf, _) = api.request_cancel_all_orders(
+            request_cancel_all_orders::OrderPlacement::Auto,
+            &default_account(),
+            None,
+        );
+        let request: RequestCancelAllOrders = decode_request(&buf);
+        assert_eq!(
+            request.manual_or_auto,
+            Some(request_cancel_all_orders::OrderPlacement::Auto as i32)
+        );
+        assert_eq!(
+            request.user_type,
+            Some(request_cancel_all_orders::UserType::Trader as i32)
+        );
+
+        let (buf, _) = api.request_cancel_all_orders(
+            request_cancel_all_orders::OrderPlacement::Manual,
+            &default_account(),
+            None,
+        );
+        let request: RequestCancelAllOrders = decode_request(&buf);
+        assert_eq!(
+            request.manual_or_auto,
+            Some(request_cancel_all_orders::OrderPlacement::Manual as i32)
+        );
+    }
+
+    #[test]
+    fn cancel_and_modify_requests_carry_the_requested_order_placement() {
+        let mut api = RithmicSenderApi::new(&test_config());
+
+        let (buf, _) = api.request_cancel_order(
+            "basket-1",
+            request_cancel_order::OrderPlacement::Manual,
+            &default_account(),
+        );
+        let request: RequestCancelOrder = decode_request(&buf);
+        assert_eq!(
+            request.manual_or_auto,
+            Some(request_cancel_order::OrderPlacement::Manual as i32)
+        );
+
+        let (buf, _) = api.request_modify_order(
+            "basket-1",
+            "CME",
+            "ESM6",
+            1,
+            5000.0,
+            request_modify_order::PriceType::Limit,
+            None,
+            request_modify_order::OrderPlacement::Manual,
+            &default_account(),
+        );
+        let request: RequestModifyOrder = decode_request(&buf);
+        assert_eq!(
+            request.manual_or_auto,
+            Some(request_modify_order::OrderPlacement::Manual as i32)
+        );
+    }
+
+    #[test]
+    fn typed_user_type_matches_the_numeric_value_it_replaced() {
+        // The three request modules that carry `user_type` all number Trader 3,
+        // which is what the previous shared constant sent. `response_login_info`
+        // numbers from Admin = 0 and is not interchangeable with them.
+        let mut api = RithmicSenderApi::new(&test_config());
+
+        let (buf, _) = api.request_account_rms_info(&default_account(), None);
+        let request: RequestAccountRmsInfo = decode_request(&buf);
+        assert_eq!(request.user_type, Some(3));
+        assert_eq!(
+            request.user_type,
+            Some(request_account_rms_info::UserType::Trader as i32)
+        );
+
+        let (buf, _) = api.request_advanced_bracket_order(
+            advanced_bracket(),
+            &default_account(),
+            None,
+            "globex",
+        );
+        let request: RequestBracketOrder = decode_request(&buf);
+        assert_eq!(request.user_type, Some(3));
+
+        let (buf, _) = api.request_cancel_all_orders(
+            request_cancel_all_orders::OrderPlacement::Auto,
+            &default_account(),
+            None,
+        );
+        let request: RequestCancelAllOrders = decode_request(&buf);
+        assert_eq!(request.user_type, Some(3));
+    }
+
+    #[test]
+    fn exit_position_request_encodes_the_requested_placement() {
+        let mut api = RithmicSenderApi::new(&test_config());
+
+        let (buf, _) = api.request_exit_position(
+            "ESM6",
+            "CME",
+            &default_account(),
+            Some(request_exit_position::OrderPlacement::Manual),
+        );
+        let request: RequestExitPosition = decode_request(&buf);
+
+        assert_eq!(
+            request.manual_or_auto,
+            Some(request_exit_position::OrderPlacement::Manual as i32)
+        );
+    }
+
+    /// `None` means "say nothing", not "say Auto" — the field is a proto2
+    /// `optional`, so leaving the attribution to the server is representable
+    /// and distinct from asserting one.
+    #[test]
+    fn exit_position_request_omits_an_unset_placement() {
+        let mut api = RithmicSenderApi::new(&test_config());
+
+        let (buf, _) = api.request_exit_position("ESM6", "CME", &default_account(), None);
+        let request: RequestExitPosition = decode_request(&buf);
+
+        assert_eq!(request.manual_or_auto, None);
+    }
+
+    #[test]
+    fn order_request_encodes_the_timing_and_window_fields() {
+        let mut api = RithmicSenderApi::new(&test_config());
+        let order = RithmicOrder {
+            symbol: "ESM6".to_string(),
+            exchange: "CME".to_string(),
+            quantity: 1,
+            price: Some(5000.0),
+            window_name: Some("strategy-1".to_string()),
+            release_at_ssboe: Some(35900),
+            release_at_usecs: Some(125000),
+            cancel_at_ssboe: Some(37000),
+            cancel_at_usecs: Some(750000),
+            cancel_after_secs: Some(120),
+            ..RithmicOrder::default()
+        };
+
+        let (buf, _) = api.request_order(&order, &default_account(), "globex");
+        let request: RequestNewOrder = decode_request(&buf);
+
+        assert_eq!(request.window_name.as_deref(), Some("strategy-1"));
+        assert_eq!(request.release_at_ssboe, Some(35900));
+        assert_eq!(request.release_at_usecs, Some(125000));
+        assert_eq!(request.cancel_at_ssboe, Some(37000));
+        assert_eq!(request.cancel_at_usecs, Some(750000));
+        assert_eq!(request.cancel_after_secs, Some(120));
+    }
+
+    #[test]
+    fn order_request_encodes_the_if_touched_group() {
+        let mut api = RithmicSenderApi::new(&test_config());
+        let order = RithmicOrder {
+            symbol: "ESM6".to_string(),
+            exchange: "CME".to_string(),
+            quantity: 1,
+            price: Some(5000.0),
+            if_touched: Some(crate::api::RithmicOrderIfTouchedTrigger {
+                symbol: "NQM6".to_string(),
+                exchange: "CME".to_string(),
+                condition: request_new_order::Condition::GreaterThanEqualTo,
+                price_field: request_new_order::PriceField::TradePrice,
+                price: 18250.5,
+            }),
+            ..RithmicOrder::default()
+        };
+
+        let (buf, _) = api.request_order(&order, &default_account(), "globex");
+        let request: RequestNewOrder = decode_request(&buf);
+
+        assert_eq!(request.if_touched_symbol.as_deref(), Some("NQM6"));
+        assert_eq!(request.if_touched_exchange.as_deref(), Some("CME"));
+        assert_eq!(
+            request.if_touched_condition,
+            Some(request_new_order::Condition::GreaterThanEqualTo as i32)
+        );
+        assert_eq!(
+            request.if_touched_price_field,
+            Some(request_new_order::PriceField::TradePrice as i32)
+        );
+        assert_eq!(request.if_touched_price, Some(18250.5));
+    }
+
+    #[test]
+    fn order_request_omits_the_optional_groups_when_unset() {
+        let mut api = RithmicSenderApi::new(&test_config());
+        let order = RithmicOrder {
+            symbol: "ESM6".to_string(),
+            exchange: "CME".to_string(),
+            quantity: 1,
+            price: Some(5000.0),
+            ..RithmicOrder::default()
+        };
+
+        let (buf, _) = api.request_order(&order, &default_account(), "globex");
+        let request: RequestNewOrder = decode_request(&buf);
+
+        assert_eq!(request.window_name, None);
+        assert_eq!(request.release_at_ssboe, None);
+        assert_eq!(request.release_at_usecs, None);
+        assert_eq!(request.cancel_at_ssboe, None);
+        assert_eq!(request.cancel_at_usecs, None);
+        assert_eq!(request.cancel_after_secs, None);
+        assert_eq!(request.if_touched_symbol, None);
+        assert_eq!(request.if_touched_exchange, None);
+        assert_eq!(request.if_touched_condition, None);
+        assert_eq!(request.if_touched_price_field, None);
+        assert_eq!(request.if_touched_price, None);
     }
 }

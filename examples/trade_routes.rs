@@ -82,16 +82,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         symbol: "ESM6".to_string(),
         exchange: "CME".to_string(),
         quantity: 1,
-        price: 5000.0,
+        price: Some(5000.0),
         transaction_type: rithmic_rs::rti::request_new_order::TransactionType::Buy,
         price_type: rithmic_rs::rti::request_new_order::PriceType::Limit,
         user_tag: "example-routed".to_string(),
-        duration: None,
-        trigger_price: None,
-        trailing_stop: None,
         // Set this to send on a route of your own, including one the server
         // never published. `None` uses the route for the exchange.
         trade_route: None,
+        ..Default::default()
     };
 
     match handle.place_order(order).await {

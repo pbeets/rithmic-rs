@@ -28,29 +28,40 @@ pub use receiver_api::RithmicResponse;
 pub use rithmic_command_types::{
     LoginConfig, RithmicAdvancedBracketOrder, RithmicBracketLevelAdjustment, RithmicBracketOrder,
     RithmicCancelOrder, RithmicIfTouchedTrigger, RithmicModifyOrder, RithmicOcoOrderLeg,
-    RithmicOrder, TrailingStop,
+    RithmicOrder, RithmicOrderIfTouchedTrigger, TrailingStop,
 };
 
 // Re-export bracket order enums
 pub use crate::rti::request_bracket_order::{
     BracketType, Condition as BracketCondition, Duration as BracketDuration,
-    PriceField as BracketPriceField, PriceType as BracketPriceType,
-    TransactionType as BracketTransactionType,
+    OrderPlacement as BracketOrderPlacement, PriceField as BracketPriceField,
+    PriceType as BracketPriceType, TransactionType as BracketTransactionType,
 };
 
 // Re-export OCO order enums
 pub use crate::rti::request_oco_order::{
-    Duration as OcoDuration, PriceType as OcoPriceType, TransactionType as OcoTransactionType,
+    Duration as OcoDuration, OrderPlacement as OcoOrderPlacement, PriceType as OcoPriceType,
+    TransactionType as OcoTransactionType,
 };
 
 // Re-export new order enums for RithmicOrder fields
 pub use crate::rti::request_new_order::{
-    Duration as NewOrderDuration, PriceType as NewOrderPriceType,
-    TransactionType as NewOrderTransactionType,
+    Condition as NewOrderCondition, Duration as NewOrderDuration,
+    OrderPlacement as NewOrderPlacement, PriceField as NewOrderPriceField,
+    PriceType as NewOrderPriceType, TransactionType as NewOrderTransactionType,
 };
 
 // Re-export modify order enums
-pub use crate::rti::request_modify_order::PriceType as ModifyPriceType;
+pub use crate::rti::request_modify_order::{
+    OrderPlacement as ModifyOrderPlacement, PriceType as ModifyPriceType,
+};
+
+// Re-export cancel order origination selectors
+pub use crate::rti::request_cancel_all_orders::OrderPlacement as CancelAllOrderPlacement;
+pub use crate::rti::request_cancel_order::OrderPlacement as CancelOrderPlacement;
+
+// Re-export exit position origination selector
+pub use crate::rti::request_exit_position::OrderPlacement as ExitPositionPlacement;
 
 // Re-export easy-to-borrow list request type
 pub use crate::rti::request_easy_to_borrow_list::Request as EasyToBorrowRequest;

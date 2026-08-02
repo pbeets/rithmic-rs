@@ -205,6 +205,17 @@ fn parse_whole_seconds(value: &str) -> Option<u64> {
 /// Configuration for Rithmic connections.
 ///
 /// This struct contains session-level connection and login details.
+///
+/// Build one with [`RithmicConfig::from_env`] or [`RithmicConfig::builder`].
+///
+/// ```no_run
+/// use rithmic_rs::{RithmicConfig, RithmicEnv};
+///
+/// let config = RithmicConfig {
+///     system_name: "Rithmic Paper Trading".to_string(),
+///     ..RithmicConfig::from_env(RithmicEnv::Demo).unwrap()
+/// };
+/// ```
 #[derive(Clone)]
 pub struct RithmicConfig {
     /// Primary WebSocket URL.

@@ -204,10 +204,11 @@ mod tests {
 
     fn oco_leg(exchange: &str, trade_route: Option<&str>) -> RithmicOcoOrderLeg {
         RithmicOcoOrderLeg {
+            manual_or_auto: crate::rti::request_oco_order::OrderPlacement::Auto,
             symbol: "ESM6".to_string(),
             exchange: exchange.to_string(),
             quantity: 1,
-            price: 5000.0,
+            price: Some(5000.0),
             trigger_price: None,
             transaction_type: crate::rti::request_oco_order::TransactionType::Buy,
             duration: crate::rti::request_oco_order::Duration::Day,

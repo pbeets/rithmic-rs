@@ -11,122 +11,69 @@ Public struct fields and a method signature change, so this lands in a major rel
 
 ### Breaking Changes
 
-- **`RithmicOcoOrderLeg` gains a required `trailing_stop: Option<TrailingStop>` field.** Add
-  `trailing_stop: None` to existing literals to preserve prior behavior.
-- **`TrailingStop` gains a required `trail_by_price_id: i32` field.** It is mandatory for Rithmic to
-  accept a trailing stop.
-- **`RithmicModifyOrder` gains a required `trigger_price: Option<f64>` field.** Add `trigger_price: None`
-  to preserve the prior stop-type default behavior.
-- **`RithmicOrderPlantHandle::subscribe_account_rms_updates` gains a required `update_bits` parameter.**
-  Pass `vec![]` for the prior behavior, or `vec![RmsUpdateBits::AutoLiqThresholdCurrentValue]` to
-  stream auto-liq threshold updates.
-- **`RithmicConfig` gains a required `request_timeout: Duration` field.** Use
-  `RithmicConfig::builder(..)` or add `request_timeout: DEFAULT_REQUEST_TIMEOUT` to existing
-  struct literals.
-- **`RithmicOrderPlantHandle::adjust_profit` and `adjust_stop` take a `RithmicBracketLevelAdjustment`**
-  instead of `(id, ticks)`, adding a `level` that selects the bracket leg. `level: None` keeps the
-  prior behavior.
-- **`RithmicOrder`, `RithmicAdvancedBracketOrder` and `RithmicOcoOrderLeg` gain a required
-  `trade_route: Option<String>` field.** Add `trade_route: None` to existing literals. Orders now use
-  the route the server publishes for their exchange instead of a fixed `"globex"`/`"simulator"`, and
-  fail with `RithmicError::NoTradeRoute` when there is none.
+- **`RithmicOrder::price` and `RithmicOcoOrderLeg::price` are now `Option<f64>`.** Wrap existing values in `Some(..)`; pass `None` for market orders, which previously shipped `price = 0.0`. `RithmicModifyOrder::price` stays a required `f64` — a modify restates the order rather than patching it.
+- **Six order command types gain a `manual_or_auto` field** of their own request module's `OrderPlacement` enum: `RithmicOrder`, `RithmicAdvancedBracketOrder`, `RithmicBracketOrder`, `RithmicOcoOrderLeg`, `RithmicModifyOrder` and `RithmicCancelOrder`. Each type's `Default` pins `Auto`, so `..Default::default()` picks it up; note the generated enums' own `Default` is `Manual`, so never reach for `Placement::default()`.
+- **`RithmicOrder` gains `window_name`, `release_at_ssboe`/`release_at_usecs`, `cancel_at_ssboe`/`cancel_at_usecs`/`cancel_after_secs` and `if_touched`.** All `Option` and omitted when unset, so an order that ignores them is byte-identical on the wire.
+- **`cancel_all_orders` is now attributed to `Auto` instead of `Manual`,** changing what the server records for origination. Call `cancel_all_orders_with_placement(CancelAllOrderPlacement::Manual)` to keep the previous attribution.
+- **`RithmicSenderApi::request_exit_position` gains a `manual_or_auto: Option<ExitPositionPlacement>` argument.** `None` omits the field; pass `Some(ExitPositionPlacement::Auto)` for the previous behavior. `RithmicOrderPlantHandle::exit_position` is unchanged.
+- **`TrailingStop` no longer implements `Default`,** and gains a required `trail_by_price_id: i32`. Zero is the unset value Rithmic rejects with rp_code 1112, so `TrailingStop::default()` was a guaranteed rejection. Name both fields.
+- **`RithmicOrder`, `RithmicAdvancedBracketOrder` and `RithmicOcoOrderLeg` gain a required `trade_route: Option<String>` field.** Add `trade_route: None`. Orders now use the route the server publishes for their exchange instead of a fixed `"globex"`/`"simulator"`, and fail with `RithmicError::NoTradeRoute` when there is none.
+- **`RithmicOcoOrderLeg` gains a required `trailing_stop: Option<TrailingStop>` field** and **`RithmicModifyOrder` a required `trigger_price: Option<f64>`.** Add `None` to existing literals for prior behavior.
+- **`RithmicConfig` gains a required `request_timeout: Duration` field.** Use `RithmicConfig::builder(..)` or add `request_timeout: DEFAULT_REQUEST_TIMEOUT`.
+- **`RithmicOrderPlantHandle::subscribe_account_rms_updates` gains a required `update_bits` parameter.** Pass `vec![]` for prior behavior.
+- **`RithmicOrderPlantHandle::adjust_profit` and `adjust_stop` take a `RithmicBracketLevelAdjustment`** instead of `(id, ticks)`, adding a `level` that selects the bracket leg. `level: None` keeps the prior behavior.
+- **An order placed with an empty `user_tag` now echoes back as `None` rather than `Some("")`,** since the field is no longer sent as `""`.
 
 ### Added
 
-- **`rithmic_rs::DEFAULT_REQUEST_TIMEOUT`**, `RithmicConfigBuilder::request_timeout` and the
-  `RITHMIC_REQUEST_TIMEOUT_SECS` environment variable — how long a request waits for a response.
-  Defaults to 30 seconds, and zero selects the default. The environment variable takes plain
-  digits only — anything else is an error rather than a silent fallback.
-- **`RithmicBracketLevelAdjustment`** — the command struct for `adjust_profit` and `adjust_stop`:
-  the basket `id`, the new `ticks` distance, and the `level` selecting a bracket leg.
-- **`RithmicMessage::RequestHeartbeat(RequestHeartbeat)`** — a keep-alive frame (template 18) sent by the server, which previously arrived as `UnknownTemplate`. Delivered on the subscription channel with `error: None` and an empty `request_id`: it answers no request you made, and its `user_msg` is the server's own token rather than an id this client handed out. The library does not reply to it. `RithmicMessage` is `#[non_exhaustive]`, so the new variant does not break existing matches.
-- **`RithmicMessage::UnknownTemplate(UnknownTemplateMessage)`** — a frame whose `template_id` has no message definition in this crate. Delivered with `error: None` and the message body kept as received. `RithmicMessage` is `#[non_exhaustive]`, so the new variant does not break existing matches.
-- **`UnknownTemplateMessage::decode_as<M>()`** — decode the payload into a caller-supplied `prost` type, so an unmapped template can be handled downstream without a change here. `Ok` is not proof the type was guessed right: protobuf skips undeclared fields, so an unrelated payload usually decodes into a mostly-empty value.
-- **`UnknownTemplateMessage::payload_hex()` / `from_payload_hex()`** — the untruncated payload as hex and its inverse. `Display` elides; `payload_hex` doesn't, so a frame captured in production can be attached to a bug report and replayed in a test.
-- **`rithmic_rs::prost`** — the `prost` this crate's types are generated against, re-exported so downstream types are compatible with `decode_as` and with `UnknownTemplateMessage::payload`. prost is a public dependency, so a major bump of it remains a breaking change of this crate.
-- **Multi-leg OCO orders**: `RithmicOrderPlantHandle::place_oco_order_multi(Vec<RithmicOcoOrderLeg>)`
-  for N-leg OCO groups (minimum two legs; fewer returns `RithmicError::InvalidArgument`).
-- **Per-leg OCO trailing stops** via the new `RithmicOcoOrderLeg::trailing_stop` field, which reuses
-  the existing `TrailingStop`. `trail_by_price_id` is mandatory — Rithmic rejects a trailing stop
-  with rp_code 1112 when it is omitted. The three repeated trailing-stop fields are
-  index-aligned with the other per-leg fields, so they are sent for every leg or for none; an OCO
-  where no leg trails is unchanged on the wire.
-- **RMS auto-liquidation streaming**: `subscribe_account_rms_updates` now accepts a `Vec` of update
-  selectors; pass `AutoLiqThresholdCurrentValue` to receive `auto_liq_threshold_current_value`. An
-  empty `Vec` omits `update_bits` rather than sending `0`.
-- **`rithmic_rs::RmsUpdateBits`** — `request_account_rms_updates::UpdateBits` re-exported at the
-  crate root, so the selector passed to `subscribe_account_rms_updates` is nameable without reaching
-  into `rithmic_rs::rti`.
-- `RithmicModifyOrder::trigger_price` — StopLimit/StopMarket modifies can set a trigger price
-  distinct from the limit price. When `None`, the trigger still defaults to `price` for stop types.
-- **`RithmicError::NoTradeRoute { exchange, cached }`** — no route was published for that exchange
-  and the order set none itself, so nothing was sent. `cached` lists the exchanges that do have one.
-- **Per-order trade routes** via the new `trade_route` field on `RithmicOrder`,
-  `RithmicAdvancedBracketOrder` and `RithmicOcoOrderLeg`, which overrides the route the plant would
-  pick, including with a route the server never published. `place_bracket_order` has no override;
-  convert to `RithmicAdvancedBracketOrder` to set one.
-- **`RithmicOrderPlantHandle::trade_route_for(exchange)`** — the route an order for that exchange
-  would take right now, without sending anything.
-- **`RithmicOrderPlantHandle::record_trade_route(update)`** — apply a `TradeRoute` update to the
-  cached routes. `login()` subscribes, so those updates arrive on `subscription_receiver`, but
-  nothing applies them for you: ignore them and orders keep the routes login read. See
-  `examples/trade_routes.rs`.
+- **`validate()` on `RithmicOrder`, `RithmicOcoOrderLeg` and `RithmicAdvancedBracketOrder`** — check an order carries the prices its price type requires, returning `RithmicError::InvalidArgument`. Opt-in: placing an order does not call it.
+- **`RithmicOrderPlantHandle::exit_position_with_placement`** and **`cancel_all_orders_with_placement`** — the same calls under a chosen origination attribution.
+- **`RithmicOrderIfTouchedTrigger`** plus `NewOrderCondition`/`NewOrderPriceField` re-exports. Distinct from `RithmicIfTouchedTrigger`, which carries the `request_bracket_order` enums — the enum sets are generated per request module and are not interchangeable.
+- **`OrderPlacement` re-exports at the crate root** — `NewOrderPlacement`, `BracketOrderPlacement`, `OcoOrderPlacement`, `ModifyOrderPlacement`, `CancelOrderPlacement`, `CancelAllOrderPlacement` and `ExitPositionPlacement`.
+- **Multi-leg OCO orders** via `place_oco_order_multi(Vec<RithmicOcoOrderLeg>)` (minimum two legs), with **per-leg trailing stops** through the new `RithmicOcoOrderLeg::trailing_stop`.
+- **Per-order trade routes** via the new `trade_route` field, overriding the route the plant would pick — including one the server never published. `place_bracket_order` has no override; convert to `RithmicAdvancedBracketOrder`.
+- **`RithmicOrderPlantHandle::trade_route_for(exchange)`** and **`record_trade_route(update)`** — the route an order would take right now, and applying a `TradeRoute` update to the cache. Nothing applies those updates for you; see `examples/trade_routes.rs`.
+- **`RithmicError::NoTradeRoute { exchange, cached }`** — no route was published for that exchange and the order set none itself, so nothing was sent.
+- **`RithmicMessage::UnknownTemplate(UnknownTemplateMessage)`** — a frame whose `template_id` has no message definition here, body kept as received. `RithmicMessage` is `#[non_exhaustive]`, so the new variant does not break existing matches.
+- **`UnknownTemplateMessage::decode_as<M>()`, `payload_hex()` and `from_payload_hex()`** — decode an unmapped template into your own `prost` type, or capture the untruncated payload for replay in a test. `Ok` from `decode_as` is not proof the type was guessed right.
+- **`RithmicMessage::RequestHeartbeat(RequestHeartbeat)`** — the server's keep-alive (template 18), which previously arrived as `UnknownTemplate`. The library does not reply to it.
+- **`rithmic_rs::prost`** — the `prost` this crate's types are generated against. It is a public dependency, so a major bump of it remains a breaking change here.
+- **`rithmic_rs::DEFAULT_REQUEST_TIMEOUT`**, `RithmicConfigBuilder::request_timeout` and `RITHMIC_REQUEST_TIMEOUT_SECS` — how long a request waits for a response. Defaults to 30 seconds; the environment variable takes plain digits only.
+- **`RithmicBracketLevelAdjustment`** — the command struct for `adjust_profit`/`adjust_stop`: basket `id`, new `ticks` distance, and the `level` selecting a leg.
+- **RMS auto-liquidation streaming** — `subscribe_account_rms_updates` takes a `Vec` of selectors; pass the new `rithmic_rs::RmsUpdateBits::AutoLiqThresholdCurrentValue` to receive it. An empty `Vec` omits `update_bits` rather than sending `0`.
+- **`RithmicModifyOrder::trigger_price`** — StopLimit/StopMarket modifies can set a trigger distinct from the limit price. When `None`, it still defaults to `price` for stop types.
 
 ### Changed
 
-- **An unrecognized `template_id` is no longer reported as a decode failure.** It previously produced `Err(RithmicResponse)` with `RithmicError::ProtocolError("Unknown message type: template_id=…")`, logged at `error` level with the payload discarded. It now returns `Ok` with `RithmicMessage::UnknownTemplate`, `error: None`, and a `warn` carrying the template id and size. Routing is unchanged — it was, and remains, delivered on the subscription channel as an update.
-
-  This is a behavioural change, not a source-breaking one: code matching `RithmicMessage::Unknown` still compiles, but will no longer see unrecognized templates. Match `UnknownTemplate` for those; `Unknown` now means only that a frame failed to decode.
-- A frame carrying no `template_id` is still an error: prost does not enforce proto2 `required` on decode, so the missing field arrives as `0`, leaving no template to route it to.
-- **An unsolicited `Reject` (template 75) — one that echoes no `user_msg` — is now logged at `warn` with its full `rp_code` and dropped.** It previously went to the request handler, matched no responder, and was dumped at `error` level with the whole frame. A `Reject` that echoes a `user_msg` still resolves the matching request exactly as before.
-- **A `Reject` is always surfaced as a rejection.** It now decodes with `error: Some(RithmicError::RequestRejected(..))`, the `rp_code` passed through element for element and `code`/`message` taken from its first two elements (both `None` when it is empty). The `Response*` success rules no longer apply to a `Reject`, so codes like `["0"]` no longer report a rejected request as a success.
-- **`RithmicError::RequestRejected` renders as `request rejected` when the rejection carried no code and no message**, instead of `request rejected: ` with a dangling separator.
-- **A frame that fails to decode is no longer discarded.** A decode failure on a request-correlated template carried an empty `request_id`, so it matched no responder, was logged as "no responder found" and dropped — and the caller waiting on that request never heard back. The echoed `user_msg` is now read back off the wire even when the body will not decode: where it is there, the failure resolves that request with `error: Some(RithmicError::ProtocolError(..))`; where it is not, it arrives on the subscription channel as `RithmicMessage::Unknown`. The oneshot resolves `Ok`, so callers that check `response.error` need no change, but one that matches only specific error variants would read a decode failure as a success. Where no id is recoverable the caller still waits — that is what per-request timeouts are for.
-- **A response that ends a request without being marked `multi_response` no longer leaks the parts accumulated under its id.** `RithmicRequestHandler::handle_response` removed the responder but left `response_vec_map[id]` populated, so those parts were retained for the connection's lifetime and would be prepended to a later request that reused the id. It now clears them, matching what `fail_request` already did. Pre-existing — a correlated `Reject` could already end a request mid-way through a multi-part response — and correlated decode failures are another way in.
-- **The crate-level "Error Handling" docs now cover every way an error surfaces**, and what to do about each: which come back from a call, which arrive on the subscription channel, and which mean you should reconnect. Bad data never stops a plant; only transport failure does. `examples/error_handling.rs` is the same ground as runnable code.
-- **Documentation pass across the crate.** Comments and rustdoc now stick to what the code does, without describing server behaviour, citing external documents, or assuming familiarity with the wire protocol. No API changed.
-- **`RithmicAdvancedBracketOrder`'s rustdoc example no longer shows code that cannot compile downstream.** The struct is `#[non_exhaustive]`, so external crates cannot build it with a struct expression — including `..Default::default()` functional-update syntax. The example now starts from `Default` and assigns fields. It is fenced ```ignore, so nothing caught this.
-- **README samples no longer show incorrect API usage.** `cancel_order` takes a `RithmicCancelOrder`, not a bare id, and `place_bracket_order` had a literal `...` for its argument. The history plant block passed `&str` where those methods require owned `String`s and used `BarType` without importing it — it is not re-exported at the crate root. The blocks are still illustrative fragments rather than standalone programs, and are not doctested.
+- **An unrecognized `template_id` is no longer reported as a decode failure.** It previously produced `Err` with `ProtocolError("Unknown message type…")` and discarded the payload; it now returns `Ok` with `RithmicMessage::UnknownTemplate` and a `warn`. Code matching `RithmicMessage::Unknown` still compiles but no longer sees these — `Unknown` now means only that a frame failed to decode.
+- **An unsolicited `Reject` (one echoing no `user_msg`) is logged at `warn` and dropped,** instead of reaching the request handler, matching no responder, and being dumped at `error`.
+- **A `Reject` is always surfaced as a rejection,** with `rp_code` passed through element for element. The `Response*` success rules no longer apply, so codes like `["0"]` no longer report a rejected request as a success.
+- **`RithmicError::RequestRejected` renders as `request rejected`** when the rejection carried no code and no message, instead of leaving a dangling separator.
+- **The crate-level "Error Handling" docs now cover every way an error surfaces** and what to do about each. Bad data never stops a plant; only transport failure does. `examples/error_handling.rs` is the same ground as runnable code.
+- **Documentation pass across the crate.** Comments and rustdoc stick to what the code does, without describing server behaviour or assuming familiarity with the wire protocol. No API changed.
+- **`RithmicAdvancedBracketOrder`'s rustdoc example is compiled rather than fenced ```ignore.** The old fence hid that the code inside used a struct expression its `#[non_exhaustive]` rejects downstream. A `compile_fail` doctest alongside it pins that contract, which only a doctest can check, since doctests compile as external crates.
+- **README samples no longer show incorrect API usage** — `cancel_order` takes a `RithmicCancelOrder` rather than a bare id, `place_bracket_order` had a literal `...` for its argument, and the history plant block passed `&str` where owned `String`s are required and used an unimported `BarType`.
 
 ### Fixed
 
-- **The order and PnL plants now reject queued commands once a disconnect is in flight.** A
-  `PlaceOrder`, `ModifyOrder` or `CancelOrder` submitted from a cloned handle concurrently with
-  `disconnect()` was still serialized to Rithmic while its caller saw `ConnectionClosed` — a
-  recorded failure for an order that was live at the exchange. All four plants now apply the same
-  guard; no caller-visible change on the ticker and history plants, which already had one.
-- **`disconnect()` now sends `Close` even when the logout fails.** It returned early on a logout
-  error, leaving an actor that had already set `close_requested`: no heartbeats, every later command
-  dropped, pending requests never drained. All four plants send `Close` before propagating the error.
-- **The `heartbeat_interval` in a login response is now used as the heartbeat period.** All four
-  plants took `hb.max(HEARTBEAT_SECS as f64)`, so the server's value only ever applied when it was
-  longer than the 60-second default: a server asking for a heartbeat every 30 seconds got one every
-  60 and dropped the connection as idle. The server's value is now used as given, and a period of 0
-  falls back to the 60-second default, as does a login response that carries no interval at all.
-- **`examples/bracket_order.rs` no longer exits its listener on a recoverable error.** It broke out of the loop on any populated `update.error`, which a per-message decode failure also sets. Breaking there was redundant for the fatal cases — transport failure, forced logout and heartbeat timeout each arrive as their own `RithmicMessage` variant, which the listener already matches — so its only effect was that a single undecodable frame silently stopped order updates on a live bracket.
-- **Samples that handled a turned-down `subscribe` in an `Err` arm.** That arm can never match, so a `subscribe` the server turned down was reported as a success. Affects the crate-root docs, the `RithmicError` rustdoc, the README, `examples/reconnect.rs` and the 2.0.0 migration guide below. All now check `resp.error`, and show `Err(RequestRejected)` on `login`, which is the one call that returns it.
-- **Single-order trailing stops now populate `trail_by_price_id`** (previously omitted, causing
-  Rithmic to reject the trailing stop with rp_code 1112).
-- **`request_account_rms_updates` sent `update_bits: None`**, so `auto_liq_threshold_current_value`
-  never streamed even when subscribed.
-- **A server `ForcedLogout` (template 77) now stops the plant actor.** All four plants drain their pending requests with `ConnectionClosed`, set `close_requested` and stop the loop, instead of heartbeating a session the server has ended while callers await oneshots that never resolve. Subscribers receive the `ForcedLogout` frame unchanged, followed by the `ConnectionError` actor-lifecycle event every stopping path emits — stopping the loop means no later path raises it.
-- **Requests sent a hardcoded `Trader` user type,** and the account list sent no `fcm_id`/`ib_id`, so
-  FCM and IB logins listed no accounts. `login()` now retrieves the login info once and scopes the
-  account list, account RMS info, bracket orders and cancel-all with it — so **`get_account_list` and
-  `get_account_rms_info` may return fewer accounts than before**, including for `Trader` logins.
-- **Bracket target/stop level updates omitted the `level` field**, so on a multi-leg bracket every
-  adjustment landed on the server's default leg and the other legs were unreachable.
-- **Every order went out on `"globex"` (live) or `"simulator"` regardless of exchange**, ignoring the
-  routes the server publishes. That is correct only where the FCM happens to route every venue the
-  same way; anywhere it does not, or where a venue has no route at all, the order carried a route
-  that does not apply to it. The plant now uses the routes the server publishes for the exchange,
-  preferring one it marks default; `login()` reads them once and orders route off that snapshot for
-  the life of the connection. Login logs each route it loaded, and the count, at `info`, or logs at
-  `error` if none were published; the route each order takes logs at `debug`.
-- **Waits that never ended now end.** A request whose response never arrives fails after 30 seconds
-  of silence with the new `RithmicError::RequestTimeout` instead of parking its caller forever —
-  reconcile a timed-out order rather than re-sending it — and a missing pong reports a dead link
-  instead of spinning the plant's loop at the deadline.
+- **Market orders shipped `price = 0.0`.** `price` was sent unconditionally and defaults to zero, so an order with no meaningful price was priced at zero on the wire. It is now omitted when the caller supplies none.
+- **Multi-leg OCO zero-filled `price` and `trigger_price`.** Both now follow the all-or-none rule the trailing-stop fields already used: absent when no leg carries one, index-aligned once any leg does.
+- **Empty `user_tag` and `localid` were sent as `""`** rather than omitted. `request_modify_order_reference_data` still sends what it is given — an empty tag there is how a tag is cleared.
+- **Order origination was attributed inconsistently.** Orders, modifies, cancels and exits sent the bare literal `2` while cancel-all sent `Manual`, so one session reported two different originators. All now use the typed enum of their own request module and default to `Auto`.
+- **Every order went out on `"globex"` (live) or `"simulator"` regardless of exchange,** ignoring the routes the server publishes. The plant now uses the published route for the exchange, preferring one marked default; `login()` reads them once and orders route off that snapshot for the connection's life.
+- **Requests sent a hardcoded `Trader` user type,** and the account list sent no `fcm_id`/`ib_id`, so FCM and IB logins listed no accounts. `login()` now retrieves the login info once and scopes requests with it — so **`get_account_list` and `get_account_rms_info` may return fewer accounts than before**, including for `Trader` logins.
+- **Waits that never ended now end.** A request whose response never arrives fails after 30 seconds with the new `RithmicError::RequestTimeout` instead of parking its caller forever — reconcile a timed-out order rather than re-sending it.
+- **A frame that fails to decode is no longer discarded.** The echoed `user_msg` is now read off the wire even when the body will not decode, so the failure resolves that request with `ProtocolError` instead of leaving its caller waiting. Where no id is recoverable, per-request timeouts cover it.
+- **A response that ends a request without being marked `multi_response` no longer leaks the parts accumulated under its id,** which were retained for the connection's lifetime and prepended to a later request reusing that id.
+- **The order and PnL plants now reject queued commands once a disconnect is in flight.** An order submitted from a cloned handle concurrently with `disconnect()` was still serialized to Rithmic while its caller saw `ConnectionClosed` — a recorded failure for an order live at the exchange.
+- **`disconnect()` now sends `Close` even when the logout fails,** instead of returning early and leaving an actor with `close_requested` set: no heartbeats, every later command dropped, pending requests never drained.
+- **A server `ForcedLogout` (template 77) now stops the plant actor,** draining pending requests with `ConnectionClosed` instead of heartbeating a session the server has ended while callers await oneshots that never resolve.
+- **The `heartbeat_interval` in a login response is now used as the heartbeat period.** Plants took `hb.max(60)`, so a server asking for a heartbeat every 30 seconds got one every 60 and dropped the connection as idle.
+- **Single-order trailing stops now populate `trail_by_price_id`,** previously omitted, causing Rithmic to reject the trailing stop with rp_code 1112.
+- **Bracket target/stop level updates omitted the `level` field,** so on a multi-leg bracket every adjustment landed on the server's default leg and the other legs were unreachable.
+- **`request_account_rms_updates` sent `update_bits: None`,** so `auto_liq_threshold_current_value` never streamed even when subscribed.
+- **`examples/bracket_order.rs` no longer exits its listener on a recoverable error.** It broke out of the loop on any populated `update.error`, which a per-message decode failure also sets, so a single undecodable frame silently stopped order updates on a live bracket.
+- **Samples that handled a turned-down `subscribe` in an `Err` arm.** That arm can never match, so a rejected `subscribe` was reported as a success. All now check `resp.error`.
 
 ## [2.0.0]
 

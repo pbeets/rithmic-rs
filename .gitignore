@@ -6,7 +6,7 @@
 Cargo.lock
 
 # IDE settings
-.vscode/
+.vscode
 
 # OS specific
 .DS_Store
@@ -21,8 +21,8 @@ src/raw-proto/
 .cursor/
 
 # IDE / editor / OS dotfiles
-.idea/
-.vscode/
+.idea
+.vscode
 .bash_profile
 .bashrc
 .gitconfig

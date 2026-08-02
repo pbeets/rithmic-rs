@@ -41,10 +41,11 @@ fn adjustment(id: &str, ticks: i32, level: Option<i32>) -> RithmicBracketLevelAd
 
 fn leg(tag: &str) -> RithmicOcoOrderLeg {
     RithmicOcoOrderLeg {
+        manual_or_auto: crate::rti::request_oco_order::OrderPlacement::Auto,
         symbol: "ESM6".to_string(),
         exchange: "CME".to_string(),
         quantity: 1,
-        price: 5000.0,
+        price: Some(5000.0),
         trigger_price: None,
         transaction_type: crate::rti::request_oco_order::TransactionType::Buy,
         duration: crate::rti::request_oco_order::Duration::Day,
@@ -80,6 +81,7 @@ fn place_order(response_sender: Responder) -> OrderPlantCommand {
 
 fn cancel_order(response_sender: Responder) -> OrderPlantCommand {
     OrderPlantCommand::CancelOrder {
+        manual_or_auto: CancelOrderPlacement::Auto,
         order_id: "basket-1".to_string(),
         account: test_account(),
         response_sender,
@@ -559,6 +561,7 @@ fn bracket_order() -> RithmicBracketOrder {
         quantity: 1,
         stop_ticks: 10,
         symbol: "ESM6".to_string(),
+        manual_or_auto: crate::rti::request_bracket_order::OrderPlacement::Auto,
     }
 }
 
@@ -617,6 +620,7 @@ async fn a_logged_in_actor_scopes_every_request_that_carries_a_user_type() {
     let cancel_all: crate::rti::RequestCancelAllOrders =
         sent_request(&mut plant, &mut client, |response_sender| {
             OrderPlantCommand::CancelAllOrders {
+                manual_or_auto: CancelAllOrderPlacement::Auto,
                 account: test_account(),
                 response_sender,
             }
@@ -1107,4 +1111,147 @@ async fn record_trade_route_reports_connection_closed_when_the_plant_is_gone() {
         .expect_err("the plant is gone");
 
     assert!(matches!(err, RithmicError::ConnectionClosed));
+}
+
+#[tokio::test]
+async fn cancel_all_orders_encodes_auto_placement_by_default() {
+    // The Manual -> Auto change lives in the handle's default argument, not in
+    // the builder, so this drives the command the handle actually queues and
+    // then decodes what that command puts on the wire.
+    let (handle, mut command_receiver) = test_handle();
+    let call = tokio::spawn(async move { handle.cancel_all_orders().await });
+
+    let command = command_receiver
+        .recv()
+        .await
+        .expect("cancel_all_orders must queue a command");
+
+    let OrderPlantCommand::CancelAllOrders { manual_or_auto, .. } = &command else {
+        panic!("expected CancelAllOrders to be queued");
+    };
+    assert_eq!(
+        *manual_or_auto,
+        CancelAllOrderPlacement::Auto,
+        "cancel_all_orders() must attribute to Auto like every other order call"
+    );
+    let placement = *manual_or_auto;
+
+    drop(command);
+    let _ = call.await;
+
+    let (mut plant, _sender, mut client) = plant_with_wire().await;
+    let request: crate::rti::RequestCancelAllOrders =
+        sent_request(&mut plant, &mut client, |response_sender| {
+            OrderPlantCommand::CancelAllOrders {
+                manual_or_auto: placement,
+                account: test_account(),
+                response_sender,
+            }
+        })
+        .await;
+
+    assert_eq!(
+        request.manual_or_auto,
+        Some(crate::rti::request_cancel_all_orders::OrderPlacement::Auto as i32)
+    );
+}
+
+/// Validation is the caller's to run: the plant encodes and sends what it is
+/// given. Rithmic is the authority on what it accepts, so an unpriced limit
+/// order goes out and comes back rejected rather than being refused locally.
+#[tokio::test]
+async fn an_unpriced_limit_order_is_still_sent() {
+    let (mut plant, _sender, mut client) = plant_with_wire().await;
+    cache_route(&mut plant, "CME", "globex");
+
+    let request: crate::rti::RequestNewOrder =
+        sent_request(&mut plant, &mut client, |response_sender| {
+            OrderPlantCommand::PlaceOrder {
+                order: RithmicOrder {
+                    exchange: "CME".to_string(),
+                    price_type: crate::rti::request_new_order::PriceType::Limit,
+                    price: None,
+                    ..RithmicOrder::default()
+                },
+                account: test_account(),
+                response_sender,
+            }
+        })
+        .await;
+
+    assert_eq!(
+        request.price, None,
+        "an unset price must be omitted, not sent as zero"
+    );
+}
+
+/// A market order carries no price by design — Rithmic's own reference client
+/// places one without ever setting the field.
+#[tokio::test]
+async fn a_market_order_omits_price_on_the_wire() {
+    let (mut plant, _sender, mut client) = plant_with_wire().await;
+    cache_route(&mut plant, "CME", "globex");
+
+    let request: crate::rti::RequestNewOrder =
+        sent_request(&mut plant, &mut client, |response_sender| {
+            OrderPlantCommand::PlaceOrder {
+                order: RithmicOrder {
+                    exchange: "CME".to_string(),
+                    price_type: crate::rti::request_new_order::PriceType::Market,
+                    price: None,
+                    ..RithmicOrder::default()
+                },
+                account: test_account(),
+                response_sender,
+            }
+        })
+        .await;
+
+    assert_eq!(request.price, None);
+}
+
+/// The `Auto` attribution for an exit lives in the handle's default argument,
+/// not in the builder, which now takes an `Option` and sends exactly what it is
+/// given. So this drives the real handle call and decodes the transmitted
+/// frame — asserting on the builder alone could not detect the default moving.
+#[tokio::test]
+async fn exit_position_encodes_auto_placement_by_default() {
+    let (handle, mut command_receiver) = test_handle();
+    let call = tokio::spawn(async move { handle.exit_position("ESM6", "CME").await });
+
+    let command = command_receiver
+        .recv()
+        .await
+        .expect("exit_position must queue a command");
+
+    let OrderPlantCommand::ExitPosition { manual_or_auto, .. } = &command else {
+        panic!("expected ExitPosition to be queued");
+    };
+    assert_eq!(
+        *manual_or_auto,
+        ExitPositionPlacement::Auto,
+        "exit_position() must attribute to Auto like every other order call"
+    );
+    let placement = *manual_or_auto;
+
+    drop(command);
+    let _ = call.await;
+
+    let (mut plant, _sender, mut client) = plant_with_wire().await;
+    let request: crate::rti::RequestExitPosition =
+        sent_request(&mut plant, &mut client, |response_sender| {
+            OrderPlantCommand::ExitPosition {
+                symbol: "ESM6".to_string(),
+                exchange: "CME".to_string(),
+                manual_or_auto: placement,
+                account: test_account(),
+                response_sender,
+            }
+        })
+        .await;
+
+    assert_eq!(
+        request.manual_or_auto,
+        Some(crate::rti::request_exit_position::OrderPlacement::Auto as i32)
+    );
 }

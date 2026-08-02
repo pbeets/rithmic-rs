@@ -6,6 +6,7 @@ use tracing::{debug, error, info, warn};
 use crate::{
     ConnectStrategy,
     api::{
+        CancelAllOrderPlacement, CancelOrderPlacement, ExitPositionPlacement,
         receiver_api::RithmicResponse,
         rithmic_command_types::{
             LoginConfig, RithmicAdvancedBracketOrder, RithmicBracketLevelAdjustment,
@@ -93,6 +94,7 @@ pub(crate) enum OrderPlantCommand {
     },
     CancelOrder {
         order_id: String,
+        manual_or_auto: CancelOrderPlacement,
         account: Arc<RithmicAccount>,
         response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
     },
@@ -101,6 +103,7 @@ pub(crate) enum OrderPlantCommand {
         response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
     },
     CancelAllOrders {
+        manual_or_auto: CancelAllOrderPlacement,
         account: Arc<RithmicAccount>,
         response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
     },
@@ -162,6 +165,7 @@ pub(crate) enum OrderPlantCommand {
     ExitPosition {
         symbol: String,
         exchange: String,
+        manual_or_auto: ExitPositionPlacement,
         account: Arc<RithmicAccount>,
         response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
     },
@@ -279,6 +283,7 @@ pub(crate) enum OrderPlantCommand {
 ///         quantity: 1,
 ///         stop_ticks: 4,
 ///         symbol: "ESH6".to_string(),
+///         ..Default::default()
 ///     };
 ///
 ///     handle.place_bracket_order(bracket_order).await?;
@@ -639,6 +644,7 @@ impl PlantActor for OrderPlant {
                     order.price,
                     order.price_type,
                     order.trigger_price,
+                    order.manual_or_auto,
                     &account,
                 );
 
@@ -653,13 +659,15 @@ impl PlantActor for OrderPlant {
             }
             OrderPlantCommand::CancelOrder {
                 order_id,
+                manual_or_auto,
                 account,
                 response_sender,
             } => {
-                let (req_buf, id) = self
-                    .core
-                    .rithmic_sender_api
-                    .request_cancel_order(&order_id, &account);
+                let (req_buf, id) = self.core.rithmic_sender_api.request_cancel_order(
+                    &order_id,
+                    manual_or_auto,
+                    &account,
+                );
 
                 self.core.request_handler.register_request(RithmicRequest {
                     request_id: id.clone(),
@@ -728,13 +736,15 @@ impl PlantActor for OrderPlant {
                     .await;
             }
             OrderPlantCommand::CancelAllOrders {
+                manual_or_auto,
                 account,
                 response_sender,
             } => {
-                let (req_buf, id) = self
-                    .core
-                    .rithmic_sender_api
-                    .request_cancel_all_orders(&account, self.login_scope.get());
+                let (req_buf, id) = self.core.rithmic_sender_api.request_cancel_all_orders(
+                    manual_or_auto,
+                    &account,
+                    self.login_scope.get(),
+                );
 
                 self.core.request_handler.register_request(RithmicRequest {
                     request_id: id.clone(),
@@ -987,13 +997,16 @@ impl PlantActor for OrderPlant {
             OrderPlantCommand::ExitPosition {
                 symbol,
                 exchange,
+                manual_or_auto,
                 account,
                 response_sender,
             } => {
-                let (req_buf, id) = self
-                    .core
-                    .rithmic_sender_api
-                    .request_exit_position(&symbol, &exchange, &account);
+                let (req_buf, id) = self.core.rithmic_sender_api.request_exit_position(
+                    &symbol,
+                    &exchange,
+                    &account,
+                    Some(manual_or_auto),
+                );
 
                 self.core.request_handler.register_request(RithmicRequest {
                     request_id: id.clone(),
@@ -1608,6 +1621,7 @@ impl RithmicOrderPlantHandle {
 
         let command = OrderPlantCommand::CancelOrder {
             order_id: order.id,
+            manual_or_auto: order.manual_or_auto,
             account: self.account.clone(),
             response_sender: tx,
         };
@@ -1712,9 +1726,25 @@ impl RithmicOrderPlantHandle {
     /// # Returns
     /// The cancellation response or an error message
     pub async fn cancel_all_orders(&self) -> Result<RithmicResponse, RithmicError> {
+        self.cancel_all_orders_with_placement(CancelAllOrderPlacement::Auto)
+            .await
+    }
+
+    /// Cancel all active orders, attributing the request to `manual_or_auto`.
+    ///
+    /// # Arguments
+    /// * `manual_or_auto` - How the cancellation is attributed to its originator
+    ///
+    /// # Returns
+    /// The cancel-all response or an error message
+    pub async fn cancel_all_orders_with_placement(
+        &self,
+        manual_or_auto: CancelAllOrderPlacement,
+    ) -> Result<RithmicResponse, RithmicError> {
         let (tx, rx) = oneshot::channel::<Result<Vec<RithmicResponse>, RithmicError>>();
 
         let command = OrderPlantCommand::CancelAllOrders {
+            manual_or_auto,
             account: self.account.clone(),
             response_sender: tx,
         };
@@ -1952,20 +1982,21 @@ impl RithmicOrderPlantHandle {
     ///
     /// # Example
     ///
-    /// ```ignore
-    /// use rithmic_rs::{RithmicOrder, NewOrderTransactionType, NewOrderPriceType};
+    /// ```
+    /// use rithmic_rs::{NewOrderPriceType, NewOrderTransactionType, RithmicOrder};
     ///
     /// let order = RithmicOrder {
     ///     symbol: "ESH6".to_string(),
     ///     exchange: "CME".to_string(),
     ///     quantity: 1,
-    ///     price: 5000.0,
+    ///     price: Some(5000.0),
     ///     transaction_type: NewOrderTransactionType::Buy,
     ///     price_type: NewOrderPriceType::Limit,
     ///     user_tag: "my-order".to_string(),
     ///     ..Default::default()
     /// };
-    /// handle.place_order(order).await?;
+    ///
+    /// // handle.place_order(order).await?;
     /// ```
     pub async fn place_order(
         &self,
@@ -2100,11 +2131,31 @@ impl RithmicOrderPlantHandle {
         symbol: &str,
         exchange: &str,
     ) -> Result<Vec<RithmicResponse>, RithmicError> {
+        self.exit_position_with_placement(symbol, exchange, ExitPositionPlacement::Auto)
+            .await
+    }
+
+    /// Exit an entire position, attributing the request to `manual_or_auto`.
+    ///
+    /// # Arguments
+    /// * `symbol` - The trading symbol (e.g., "ESH6")
+    /// * `exchange` - The exchange code (e.g., "CME")
+    /// * `manual_or_auto` - How the exit is attributed to its originator
+    ///
+    /// # Returns
+    /// A vector of exit position responses or an error message
+    pub async fn exit_position_with_placement(
+        &self,
+        symbol: &str,
+        exchange: &str,
+        manual_or_auto: ExitPositionPlacement,
+    ) -> Result<Vec<RithmicResponse>, RithmicError> {
         let (tx, rx) = oneshot::channel::<Result<Vec<RithmicResponse>, RithmicError>>();
 
         let command = OrderPlantCommand::ExitPosition {
             symbol: symbol.to_string(),
             exchange: exchange.to_string(),
+            manual_or_auto,
             account: self.account.clone(),
             response_sender: tx,
         };

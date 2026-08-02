@@ -112,17 +112,19 @@ let mut handle = plant.get_handle(&account);
 handle.login().await?;
 handle.subscribe_order_updates().await?;
 
-// Place orders using the RithmicOrder API
+// Place orders using the RithmicOrder API. Name the fields you need and let
+// Default fill in the rest.
 let order = RithmicOrder {
     symbol: "ESM6".to_string(),
     exchange: "CME".to_string(),
     quantity: 1,
-    price: 5000.0,
+    price: Some(5000.0),
     transaction_type: NewOrderTransactionType::Buy,
     price_type: NewOrderPriceType::Limit,
     user_tag: "my-order".to_string(),
     ..Default::default()
 };
+
 handle.place_order(order).await?;
 
 // Bracket orders, OCO orders, advanced bracket orders
@@ -130,7 +132,8 @@ handle.place_bracket_order(bracket_order).await?;
 handle.place_advanced_bracket_order(advanced_order).await?;
 
 // Cancel by the `basket_id` carried on the order notification
-handle.cancel_order(RithmicCancelOrder { id: basket_id }).await?;
+let cancel = RithmicCancelOrder { id: basket_id, ..Default::default() };
+handle.cancel_order(cancel).await?;
 
 // Flatten by instrument, not by order
 handle.exit_position("ESM6", "CME").await?;

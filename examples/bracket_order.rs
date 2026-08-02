@@ -115,6 +115,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         stop_ticks: 10,       // Stop loss 10 ticks below entry
         quantity: 1,
         symbol: "ESM6".to_string(), // Update to current front-month ES contract
+        ..Default::default()
     };
 
     info!("Placing bracket order: {:?}", bracket_order);
