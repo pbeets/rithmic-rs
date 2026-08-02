@@ -314,14 +314,10 @@ pub use ws::ConnectStrategy;
 
 // Re-export API types
 pub use api::{
-    BracketCondition, BracketDuration, BracketOrderPlacement, BracketPriceField, BracketPriceType,
-    BracketTransactionType, BracketType, CancelAllOrderPlacement, CancelOrderPlacement,
-    EasyToBorrowRequest, ExitPositionPlacement, LoginConfig, ModifyOrderPlacement, ModifyPriceType,
-    NewOrderCondition, NewOrderDuration, NewOrderPlacement, NewOrderPriceField, NewOrderPriceType,
-    NewOrderTransactionType, OcoDuration, OcoOrderPlacement, OcoPriceType, OcoTransactionType,
-    RithmicAdvancedBracketOrder, RithmicBracketLevelAdjustment, RithmicBracketOrder,
-    RithmicCancelOrder, RithmicIfTouchedTrigger, RithmicModifyOrder, RithmicOcoOrderLeg,
-    RithmicOrder, RithmicOrderIfTouchedTrigger, RithmicResponse, RmsUpdateBits, TrailingStop,
+    EasyToBorrowRequest, LoginConfig, RithmicBracketLevelAdjustment, RithmicBracketOrder,
+    RithmicCancelAllOrders, RithmicCancelOrder, RithmicExitPosition, RithmicIfTouchedTrigger,
+    RithmicLinkOrders, RithmicModifyOrder, RithmicModifyOrderReferenceData, RithmicOcoOrder,
+    RithmicOcoOrderLeg, RithmicOrder, RithmicResponse, RmsUpdateBits, TrailingStop,
 };
 
 // Re-export utility types for convenience
@@ -332,6 +328,6 @@ pub use util::{
 
 // Re-export high-level trading types
 pub use types::{
-    OrderSide, OrderType, ParseOrderSideError, ParseOrderTypeError, ParseTimeInForceError,
-    TimeInForce,
+    BracketType, OrderCondition, OrderPlacement, OrderPriceField, OrderSide, OrderType,
+    ParseOrderSideError, ParseOrderTypeError, ParseTimeInForceError, TimeInForce,
 };

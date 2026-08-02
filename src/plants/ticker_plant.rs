@@ -365,7 +365,7 @@ impl PlantActor for TickerPlant {
                 self.core.handle_close().await;
             }
             TickerPlantCommand::ListSystemInfo { response_sender } => {
-                self.core.handle_list_system_info(response_sender).await;
+                self.core.handle_get_system_info(response_sender).await;
             }
             TickerPlantCommand::Login {
                 config,
@@ -706,7 +706,7 @@ impl RithmicTickerPlantHandle {
     ///
     /// Returns information about the connected Rithmic system, including
     /// system name, gateway info, and available services.
-    pub async fn list_system_info(&self) -> Result<RithmicResponse, RithmicError> {
+    pub async fn get_system_info(&self) -> Result<RithmicResponse, RithmicError> {
         let (tx, rx) = oneshot::channel::<Result<Vec<RithmicResponse>, RithmicError>>();
 
         let command = TickerPlantCommand::ListSystemInfo {
@@ -874,7 +874,7 @@ impl RithmicTickerPlantHandle {
     ///
     /// # Returns
     /// The subscription response or an error message
-    pub async fn subscribe_order_book(
+    pub async fn subscribe_depth_by_order_update(
         &self,
         symbol: &str,
         exchange: &str,
@@ -937,7 +937,7 @@ impl RithmicTickerPlantHandle {
     ///
     /// # Returns
     /// The unsubscription response or an error message
-    pub async fn unsubscribe_order_book(
+    pub async fn unsubscribe_depth_by_order_update(
         &self,
         symbol: &str,
         exchange: &str,
@@ -1038,7 +1038,7 @@ impl RithmicTickerPlantHandle {
     ///
     /// This uses `request_market_data_update` (proto 100) with `UpdateBits::OrderBook`
     /// and delivers aggregated bid/ask summary ticks. It is distinct from
-    /// [`subscribe_order_book`](Self::subscribe_order_book), which uses
+    /// [`subscribe_depth_by_order_update`](Self::subscribe_depth_by_order_update), which uses
     /// `request_depth_by_order_updates` (proto 104) for full depth-by-order streaming.
     ///
     /// # Arguments
@@ -1068,7 +1068,7 @@ impl RithmicTickerPlantHandle {
     /// Unsubscribe from level-1 order book summary updates for a specific symbol.
     ///
     /// This reverses [`subscribe_order_book_summary`](Self::subscribe_order_book_summary).
-    /// Use [`unsubscribe_order_book`](Self::unsubscribe_order_book) to stop the
+    /// Use [`unsubscribe_depth_by_order_update`](Self::unsubscribe_depth_by_order_update) to stop the
     /// dedicated depth-by-order stream instead.
     ///
     /// # Arguments
@@ -1450,7 +1450,7 @@ impl RithmicTickerPlantHandle {
     ///
     /// # Returns
     /// A vector of responses containing the order book snapshot data or an error message
-    pub async fn request_depth_by_order_snapshot(
+    pub async fn get_depth_by_order_snapshot(
         &self,
         symbol: &str,
         exchange: &str,
@@ -1509,14 +1509,17 @@ impl RithmicTickerPlantHandle {
         rx.await.map_err(|_| RithmicError::ConnectionClosed)?
     }
 
-    /// List exchanges available to the specified user
+    /// List exchange permissions for the specified user
     ///
     /// # Arguments
     /// * `user` - The username to query exchange permissions for
     ///
     /// # Returns
     /// A vector of responses containing exchange information or an error message
-    pub async fn list_exchanges(&self, user: &str) -> Result<Vec<RithmicResponse>, RithmicError> {
+    pub async fn list_exchange_permissions(
+        &self,
+        user: &str,
+    ) -> Result<Vec<RithmicResponse>, RithmicError> {
         let (tx, rx) = oneshot::channel::<Result<Vec<RithmicResponse>, RithmicError>>();
 
         let command = TickerPlantCommand::ListExchanges {

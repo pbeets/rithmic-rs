@@ -178,6 +178,7 @@ impl TradeRouteCache {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::{OrderSide, OrderType, TimeInForce};
 
     fn cache_with(exchange: &str, trade_route: &str) -> TradeRouteCache {
         let mut cache = TradeRouteCache::default();
@@ -203,20 +204,19 @@ mod tests {
     }
 
     fn oco_leg(exchange: &str, trade_route: Option<&str>) -> RithmicOcoOrderLeg {
-        RithmicOcoOrderLeg {
-            manual_or_auto: crate::rti::request_oco_order::OrderPlacement::Auto,
-            symbol: "ESM6".to_string(),
-            exchange: exchange.to_string(),
-            quantity: 1,
-            price: Some(5000.0),
-            trigger_price: None,
-            transaction_type: crate::rti::request_oco_order::TransactionType::Buy,
-            duration: crate::rti::request_oco_order::Duration::Day,
-            price_type: crate::rti::request_oco_order::PriceType::Limit,
-            user_tag: "leg".to_string(),
-            trailing_stop: None,
-            trade_route: trade_route.map(str::to_string),
+        let mut leg = RithmicOcoOrderLeg::new()
+            .symbol("ESM6")
+            .exchange(exchange)
+            .quantity(1)
+            .transaction_type(OrderSide::Buy)
+            .price_type(OrderType::Limit)
+            .price(5000.0)
+            .duration(TimeInForce::Day)
+            .user_tag("leg");
+        if let Some(trade_route) = trade_route {
+            leg = leg.trade_route(trade_route);
         }
+        leg.build().expect("valid leg")
     }
 
     fn response(message: RithmicMessage, error: Option<RithmicError>) -> RithmicResponse {

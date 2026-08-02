@@ -31,9 +31,22 @@ use crate::request_handler::DEFAULT_REQUEST_TIMEOUT;
 /// Trading environment selector.
 ///
 /// Determines which Rithmic environment to connect to.
+///
+/// This enum is `#[non_exhaustive]`, so a downstream `match` needs a `_` arm:
+///
+/// ```compile_fail
+/// fn label(env: rithmic_rs::RithmicEnv) -> &'static str {
+///     match env {
+///         rithmic_rs::RithmicEnv::Demo => "demo",
+///         rithmic_rs::RithmicEnv::Live => "live",
+///         rithmic_rs::RithmicEnv::Test => "test",
+///     }
+/// }
+/// ```
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "lowercase"))]
+#[non_exhaustive]
 pub enum RithmicEnv {
     /// Rithmic Paper Trading (demo/development) environment.
     #[default]
@@ -119,8 +132,20 @@ impl std::error::Error for ConfigError {}
 ///
 /// let account = RithmicAccount::new("FCM_ID", "IB_ID", "ACCOUNT_ID");
 /// ```
+///
+/// This type is `#[non_exhaustive]`, so a struct expression does not compile
+/// downstream; use [`RithmicAccount::new`]:
+///
+/// ```compile_fail
+/// let account = rithmic_rs::RithmicAccount {
+///     account_id: "ACCOUNT_ID".to_string(),
+///     fcm_id: "FCM_ID".to_string(),
+///     ib_id: "IB_ID".to_string(),
+/// };
+/// ```
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
 pub struct RithmicAccount {
     /// Trading account identifier.
     pub account_id: String,
@@ -206,17 +231,30 @@ fn parse_whole_seconds(value: &str) -> Option<u64> {
 ///
 /// This struct contains session-level connection and login details.
 ///
-/// Build one with [`RithmicConfig::from_env`] or [`RithmicConfig::builder`].
+/// Build one with [`RithmicConfig::from_env`] or [`RithmicConfig::builder`]; to
+/// load from the environment and override a field, use
+/// [`RithmicConfigBuilder::from_env`].
 ///
 /// ```no_run
-/// use rithmic_rs::{RithmicConfig, RithmicEnv};
+/// use rithmic_rs::{RithmicConfigBuilder, RithmicEnv};
 ///
-/// let config = RithmicConfig {
+/// let config = RithmicConfigBuilder::from_env(RithmicEnv::Demo)?
+///     .system_name("Rithmic Paper Trading")
+///     .build()?;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+///
+/// This type is `#[non_exhaustive]`, so neither a struct expression nor
+/// functional-update syntax compiles downstream:
+///
+/// ```compile_fail
+/// let config = rithmic_rs::RithmicConfig {
 ///     system_name: "Rithmic Paper Trading".to_string(),
-///     ..RithmicConfig::from_env(RithmicEnv::Demo).unwrap()
+///     ..rithmic_rs::RithmicConfig::from_env(rithmic_rs::RithmicEnv::Demo).unwrap()
 /// };
 /// ```
 #[derive(Clone)]
+#[non_exhaustive]
 pub struct RithmicConfig {
     /// Primary WebSocket URL.
     pub url: String,
@@ -407,6 +445,38 @@ pub struct RithmicConfigBuilder {
 }
 
 impl RithmicConfigBuilder {
+    /// Create a builder pre-filled from the same environment variables
+    /// [`RithmicConfig::from_env`] reads, so a single field can be overridden.
+    ///
+    /// # Errors
+    ///
+    /// Whatever [`RithmicConfig::from_env`] rejects.
+    ///
+    /// # Example
+    /// ```no_run
+    /// use rithmic_rs::{RithmicConfigBuilder, RithmicEnv};
+    ///
+    /// let config = RithmicConfigBuilder::from_env(RithmicEnv::Demo)?
+    ///     .system_name("Rithmic Paper Trading")
+    ///     .build()?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn from_env(env: RithmicEnv) -> Result<Self, ConfigError> {
+        let config = RithmicConfig::from_env(env)?;
+
+        Ok(Self {
+            env: Some(config.env),
+            url: Some(config.url),
+            beta_url: Some(config.beta_url),
+            user: Some(config.user),
+            password: Some(config.password),
+            system_name: Some(config.system_name),
+            app_name: Some(config.app_name),
+            app_version: Some(config.app_version),
+            request_timeout: config.request_timeout,
+        })
+    }
+
     /// Create a new builder for the specified environment.
     pub fn new(env: RithmicEnv) -> Self {
         // Set system name default based on environment

@@ -1,10 +1,13 @@
 use super::rithmic_command_types::{
-    LoginConfig, RithmicAdvancedBracketOrder, RithmicBracketOrder, RithmicOcoOrderLeg, RithmicOrder,
+    LoginConfig, RithmicBracketLevelAdjustment, RithmicBracketOrder, RithmicCancelAllOrders,
+    RithmicCancelOrder, RithmicExitPosition, RithmicLinkOrders, RithmicModifyOrder,
+    RithmicModifyOrderReferenceData, RithmicOcoOrderLeg, RithmicOrder,
 };
 use prost::Message;
 
 use crate::{
     config::{RithmicAccount, RithmicConfig},
+    error::RithmicError,
     rti::{
         RequestAcceptAgreement, RequestAccountList, RequestAccountRmsInfo,
         RequestAccountRmsUpdates, RequestAuxilliaryReferenceData, RequestBracketOrder,
@@ -32,8 +35,8 @@ use crate::{
         request_easy_to_borrow_list, request_exit_position,
         request_login::SysInfraType,
         request_market_data_update::{Request, UpdateBits},
-        request_market_data_update_by_underlying, request_modify_order,
-        request_pn_l_position_updates, request_search_symbols,
+        request_market_data_update_by_underlying, request_modify_order, request_new_order,
+        request_oco_order, request_pn_l_position_updates, request_search_symbols,
         request_tick_bar_replay::{BarSubType, BarType, Direction, TimeOrder},
         request_tick_bar_update, request_time_bar_replay, request_time_bar_update,
         response_login_info,
@@ -568,10 +571,17 @@ impl RithmicSenderApi {
             symbol: Some(order.symbol.clone()),
             quantity: Some(order.quantity),
             price: order.price,
-            transaction_type: Some(order.transaction_type.into()),
-            price_type: Some(order.price_type.into()),
-            manual_or_auto: Some(order.manual_or_auto.into()),
-            duration: order.duration.map(|d| d.into()).or(Some(1)),
+            transaction_type: Some(
+                request_new_order::TransactionType::from(order.transaction_type).into(),
+            ),
+            price_type: Some(request_new_order::PriceType::from(order.price_type).into()),
+            manual_or_auto: Some(
+                request_new_order::OrderPlacement::from(order.manual_or_auto).into(),
+            ),
+            duration: order
+                .duration
+                .map(|d| request_new_order::Duration::from(d).into())
+                .or(Some(1)),
             user_msg: vec![id.clone()],
             user_tag: omit_if_empty(order.user_tag.clone()),
             trigger_price: order.trigger_price,
@@ -595,22 +605,26 @@ impl RithmicSenderApi {
             if_touched_condition: order
                 .if_touched
                 .as_ref()
-                .map(|trigger| trigger.condition.into()),
+                .map(|trigger| request_new_order::Condition::from(trigger.condition).into()),
             if_touched_price_field: order
                 .if_touched
                 .as_ref()
-                .map(|trigger| trigger.price_field.into()),
+                .map(|trigger| request_new_order::PriceField::from(trigger.price_field).into()),
             if_touched_price: order.if_touched.as_ref().map(|trigger| trigger.price),
         };
 
         self.request_to_buf(req, id)
     }
 
-    /// Build a bracket order request from the simple [`RithmicBracketOrder`].
+    /// Build a bracket order request from a [`RithmicBracketOrder`].
+    ///
+    /// The route sent is the `trade_route` argument; `order.trade_route`
+    /// is one of the inputs the caller resolved it from and is not read here.
     ///
     /// # Arguments
-    /// * `bracket_order` - The bracket order parameters
+    /// * `order` - The bracket order parameters
     /// * `account` - The account to place the order for
+    /// * `scope` - Supplies the user type the login granted
     /// * `trade_route` - The route to send the order on
     ///
     /// # Returns
@@ -618,28 +632,6 @@ impl RithmicSenderApi {
     pub fn request_bracket_order(
         &mut self,
         bracket_order: RithmicBracketOrder,
-        account: &RithmicAccount,
-        scope: Option<&LoginScope>,
-        trade_route: &str,
-    ) -> (Vec<u8>, String) {
-        self.request_advanced_bracket_order(bracket_order.into(), account, scope, trade_route)
-    }
-
-    /// Build a bracket order request from the full [`RithmicAdvancedBracketOrder`].
-    ///
-    /// The route sent is the `trade_route` argument; `bracket_order.trade_route`
-    /// is one of the inputs the caller resolved it from and is not read here.
-    ///
-    /// # Arguments
-    /// * `bracket_order` - The bracket order parameters
-    /// * `account` - The account to place the order for
-    /// * `trade_route` - The route to send the order on
-    ///
-    /// # Returns
-    /// A tuple of (serialized request buffer, request ID)
-    pub fn request_advanced_bracket_order(
-        &mut self,
-        bracket_order: RithmicAdvancedBracketOrder,
         account: &RithmicAccount,
         scope: Option<&LoginScope>,
         trade_route: &str,
@@ -661,11 +653,21 @@ impl RithmicSenderApi {
                     .into(),
             ),
             quantity: Some(bracket_order.quantity),
-            transaction_type: Some(bracket_order.action.into()),
-            price_type: Some(bracket_order.price_type.into()),
-            manual_or_auto: Some(bracket_order.manual_or_auto.into()),
-            duration: Some(bracket_order.duration.into()),
-            bracket_type: Some(bracket_order.bracket_type.into()),
+            transaction_type: Some(
+                request_bracket_order::TransactionType::from(bracket_order.action).into(),
+            ),
+            price_type: Some(
+                request_bracket_order::PriceType::from(bracket_order.price_type).into(),
+            ),
+            manual_or_auto: Some(
+                request_bracket_order::OrderPlacement::from(bracket_order.manual_or_auto).into(),
+            ),
+            duration: Some(request_bracket_order::Duration::from(bracket_order.duration).into()),
+            // A bracket with no exit legs has no shape to describe, so the field
+            // is omitted rather than asserting one the caller never asked for.
+            bracket_type: bracket_order
+                .bracket_type
+                .map(|kind| request_bracket_order::BracketType::from(kind).into()),
             break_even_ticks: bracket_order.break_even_ticks,
             break_even_trigger_ticks: bracket_order.break_even_trigger_ticks,
             target_quantity: bracket_order.target_quantity,
@@ -697,11 +699,11 @@ impl RithmicSenderApi {
             if_touched_condition: bracket_order
                 .if_touched
                 .as_ref()
-                .map(|trigger| trigger.condition.into()),
+                .map(|trigger| request_bracket_order::Condition::from(trigger.condition).into()),
             if_touched_price_field: bracket_order
                 .if_touched
                 .as_ref()
-                .map(|trigger| trigger.price_field.into()),
+                .map(|trigger| request_bracket_order::PriceField::from(trigger.price_field).into()),
             if_touched_price: bracket_order
                 .if_touched
                 .as_ref()
@@ -716,37 +718,42 @@ impl RithmicSenderApi {
         self.request_to_buf(req, id)
     }
 
-    #[allow(clippy::too_many_arguments)]
+    /// Build a request to modify a working order.
+    ///
+    /// A stop order with no explicit `trigger_price` triggers at its own price.
+    ///
+    /// # Arguments
+    /// * `order` - The modification to apply
+    /// * `account` - The account the order belongs to
+    ///
+    /// # Returns
+    /// A tuple of (serialized request buffer, request ID)
     pub fn request_modify_order(
         &mut self,
-        basket_id: &str,
-        exchange: &str,
-        symbol: &str,
-        qty: i32,
-        price: f64,
-        price_type: request_modify_order::PriceType,
-        trigger_price: Option<f64>,
-        manual_or_auto: request_modify_order::OrderPlacement,
+        order: &RithmicModifyOrder,
         account: &RithmicAccount,
     ) -> (Vec<u8>, String) {
         let id = self.get_next_message_id();
+        let price_type = request_modify_order::PriceType::from(order.price_type);
 
         let req = RequestModifyOrder {
             template_id: 314,
             fcm_id: Some(account.fcm_id.clone()),
             ib_id: Some(account.ib_id.clone()),
             account_id: Some(account.account_id.clone()),
-            basket_id: Some(basket_id.into()),
-            manual_or_auto: Some(manual_or_auto.into()),
-            exchange: Some(exchange.into()),
-            symbol: Some(symbol.into()),
+            basket_id: Some(order.id.clone()),
+            manual_or_auto: Some(
+                request_modify_order::OrderPlacement::from(order.manual_or_auto).into(),
+            ),
+            exchange: Some(order.exchange.clone()),
+            symbol: Some(order.symbol.clone()),
             price_type: Some(price_type.into()),
-            quantity: Some(qty),
-            price: Some(price),
+            quantity: Some(order.quantity),
+            price: Some(order.price),
             user_msg: vec![id.clone()],
-            trigger_price: trigger_price.or(match price_type {
+            trigger_price: order.trigger_price.or(match price_type {
                 request_modify_order::PriceType::StopLimit
-                | request_modify_order::PriceType::StopMarket => Some(price),
+                | request_modify_order::PriceType::StopMarket => Some(order.price),
                 _ => None,
             }),
             ..RequestModifyOrder::default()
@@ -755,10 +762,17 @@ impl RithmicSenderApi {
         self.request_to_buf(req, id)
     }
 
+    /// Build a request to cancel a working order.
+    ///
+    /// # Arguments
+    /// * `order` - The order to cancel
+    /// * `account` - The account the order belongs to
+    ///
+    /// # Returns
+    /// A tuple of (serialized request buffer, request ID)
     pub fn request_cancel_order(
         &mut self,
-        basket_id: &str,
-        manual_or_auto: request_cancel_order::OrderPlacement,
+        order: &RithmicCancelOrder,
         account: &RithmicAccount,
     ) -> (Vec<u8>, String) {
         let id = self.get_next_message_id();
@@ -768,8 +782,10 @@ impl RithmicSenderApi {
             fcm_id: Some(account.fcm_id.clone()),
             ib_id: Some(account.ib_id.clone()),
             account_id: Some(account.account_id.clone()),
-            basket_id: Some(basket_id.into()),
-            manual_or_auto: Some(manual_or_auto.into()),
+            basket_id: Some(order.id.clone()),
+            manual_or_auto: Some(
+                request_cancel_order::OrderPlacement::from(order.manual_or_auto).into(),
+            ),
             user_msg: vec![id.clone()],
             ..RequestCancelOrder::default()
         };
@@ -783,20 +799,15 @@ impl RithmicSenderApi {
     /// by placing a market order in the opposite direction.
     ///
     /// # Arguments
-    /// * `symbol` - The trading symbol (e.g., "ESH6")
-    /// * `exchange` - The exchange code (e.g., "CME")
-    /// * `manual_or_auto` - How the exit is attributed to its originator.
-    ///   `None` omits the field, leaving the attribution to the server's own
-    ///   default rather than asserting one.
+    /// * `command` - The position to exit and how the exit is attributed
+    /// * `account` - The account holding the position
     ///
     /// # Returns
     /// A tuple of (serialized request buffer, request ID)
     pub fn request_exit_position(
         &mut self,
-        symbol: &str,
-        exchange: &str,
+        command: &RithmicExitPosition,
         account: &RithmicAccount,
-        manual_or_auto: Option<request_exit_position::OrderPlacement>,
     ) -> (Vec<u8>, String) {
         let id = self.get_next_message_id();
 
@@ -805,9 +816,11 @@ impl RithmicSenderApi {
             fcm_id: Some(account.fcm_id.clone()),
             ib_id: Some(account.ib_id.clone()),
             account_id: Some(account.account_id.clone()),
-            symbol: Some(symbol.into()),
-            exchange: Some(exchange.into()),
-            manual_or_auto: manual_or_auto.map(Into::into),
+            symbol: Some(command.symbol.clone()),
+            exchange: Some(command.exchange.clone()),
+            manual_or_auto: Some(
+                request_exit_position::OrderPlacement::from(command.manual_or_auto).into(),
+            ),
             user_msg: vec![id.clone()],
             ..RequestExitPosition::default()
         };
@@ -818,19 +831,16 @@ impl RithmicSenderApi {
     /// Update the profit target level of a bracket
     ///
     /// # Arguments
-    /// * `basket_id` - The basket the bracket belongs to
-    /// * `profit_ticks` - The new profit target distance in ticks
-    /// * `level` - Which bracket leg to adjust, in the order the legs were placed.
-    ///   Sent verbatim; the crate defines no numbering. `None` omits the field.
+    /// * `adjustment` - The basket, the new profit target distance in ticks, and
+    ///   which leg to adjust. The level is sent verbatim; the crate defines no
+    ///   numbering, and `None` omits the field.
     /// * `account` - The account the bracket belongs to
     ///
     /// # Returns
     /// A tuple of (serialized request buffer, request ID)
     pub fn request_update_target_bracket_level(
         &mut self,
-        basket_id: &str,
-        profit_ticks: i32,
-        level: Option<i32>,
+        adjustment: &RithmicBracketLevelAdjustment,
         account: &RithmicAccount,
     ) -> (Vec<u8>, String) {
         let id = self.get_next_message_id();
@@ -840,9 +850,9 @@ impl RithmicSenderApi {
             fcm_id: Some(account.fcm_id.clone()),
             ib_id: Some(account.ib_id.clone()),
             account_id: Some(account.account_id.clone()),
-            basket_id: Some(basket_id.into()),
-            level,
-            target_ticks: Some(profit_ticks),
+            basket_id: Some(adjustment.id.clone()),
+            level: adjustment.level,
+            target_ticks: Some(adjustment.ticks),
             user_msg: vec![id.clone()],
         };
 
@@ -852,19 +862,16 @@ impl RithmicSenderApi {
     /// Update the stop loss level of a bracket
     ///
     /// # Arguments
-    /// * `basket_id` - The basket the bracket belongs to
-    /// * `stop_ticks` - The new stop loss distance in ticks
-    /// * `level` - Which bracket leg to adjust, in the order the legs were placed.
-    ///   Sent verbatim; the crate defines no numbering. `None` omits the field.
+    /// * `adjustment` - The basket, the new stop loss distance in ticks, and
+    ///   which leg to adjust. The level is sent verbatim; the crate defines no
+    ///   numbering, and `None` omits the field.
     /// * `account` - The account the bracket belongs to
     ///
     /// # Returns
     /// A tuple of (serialized request buffer, request ID)
     pub fn request_update_stop_bracket_level(
         &mut self,
-        basket_id: &str,
-        stop_ticks: i32,
-        level: Option<i32>,
+        adjustment: &RithmicBracketLevelAdjustment,
         account: &RithmicAccount,
     ) -> (Vec<u8>, String) {
         let id = self.get_next_message_id();
@@ -874,9 +881,9 @@ impl RithmicSenderApi {
             fcm_id: Some(account.fcm_id.clone()),
             ib_id: Some(account.ib_id.clone()),
             account_id: Some(account.account_id.clone()),
-            basket_id: Some(basket_id.into()),
-            level,
-            stop_ticks: Some(stop_ticks),
+            basket_id: Some(adjustment.id.clone()),
+            level: adjustment.level,
+            stop_ticks: Some(adjustment.ticks),
             user_msg: vec![id.clone()],
         };
 
@@ -1163,11 +1170,16 @@ impl RithmicSenderApi {
     ///
     /// This will cancel all active orders across all symbols and exchanges for the account.
     ///
+    /// # Arguments
+    /// * `command` - How the cancellation is attributed to its originator
+    /// * `account` - The account whose orders are cancelled
+    /// * `scope` - Supplies the user type the login granted
+    ///
     /// # Returns
     /// A tuple of (serialized request buffer, request ID)
     pub fn request_cancel_all_orders(
         &mut self,
-        manual_or_auto: request_cancel_all_orders::OrderPlacement,
+        command: &RithmicCancelAllOrders,
         account: &RithmicAccount,
         scope: Option<&LoginScope>,
     ) -> (Vec<u8>, String) {
@@ -1184,7 +1196,9 @@ impl RithmicSenderApi {
                     .cancel_all_orders()
                     .into(),
             ),
-            manual_or_auto: Some(manual_or_auto.into()),
+            manual_or_auto: Some(
+                request_cancel_all_orders::OrderPlacement::from(command.manual_or_auto).into(),
+            ),
             user_msg: vec![id.clone()],
         };
 
@@ -1618,13 +1632,17 @@ impl RithmicSenderApi {
     /// `price` and `trigger_price` are sent for every leg once any leg carries
     /// one, and omitted entirely when none does.
     ///
+    /// # Errors
+    /// [`RithmicError::InvalidArgument`] when a leg names a price type template
+    /// 328 cannot express.
+    ///
     /// # Returns
     /// A tuple of (serialized request buffer, request ID)
-    pub fn request_oco_order_multi(
+    pub fn request_oco_order(
         &mut self,
         legs: Vec<(RithmicOcoOrderLeg, String)>,
         account: &RithmicAccount,
-    ) -> (Vec<u8>, String) {
+    ) -> Result<(Vec<u8>, String), RithmicError> {
         let id = self.get_next_message_id();
 
         let mut user_tag = Vec::new();
@@ -1649,11 +1667,19 @@ impl RithmicSenderApi {
             quantity.push(leg.quantity);
             price.push(leg.price);
             trigger_price.push(leg.trigger_price);
-            transaction_type.push(leg.transaction_type.into());
-            duration.push(leg.duration.into());
-            price_type.push(leg.price_type.into());
+            transaction_type.push(i32::from(request_oco_order::TransactionType::from(
+                leg.transaction_type,
+            )));
+            duration.push(i32::from(request_oco_order::Duration::from(leg.duration)));
+            // Rejected rather than remapped: a leg the template cannot express is
+            // not the same trade as some nearby price type.
+            price_type.push(i32::from(request_oco_order::PriceType::try_from(
+                leg.price_type,
+            )?));
             trade_routes.push(trade_route);
-            manual_or_auto.push(leg.manual_or_auto.into());
+            manual_or_auto.push(i32::from(request_oco_order::OrderPlacement::from(
+                leg.manual_or_auto,
+            )));
             trailing_stop.push(leg.trailing_stop.is_some());
             trail_by_ticks.push(leg.trailing_stop.as_ref().map_or(0, |ts| ts.trail_by_ticks));
             trail_by_price_id.push(
@@ -1711,7 +1737,7 @@ impl RithmicSenderApi {
             cancel_after_secs: None,
         };
 
-        self.request_to_buf(req, id)
+        Ok(self.request_to_buf(req, id))
     }
 
     /// Request to link multiple orders together
@@ -1719,16 +1745,18 @@ impl RithmicSenderApi {
     /// Links orders together by basket id.
     ///
     /// # Arguments
-    /// * `basket_ids` - Vector of basket IDs to link together
+    /// * `command` - The basket IDs to link together
+    /// * `account` - The account the baskets belong to
     ///
     /// # Returns
     /// A tuple of (serialized request buffer, request ID)
     pub fn request_link_orders(
         &mut self,
-        basket_ids: Vec<String>,
+        command: RithmicLinkOrders,
         account: &RithmicAccount,
     ) -> (Vec<u8>, String) {
         let id = self.get_next_message_id();
+        let basket_ids = command.basket_ids;
         let count = basket_ids.len();
 
         let req = RequestLinkOrders {
@@ -1770,15 +1798,14 @@ impl RithmicSenderApi {
     /// Updates the user-defined reference data on an existing order.
     ///
     /// # Arguments
-    /// * `basket_id` - The order/basket identifier
-    /// * `user_tag` - New user tag to set on the order
+    /// * `command` - The basket to retag and the new tag
+    /// * `account` - The account the basket belongs to
     ///
     /// # Returns
     /// A tuple of (serialized request buffer, request ID)
     pub fn request_modify_order_reference_data(
         &mut self,
-        basket_id: &str,
-        user_tag: &str,
+        command: &RithmicModifyOrderReferenceData,
         account: &RithmicAccount,
     ) -> (Vec<u8>, String) {
         let id = self.get_next_message_id();
@@ -1786,11 +1813,11 @@ impl RithmicSenderApi {
         let req = RequestModifyOrderReferenceData {
             template_id: 3500,
             user_msg: vec![id.clone()],
-            user_tag: Some(user_tag.to_string()),
+            user_tag: Some(command.user_tag.clone()),
             fcm_id: Some(account.fcm_id.clone()),
             ib_id: Some(account.ib_id.clone()),
             account_id: Some(account.account_id.clone()),
-            basket_id: Some(basket_id.to_string()),
+            basket_id: Some(command.basket_id.clone()),
         };
 
         self.request_to_buf(req, id)
@@ -1967,9 +1994,12 @@ impl RithmicSenderApi {
 mod tests {
     use super::*;
     use crate::{
-        api::rithmic_command_types::TrailingStop,
+        api::rithmic_command_types::{RithmicIfTouchedTrigger, TrailingStop},
         config::RithmicEnv,
-        rti::{request_new_order, request_oco_order},
+        types::{
+            BracketType, OrderCondition, OrderPlacement, OrderPriceField, OrderSide, OrderType,
+            TimeInForce,
+        },
     };
 
     fn test_config() -> RithmicConfig {
@@ -1997,48 +2027,43 @@ mod tests {
         T::decode(&buf[4..]).expect("decode request")
     }
 
-    fn advanced_bracket() -> RithmicAdvancedBracketOrder {
-        let mut order = RithmicAdvancedBracketOrder {
-            action: crate::rti::request_bracket_order::TransactionType::Buy,
-            duration: crate::rti::request_bracket_order::Duration::Gtc,
-            exchange: "CME".to_string(),
-            localid: "advanced-bracket-1".to_string(),
-            price_type: crate::rti::request_bracket_order::PriceType::StopLimit,
-            price: Some(5000.25),
-            trigger_price: Some(4999.75),
-            quantity: 3,
-            symbol: "ESM6".to_string(),
-            bracket_type: crate::rti::request_bracket_order::BracketType::TargetAndStop,
-            target_quantity: vec![2, 1],
-            target_ticks: vec![16, 24],
-            stop_quantity: vec![3],
-            stop_ticks: vec![8],
-            if_touched: Some(crate::api::RithmicIfTouchedTrigger {
-                symbol: "NQM6".to_string(),
-                exchange: "CME".to_string(),
-                condition: crate::rti::request_bracket_order::Condition::GreaterThanEqualTo,
-                price_field: crate::rti::request_bracket_order::PriceField::TradePrice,
-                price: 18250.5,
-            }),
-            break_even_ticks: Some(2),
-            break_even_trigger_ticks: Some(10),
-            trailing_stop_trigger_ticks: Some(12),
-            target_market_order_if_touched: Some(true),
-            stop_market_on_reject: Some(true),
-            release_at_ssboe: Some(35900),
-            cancel_after_secs: Some(120),
-            ..Default::default()
-        };
-        order.trailing_stop_by_last_trade_price = Some(true);
-        order.target_market_at_ssboe = Some(36000);
-        order.target_market_at_usecs = Some(250000);
-        order.stop_market_at_ssboe = Some(36100);
-        order.stop_market_at_usecs = Some(500000);
-        order.target_market_order_after_secs = Some(30);
-        order.release_at_usecs = Some(125000);
-        order.cancel_at_ssboe = Some(37000);
-        order.cancel_at_usecs = Some(750000);
-        order
+    /// A bracket exercising every field the request models, built the way
+    /// callers build one.
+    fn advanced_bracket() -> RithmicBracketOrder {
+        RithmicBracketOrder::new()
+            .symbol("ESM6")
+            .exchange("CME")
+            .quantity(3)
+            .action(OrderSide::Buy)
+            .price_type(OrderType::StopLimit)
+            .duration(TimeInForce::Gtc)
+            .localid("advanced-bracket-1")
+            .price(5000.25)
+            .trigger_price(4999.75)
+            .bracket_type(BracketType::TargetAndStop)
+            .targets([(2, 16), (1, 24)])
+            .stops([(3, 8)])
+            .if_touched(RithmicIfTouchedTrigger::new(
+                "NQM6",
+                "CME",
+                OrderCondition::GreaterThanEqualTo,
+                OrderPriceField::TradePrice,
+                18250.5,
+            ))
+            .break_even_ticks(2)
+            .break_even_trigger_ticks(10)
+            .trailing_stop_trigger_ticks(12)
+            .trailing_stop_by_last_trade_price(true)
+            .target_market_order_if_touched(true)
+            .stop_market_on_reject(true)
+            .target_market_at(36000, 250000)
+            .stop_market_at(36100, 500000)
+            .target_market_order_after_secs(30)
+            .release_at(35900, 125000)
+            .cancel_at(37000, 750000)
+            .cancel_after_secs(120)
+            .build()
+            .expect("valid bracket")
     }
 
     #[test]
@@ -2049,10 +2074,10 @@ mod tests {
             exchange: "CME".to_string(),
             quantity: 1,
             price: Some(5000.0),
-            transaction_type: crate::rti::request_new_order::TransactionType::Buy,
-            price_type: crate::rti::request_new_order::PriceType::Limit,
+            transaction_type: OrderSide::Buy,
+            price_type: OrderType::Limit,
             user_tag: "order-1".to_string(),
-            duration: Some(crate::rti::request_new_order::Duration::Day),
+            duration: Some(TimeInForce::Day),
             trigger_price: None,
             trailing_stop: None,
             trade_route: None,
@@ -2094,19 +2119,18 @@ mod tests {
     #[test]
     fn bracket_request_retains_static_shape_for_simple_helper() {
         let mut api = RithmicSenderApi::new(&test_config());
-        let bracket = RithmicBracketOrder {
-            action: crate::rti::request_bracket_order::TransactionType::Buy,
-            duration: crate::rti::request_bracket_order::Duration::Day,
-            exchange: "CME".to_string(),
-            localid: "bracket-1".to_string(),
-            price_type: crate::rti::request_bracket_order::PriceType::Limit,
-            price: Some(5000.0),
-            profit_ticks: 20,
-            quantity: 1,
-            stop_ticks: 10,
-            symbol: "ESM6".to_string(),
-            manual_or_auto: crate::rti::request_bracket_order::OrderPlacement::Auto,
-        };
+        let bracket = RithmicBracketOrder::new()
+            .symbol("ESM6")
+            .exchange("CME")
+            .quantity(1)
+            .action(OrderSide::Buy)
+            .price_type(OrderType::Limit)
+            .price(5000.0)
+            .target(20)
+            .stop(10)
+            .localid("bracket-1")
+            .build()
+            .expect("valid bracket");
 
         let (buf, _) = api.request_bracket_order(bracket, &override_account(), None, "globex");
         let request: RequestBracketOrder = decode_request(&buf);
@@ -2131,12 +2155,8 @@ mod tests {
     fn advanced_bracket_request_sets_account_and_trade_route_fields() {
         let mut api = RithmicSenderApi::new(&test_config());
 
-        let (buf, _) = api.request_advanced_bracket_order(
-            advanced_bracket(),
-            &override_account(),
-            None,
-            "globex",
-        );
+        let (buf, _) =
+            api.request_bracket_order(advanced_bracket(), &override_account(), None, "globex");
         let request: RequestBracketOrder = decode_request(&buf);
 
         assert_eq!(request.fcm_id.as_deref(), Some("FCM_B"));
@@ -2150,12 +2170,8 @@ mod tests {
     fn advanced_bracket_request_encodes_trigger_and_if_touched_fields() {
         let mut api = RithmicSenderApi::new(&test_config());
 
-        let (buf, _) = api.request_advanced_bracket_order(
-            advanced_bracket(),
-            &default_account(),
-            None,
-            "globex",
-        );
+        let (buf, _) =
+            api.request_bracket_order(advanced_bracket(), &default_account(), None, "globex");
         let request: RequestBracketOrder = decode_request(&buf);
         assert_eq!(request.price, Some(5000.25));
         assert_eq!(request.trigger_price, Some(4999.75));
@@ -2188,12 +2204,8 @@ mod tests {
     fn advanced_bracket_request_encodes_management_and_timing_fields() {
         let mut api = RithmicSenderApi::new(&test_config());
 
-        let (buf, _) = api.request_advanced_bracket_order(
-            advanced_bracket(),
-            &default_account(),
-            None,
-            "globex",
-        );
+        let (buf, _) =
+            api.request_bracket_order(advanced_bracket(), &default_account(), None, "globex");
         let request: RequestBracketOrder = decode_request(&buf);
 
         assert_eq!(request.break_even_ticks, Some(2));
@@ -2223,13 +2235,13 @@ mod tests {
             quantity: 1,
             price: Some(5000.0),
             trigger_price: None,
-            transaction_type: crate::rti::request_oco_order::TransactionType::Buy,
-            duration: crate::rti::request_oco_order::Duration::Day,
-            price_type: crate::rti::request_oco_order::PriceType::Limit,
+            transaction_type: OrderSide::Buy,
+            duration: TimeInForce::Day,
+            price_type: OrderType::Limit,
             user_tag: "oco-1".to_string(),
             trailing_stop: None,
             trade_route: None,
-            manual_or_auto: crate::rti::request_oco_order::OrderPlacement::Auto,
+            manual_or_auto: OrderPlacement::Auto,
         };
         let leg2 = RithmicOcoOrderLeg {
             symbol: "ESM6".to_string(),
@@ -2237,19 +2249,21 @@ mod tests {
             quantity: 1,
             price: Some(4990.0),
             trigger_price: Some(4990.0),
-            transaction_type: crate::rti::request_oco_order::TransactionType::Sell,
-            duration: crate::rti::request_oco_order::Duration::Day,
-            price_type: crate::rti::request_oco_order::PriceType::StopMarket,
+            transaction_type: OrderSide::Sell,
+            duration: TimeInForce::Day,
+            price_type: OrderType::StopMarket,
             user_tag: "oco-2".to_string(),
             trailing_stop: None,
             trade_route: None,
-            manual_or_auto: crate::rti::request_oco_order::OrderPlacement::Auto,
+            manual_or_auto: OrderPlacement::Auto,
         };
 
-        let (buf, _) = api.request_oco_order_multi(
-            vec![(leg1, "globex".to_string()), (leg2, "nymex".to_string())],
-            &override_account(),
-        );
+        let (buf, _) = api
+            .request_oco_order(
+                vec![(leg1, "globex".to_string()), (leg2, "nymex".to_string())],
+                &override_account(),
+            )
+            .expect("every leg's price type is expressible");
         let request: RequestOcoOrder = decode_request(&buf);
 
         assert_eq!(request.fcm_id.as_deref(), Some("FCM_B"));
@@ -2268,10 +2282,12 @@ mod tests {
         let mut api = RithmicSenderApi::new(&test_config());
 
         let (buf, _) = api.request_exit_position(
-            "ESM6",
-            "CME",
+            &RithmicExitPosition::new()
+                .symbol("ESM6")
+                .exchange("CME")
+                .build()
+                .expect("valid exit"),
             &override_account(),
-            Some(request_exit_position::OrderPlacement::Auto),
         );
         let request: RequestExitPosition = decode_request(&buf);
 
@@ -2285,7 +2301,10 @@ mod tests {
         let mut api = RithmicSenderApi::new(&test_config());
 
         let (buf, _) = api.request_link_orders(
-            vec!["basket-1".to_string(), "basket-2".to_string()],
+            RithmicLinkOrders::new()
+                .basket_ids(["basket-1", "basket-2"])
+                .build()
+                .expect("valid link"),
             &override_account(),
         );
         let request: RequestLinkOrders = decode_request(&buf);
@@ -2305,8 +2324,14 @@ mod tests {
     fn modify_order_reference_data_override_uses_supplied_account() {
         let mut api = RithmicSenderApi::new(&test_config());
 
-        let (buf, _) =
-            api.request_modify_order_reference_data("basket-1", "new-tag", &override_account());
+        let (buf, _) = api.request_modify_order_reference_data(
+            &RithmicModifyOrderReferenceData::new()
+                .basket_id("basket-1")
+                .user_tag("new-tag")
+                .build()
+                .expect("valid retag"),
+            &override_account(),
+        );
         let request: RequestModifyOrderReferenceData = decode_request(&buf);
 
         assert_eq!(request.fcm_id.as_deref(), Some("FCM_B"));
@@ -2365,13 +2390,13 @@ mod tests {
             quantity: 1,
             price: Some(5000.0),
             trigger_price: None,
-            transaction_type: crate::rti::request_oco_order::TransactionType::Buy,
-            duration: crate::rti::request_oco_order::Duration::Day,
-            price_type: crate::rti::request_oco_order::PriceType::Limit,
+            transaction_type: OrderSide::Buy,
+            duration: TimeInForce::Day,
+            price_type: OrderType::Limit,
             user_tag: "leg-0".to_string(),
             trailing_stop: None,
             trade_route: None,
-            manual_or_auto: crate::rti::request_oco_order::OrderPlacement::Auto,
+            manual_or_auto: OrderPlacement::Auto,
         };
         let leg1 = RithmicOcoOrderLeg {
             symbol: "NQM6".to_string(),
@@ -2379,16 +2404,13 @@ mod tests {
             quantity: 2,
             price: Some(18000.0),
             trigger_price: Some(17990.0),
-            transaction_type: crate::rti::request_oco_order::TransactionType::Sell,
-            duration: crate::rti::request_oco_order::Duration::Gtc,
-            price_type: crate::rti::request_oco_order::PriceType::StopMarket,
+            transaction_type: OrderSide::Sell,
+            duration: TimeInForce::Gtc,
+            price_type: OrderType::StopMarket,
             user_tag: "leg-1".to_string(),
-            trailing_stop: Some(TrailingStop {
-                trail_by_ticks: 15,
-                trail_by_price_id: 7,
-            }),
+            trailing_stop: Some(TrailingStop::new(15, 7)),
             trade_route: None,
-            manual_or_auto: crate::rti::request_oco_order::OrderPlacement::Auto,
+            manual_or_auto: OrderPlacement::Auto,
         };
         let leg2 = RithmicOcoOrderLeg {
             symbol: "CLM6".to_string(),
@@ -2396,26 +2418,25 @@ mod tests {
             quantity: 3,
             price: Some(75.0),
             trigger_price: Some(74.5),
-            transaction_type: crate::rti::request_oco_order::TransactionType::Sell,
-            duration: crate::rti::request_oco_order::Duration::Day,
-            price_type: crate::rti::request_oco_order::PriceType::StopMarket,
+            transaction_type: OrderSide::Sell,
+            duration: TimeInForce::Day,
+            price_type: OrderType::StopMarket,
             user_tag: "leg-2".to_string(),
-            trailing_stop: Some(TrailingStop {
-                trail_by_ticks: 25,
-                trail_by_price_id: 9,
-            }),
+            trailing_stop: Some(TrailingStop::new(25, 9)),
             trade_route: None,
-            manual_or_auto: crate::rti::request_oco_order::OrderPlacement::Auto,
+            manual_or_auto: OrderPlacement::Auto,
         };
 
-        let (buf, _) = api.request_oco_order_multi(
-            vec![
-                (leg0, "globex".to_string()),
-                (leg1, "globex".to_string()),
-                (leg2, "nymex".to_string()),
-            ],
-            &default_account(),
-        );
+        let (buf, _) = api
+            .request_oco_order(
+                vec![
+                    (leg0, "globex".to_string()),
+                    (leg1, "globex".to_string()),
+                    (leg2, "nymex".to_string()),
+                ],
+                &default_account(),
+            )
+            .expect("every leg's price type is expressible");
         let request: RequestOcoOrder = decode_request(&buf);
 
         assert_eq!(request.symbol.len(), 3);
@@ -2490,15 +2511,12 @@ mod tests {
             exchange: "CME".to_string(),
             quantity: 1,
             price: Some(0.0),
-            transaction_type: crate::rti::request_new_order::TransactionType::Sell,
-            price_type: crate::rti::request_new_order::PriceType::StopMarket,
+            transaction_type: OrderSide::Sell,
+            price_type: OrderType::StopMarket,
             user_tag: "trailing-stop".to_string(),
             duration: None,
             trigger_price: None,
-            trailing_stop: Some(TrailingStop {
-                trail_by_ticks: 20,
-                trail_by_price_id: 3,
-            }),
+            trailing_stop: Some(TrailingStop::new(20, 3)),
             trade_route: None,
             ..RithmicOrder::default()
         };
@@ -2515,33 +2533,27 @@ mod tests {
     fn modify_order_uses_explicit_trigger_price() {
         let mut api = RithmicSenderApi::new(&test_config());
 
-        let (buf, _) = api.request_modify_order(
-            "b",
-            "CME",
-            "ESM6",
-            2,
-            5005.0,
-            request_modify_order::PriceType::StopLimit,
-            Some(4999.0),
-            request_modify_order::OrderPlacement::Auto,
-            &default_account(),
-        );
+        let modify = |trigger_price: Option<f64>| {
+            let mut modification = RithmicModifyOrder::new()
+                .id("b")
+                .symbol("ESM6")
+                .exchange("CME")
+                .quantity(2)
+                .price(5005.0)
+                .price_type(OrderType::StopLimit);
+            if let Some(trigger_price) = trigger_price {
+                modification = modification.trigger_price(trigger_price);
+            }
+            modification.build().expect("valid modification")
+        };
+
+        let (buf, _) = api.request_modify_order(&modify(Some(4999.0)), &default_account());
         let request: RequestModifyOrder = decode_request(&buf);
 
         assert_eq!(request.price, Some(5005.0));
         assert_eq!(request.trigger_price, Some(4999.0));
 
-        let (buf, _) = api.request_modify_order(
-            "b",
-            "CME",
-            "ESM6",
-            2,
-            5005.0,
-            request_modify_order::PriceType::StopLimit,
-            None,
-            request_modify_order::OrderPlacement::Auto,
-            &default_account(),
-        );
+        let (buf, _) = api.request_modify_order(&modify(None), &default_account());
         let request: RequestModifyOrder = decode_request(&buf);
 
         assert_eq!(request.trigger_price, Some(5005.0));
@@ -2676,7 +2688,7 @@ mod tests {
         ] {
             let scope = test_scope(user_type);
 
-            let (buf, _) = api.request_advanced_bracket_order(
+            let (buf, _) = api.request_bracket_order(
                 advanced_bracket(),
                 &override_account(),
                 Some(&scope),
@@ -2690,7 +2702,7 @@ mod tests {
             assert_eq!(request.user_type, Some(bracket.into()));
 
             let (buf, _) = api.request_cancel_all_orders(
-                request_cancel_all_orders::OrderPlacement::Auto,
+                &RithmicCancelAllOrders::default(),
                 &override_account(),
                 Some(&scope),
             );
@@ -2709,8 +2721,15 @@ mod tests {
     fn update_target_bracket_level_carries_requested_level() {
         let mut api = RithmicSenderApi::new(&test_config());
 
-        let (buf, _) =
-            api.request_update_target_bracket_level("basket-1", 16, Some(2), &default_account());
+        let (buf, _) = api.request_update_target_bracket_level(
+            &RithmicBracketLevelAdjustment::new()
+                .id("basket-1")
+                .ticks(16)
+                .level(2)
+                .build()
+                .expect("valid adjustment"),
+            &default_account(),
+        );
         let request: RequestUpdateTargetBracketLevel = decode_request(&buf);
 
         assert_eq!(request.fcm_id.as_deref(), Some("FCM_A"));
@@ -2725,8 +2744,15 @@ mod tests {
     fn update_stop_bracket_level_carries_requested_level() {
         let mut api = RithmicSenderApi::new(&test_config());
 
-        let (buf, _) =
-            api.request_update_stop_bracket_level("basket-1", 8, Some(2), &default_account());
+        let (buf, _) = api.request_update_stop_bracket_level(
+            &RithmicBracketLevelAdjustment::new()
+                .id("basket-1")
+                .ticks(8)
+                .level(2)
+                .build()
+                .expect("valid adjustment"),
+            &default_account(),
+        );
         let request: RequestUpdateStopBracketLevel = decode_request(&buf);
 
         assert_eq!(request.fcm_id.as_deref(), Some("FCM_A"));
@@ -2743,14 +2769,21 @@ mod tests {
     fn bracket_level_requests_omit_level_when_unset() {
         let mut api = RithmicSenderApi::new(&test_config());
 
+        // Built by hand, not through the builder: `.level()` cannot express the
+        // unset case the first half of this test is about.
+        let adjustment = |ticks, level| RithmicBracketLevelAdjustment {
+            id: "basket-1".to_string(),
+            ticks,
+            level,
+        };
         let target = |api: &mut RithmicSenderApi, level| {
             let (buf, _) =
-                api.request_update_target_bracket_level("basket-1", 16, level, &default_account());
+                api.request_update_target_bracket_level(&adjustment(16, level), &default_account());
             decode_request::<RequestUpdateTargetBracketLevel>(&buf).level
         };
         let stop = |api: &mut RithmicSenderApi, level| {
             let (buf, _) =
-                api.request_update_stop_bracket_level("basket-1", 8, level, &default_account());
+                api.request_update_stop_bracket_level(&adjustment(8, level), &default_account());
             decode_request::<RequestUpdateStopBracketLevel>(&buf).level
         };
 
@@ -2771,13 +2804,13 @@ mod tests {
             quantity: 1,
             price,
             trigger_price,
-            transaction_type: crate::rti::request_oco_order::TransactionType::Buy,
-            duration: crate::rti::request_oco_order::Duration::Day,
-            price_type: crate::rti::request_oco_order::PriceType::Market,
+            transaction_type: OrderSide::Buy,
+            duration: TimeInForce::Day,
+            price_type: OrderType::Market,
             user_tag: tag.to_string(),
             trailing_stop: None,
             trade_route: None,
-            manual_or_auto: crate::rti::request_oco_order::OrderPlacement::Auto,
+            manual_or_auto: OrderPlacement::Auto,
         }
     }
 
@@ -2787,7 +2820,9 @@ mod tests {
             .into_iter()
             .map(|leg| (leg, "globex".to_string()))
             .collect();
-        let (buf, _) = api.request_oco_order_multi(routed, &default_account());
+        let (buf, _) = api
+            .request_oco_order(routed, &default_account())
+            .expect("every leg's price type is expressible");
 
         decode_request(&buf)
     }
@@ -2800,8 +2835,8 @@ mod tests {
             exchange: "CME".to_string(),
             quantity: 1,
             price: None,
-            transaction_type: crate::rti::request_new_order::TransactionType::Buy,
-            price_type: crate::rti::request_new_order::PriceType::Market,
+            transaction_type: OrderSide::Buy,
+            price_type: OrderType::Market,
             user_tag: "market-order".to_string(),
             duration: None,
             trigger_price: None,
@@ -2834,7 +2869,7 @@ mod tests {
             symbol: "ESM6".to_string(),
             exchange: "CME".to_string(),
             quantity: 1,
-            price_type: crate::rti::request_new_order::PriceType::Market,
+            price_type: OrderType::Market,
             ..RithmicOrder::default()
         };
 
@@ -2877,8 +2912,8 @@ mod tests {
             exchange: "CME".to_string(),
             quantity: 1,
             price: Some(5000.0),
-            transaction_type: crate::rti::request_new_order::TransactionType::Buy,
-            price_type: crate::rti::request_new_order::PriceType::Limit,
+            transaction_type: OrderSide::Buy,
+            price_type: OrderType::Limit,
             user_tag: String::new(),
             duration: None,
             trigger_price: None,
@@ -2903,17 +2938,12 @@ mod tests {
 
         let mut order = advanced_bracket();
         order.localid = String::new();
-        let (buf, _) =
-            api.request_advanced_bracket_order(order, &default_account(), None, "globex");
+        let (buf, _) = api.request_bracket_order(order, &default_account(), None, "globex");
         let request: RequestBracketOrder = decode_request(&buf);
         assert_eq!(request.user_tag, None);
 
-        let (buf, _) = api.request_advanced_bracket_order(
-            advanced_bracket(),
-            &default_account(),
-            None,
-            "globex",
-        );
+        let (buf, _) =
+            api.request_bracket_order(advanced_bracket(), &default_account(), None, "globex");
         let request: RequestBracketOrder = decode_request(&buf);
         assert_eq!(request.user_tag.as_deref(), Some("advanced-bracket-1"));
     }
@@ -2944,7 +2974,7 @@ mod tests {
             symbol: "ESM6".to_string(),
             exchange: "CME".to_string(),
             quantity: 1,
-            price_type: crate::rti::request_new_order::PriceType::Market,
+            price_type: OrderType::Market,
             ..RithmicOrder::default()
         };
 
@@ -2955,7 +2985,7 @@ mod tests {
             Some(request_new_order::OrderPlacement::Auto as i32)
         );
 
-        order.manual_or_auto = request_new_order::OrderPlacement::Manual;
+        order.manual_or_auto = OrderPlacement::Manual;
         let (buf, _) = api.request_order(&order, &default_account(), "globex");
         let request: RequestNewOrder = decode_request(&buf);
         assert_eq!(
@@ -2968,12 +2998,8 @@ mod tests {
     fn bracket_request_carries_the_requested_order_placement_and_trader_user_type() {
         let mut api = RithmicSenderApi::new(&test_config());
 
-        let (buf, _) = api.request_advanced_bracket_order(
-            advanced_bracket(),
-            &default_account(),
-            None,
-            "globex",
-        );
+        let (buf, _) =
+            api.request_bracket_order(advanced_bracket(), &default_account(), None, "globex");
         let request: RequestBracketOrder = decode_request(&buf);
         assert_eq!(
             request.manual_or_auto,
@@ -2985,9 +3011,8 @@ mod tests {
         );
 
         let mut order = advanced_bracket();
-        order.manual_or_auto = request_bracket_order::OrderPlacement::Manual;
-        let (buf, _) =
-            api.request_advanced_bracket_order(order, &default_account(), None, "globex");
+        order.manual_or_auto = OrderPlacement::Manual;
+        let (buf, _) = api.request_bracket_order(order, &default_account(), None, "globex");
         let request: RequestBracketOrder = decode_request(&buf);
         assert_eq!(
             request.manual_or_auto,
@@ -2998,7 +3023,7 @@ mod tests {
     #[test]
     fn oco_request_carries_each_legs_order_placement() {
         let mut leg_manual = oco_leg_priced("a", Some(5000.0), None);
-        leg_manual.manual_or_auto = request_oco_order::OrderPlacement::Manual;
+        leg_manual.manual_or_auto = OrderPlacement::Manual;
 
         let request = oco_request(vec![leg_manual, oco_leg_priced("b", Some(4990.0), None)]);
 
@@ -3016,7 +3041,7 @@ mod tests {
         let mut api = RithmicSenderApi::new(&test_config());
 
         let (buf, _) = api.request_cancel_all_orders(
-            request_cancel_all_orders::OrderPlacement::Auto,
+            &RithmicCancelAllOrders::new().manual_or_auto(OrderPlacement::Auto),
             &default_account(),
             None,
         );
@@ -3031,7 +3056,7 @@ mod tests {
         );
 
         let (buf, _) = api.request_cancel_all_orders(
-            request_cancel_all_orders::OrderPlacement::Manual,
+            &RithmicCancelAllOrders::new().manual_or_auto(OrderPlacement::Manual),
             &default_account(),
             None,
         );
@@ -3047,8 +3072,11 @@ mod tests {
         let mut api = RithmicSenderApi::new(&test_config());
 
         let (buf, _) = api.request_cancel_order(
-            "basket-1",
-            request_cancel_order::OrderPlacement::Manual,
+            &RithmicCancelOrder::new()
+                .id("basket-1")
+                .manual_or_auto(OrderPlacement::Manual)
+                .build()
+                .expect("valid cancellation"),
             &default_account(),
         );
         let request: RequestCancelOrder = decode_request(&buf);
@@ -3058,14 +3086,16 @@ mod tests {
         );
 
         let (buf, _) = api.request_modify_order(
-            "basket-1",
-            "CME",
-            "ESM6",
-            1,
-            5000.0,
-            request_modify_order::PriceType::Limit,
-            None,
-            request_modify_order::OrderPlacement::Manual,
+            &RithmicModifyOrder::new()
+                .id("basket-1")
+                .symbol("ESM6")
+                .exchange("CME")
+                .quantity(1)
+                .price(5000.0)
+                .price_type(OrderType::Limit)
+                .manual_or_auto(OrderPlacement::Manual)
+                .build()
+                .expect("valid modification"),
             &default_account(),
         );
         let request: RequestModifyOrder = decode_request(&buf);
@@ -3090,17 +3120,13 @@ mod tests {
             Some(request_account_rms_info::UserType::Trader as i32)
         );
 
-        let (buf, _) = api.request_advanced_bracket_order(
-            advanced_bracket(),
-            &default_account(),
-            None,
-            "globex",
-        );
+        let (buf, _) =
+            api.request_bracket_order(advanced_bracket(), &default_account(), None, "globex");
         let request: RequestBracketOrder = decode_request(&buf);
         assert_eq!(request.user_type, Some(3));
 
         let (buf, _) = api.request_cancel_all_orders(
-            request_cancel_all_orders::OrderPlacement::Auto,
+            &RithmicCancelAllOrders::new().manual_or_auto(OrderPlacement::Auto),
             &default_account(),
             None,
         );
@@ -3113,10 +3139,13 @@ mod tests {
         let mut api = RithmicSenderApi::new(&test_config());
 
         let (buf, _) = api.request_exit_position(
-            "ESM6",
-            "CME",
+            &RithmicExitPosition::new()
+                .symbol("ESM6")
+                .exchange("CME")
+                .manual_or_auto(OrderPlacement::Manual)
+                .build()
+                .expect("valid exit"),
             &default_account(),
-            Some(request_exit_position::OrderPlacement::Manual),
         );
         let request: RequestExitPosition = decode_request(&buf);
 
@@ -3126,17 +3155,26 @@ mod tests {
         );
     }
 
-    /// `None` means "say nothing", not "say Auto" — the field is a proto2
-    /// `optional`, so leaving the attribution to the server is representable
-    /// and distinct from asserting one.
+    /// The attribution is always stated. An exit the caller did not attribute is
+    /// `Auto` like every other command, not an omitted field the server fills in.
     #[test]
-    fn exit_position_request_omits_an_unset_placement() {
+    fn exit_position_request_always_states_a_placement() {
         let mut api = RithmicSenderApi::new(&test_config());
 
-        let (buf, _) = api.request_exit_position("ESM6", "CME", &default_account(), None);
+        let (buf, _) = api.request_exit_position(
+            &RithmicExitPosition::new()
+                .symbol("ESM6")
+                .exchange("CME")
+                .build()
+                .expect("valid exit"),
+            &default_account(),
+        );
         let request: RequestExitPosition = decode_request(&buf);
 
-        assert_eq!(request.manual_or_auto, None);
+        assert_eq!(
+            request.manual_or_auto,
+            Some(request_exit_position::OrderPlacement::Auto as i32)
+        );
     }
 
     #[test]
@@ -3175,11 +3213,11 @@ mod tests {
             exchange: "CME".to_string(),
             quantity: 1,
             price: Some(5000.0),
-            if_touched: Some(crate::api::RithmicOrderIfTouchedTrigger {
+            if_touched: Some(crate::api::RithmicIfTouchedTrigger {
                 symbol: "NQM6".to_string(),
                 exchange: "CME".to_string(),
-                condition: request_new_order::Condition::GreaterThanEqualTo,
-                price_field: request_new_order::PriceField::TradePrice,
+                condition: OrderCondition::GreaterThanEqualTo,
+                price_field: OrderPriceField::TradePrice,
                 price: 18250.5,
             }),
             ..RithmicOrder::default()

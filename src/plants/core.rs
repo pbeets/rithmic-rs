@@ -546,18 +546,18 @@ where
         self.send_close_best_effort().await;
     }
 
-    pub(crate) async fn handle_list_system_info(
+    pub(crate) async fn handle_get_system_info(
         &mut self,
         response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
     ) {
-        let (list_system_info_buf, id) = self.rithmic_sender_api.request_rithmic_system_info();
+        let (get_system_info_buf, id) = self.rithmic_sender_api.request_rithmic_system_info();
 
         self.request_handler.register_request(RithmicRequest {
             request_id: id.clone(),
             responder: response_sender,
         });
 
-        self.send_or_fail(Message::Binary(list_system_info_buf.into()), &id)
+        self.send_or_fail(Message::Binary(get_system_info_buf.into()), &id)
             .await;
     }
 

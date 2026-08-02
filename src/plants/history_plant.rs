@@ -289,7 +289,7 @@ impl PlantActor for HistoryPlant {
                 self.core.handle_close().await;
             }
             HistoryPlantCommand::ListSystemInfo { response_sender } => {
-                self.core.handle_list_system_info(response_sender).await;
+                self.core.handle_get_system_info(response_sender).await;
             }
             HistoryPlantCommand::Login {
                 config,
@@ -498,7 +498,7 @@ impl RithmicHistoryPlantHandle {
     ///
     /// Returns information about the connected Rithmic system, including
     /// system name, gateway info, and available services.
-    pub async fn list_system_info(&self) -> Result<RithmicResponse, RithmicError> {
+    pub async fn get_system_info(&self) -> Result<RithmicResponse, RithmicError> {
         let (tx, rx) = oneshot::channel::<Result<Vec<RithmicResponse>, RithmicError>>();
 
         let command = HistoryPlantCommand::ListSystemInfo {

@@ -7,31 +7,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Public struct fields and a method signature change, so this lands in a major release.
+Order commands are assembled with `::new()` and chained setters, and the command types become `#[non_exhaustive]`, so this lands in a major release.
 
 ### Breaking Changes
 
+- **Every order command type is its own builder and is now `#[non_exhaustive]`,** which takes `..Default::default()` away from downstream crates — `new()` plus chained setters is the replacement for it. There is no separate builder type: `new()` takes no arguments and returns the command itself already holding the defaults, every field has a setter named after it, and `build()` runs `validate()` and hands the command back as `Result<_, RithmicError>`. The fields stay public, so `let mut order = RithmicOrder::new(); order.symbol = "ESH6".into();` works just as well — nothing became opaque.
+
+  ```rust
+  // Before
+  let order = RithmicOrder { symbol: "ESM6".into(), quantity: 1, ..Default::default() };
+  // After
+  let order = RithmicOrder::new()
+      .symbol("ESM6")
+      .exchange("CME")
+      .quantity(1)
+      .transaction_type(OrderSide::Buy)
+      .price_type(OrderType::Limit)
+      .price(5000.0)
+      .build()?;
+  ```
+
+- **`RithmicAdvancedBracketOrder` is removed; `RithmicBracketOrder` absorbed it.** One bracket type now carries every venue-native field — trailing stops, break-even, timed release/cancel, if-touched entry — and `place_advanced_bracket_order` is gone. Call `place_bracket_order`. `profit_ticks`/`stop_ticks` became `target_quantity`/`target_ticks` and `stop_quantity`/`stop_ticks`, all `Vec<i32>`, one entry per exit leg. The single-value **setters** `.profit_ticks(n)`/`.stop_ticks(n)` are renamed `.target(n)`/`.stop(n)` — the *fields* `target_ticks`/`stop_ticks` keep their names, so reading `bracket.stop_ticks` is unaffected. Singular sizes one leg to the entry quantity and reads it when called, so set `.quantity()` first or the leg is sized to zero; plural `.targets(..)`/`.stops(..)` take explicit `(quantity, ticks)` pairs and have no ordering requirement.
+- **The `manual_or_auto` handle parameters are gone.** Origination is a field on the command struct, set with `.manual_or_auto(..)`, so `exit_position_with_placement` and `cancel_all_orders_with_placement` are removed — they existed only to pass that argument.
+- **`cancel_all_orders` and `exit_position` take command structs** (`RithmicCancelAllOrders`, `RithmicExitPosition`) instead of loose arguments, matching every other order call.
+- **`#[non_exhaustive]` on `RithmicConfig`, `RithmicAccount`, `LoginConfig`, `InstrumentInfo`, `RithmicEnv`, `TrailingStop` and all 244 generated protobuf types.** Rithmic added fields in 32 of the 35 template releases in its own change log, so a generated type without it made every proto refresh a major version bump here. Downstream, struct expressions and `..Default::default()` stop working on these: use `RithmicConfigBuilder::from_env(env)`, `TrailingStop::new(..)`, or `Default::default()` followed by field assignment. Matches over generated enums need a `_` arm.
 - **`RithmicOrder::price` and `RithmicOcoOrderLeg::price` are now `Option<f64>`.** Wrap existing values in `Some(..)`; pass `None` for market orders, which previously shipped `price = 0.0`. `RithmicModifyOrder::price` stays a required `f64` — a modify restates the order rather than patching it.
-- **Six order command types gain a `manual_or_auto` field** of their own request module's `OrderPlacement` enum: `RithmicOrder`, `RithmicAdvancedBracketOrder`, `RithmicBracketOrder`, `RithmicOcoOrderLeg`, `RithmicModifyOrder` and `RithmicCancelOrder`. Each type's `Default` pins `Auto`, so `..Default::default()` picks it up; note the generated enums' own `Default` is `Manual`, so never reach for `Placement::default()`.
+- **Order command types gain a `manual_or_auto` field** of the crate's own `OrderPlacement` enum, which defaults to `Auto`. The seven generated per-request-module `OrderPlacement` enums have no `Default` at all — a struct holding one by value cannot derive `Default` — so owning the enum, with `From` into each of them, is what lets the command types derive it.
 - **`RithmicOrder` gains `window_name`, `release_at_ssboe`/`release_at_usecs`, `cancel_at_ssboe`/`cancel_at_usecs`/`cancel_after_secs` and `if_touched`.** All `Option` and omitted when unset, so an order that ignores them is byte-identical on the wire.
-- **`cancel_all_orders` is now attributed to `Auto` instead of `Manual`,** changing what the server records for origination. Call `cancel_all_orders_with_placement(CancelAllOrderPlacement::Manual)` to keep the previous attribution.
-- **`RithmicSenderApi::request_exit_position` gains a `manual_or_auto: Option<ExitPositionPlacement>` argument.** `None` omits the field; pass `Some(ExitPositionPlacement::Auto)` for the previous behavior. `RithmicOrderPlantHandle::exit_position` is unchanged.
-- **`TrailingStop` no longer implements `Default`,** and gains a required `trail_by_price_id: i32`. Zero is the unset value Rithmic rejects with rp_code 1112, so `TrailingStop::default()` was a guaranteed rejection. Name both fields.
-- **`RithmicOrder`, `RithmicAdvancedBracketOrder` and `RithmicOcoOrderLeg` gain a required `trade_route: Option<String>` field.** Add `trade_route: None`. Orders now use the route the server publishes for their exchange instead of a fixed `"globex"`/`"simulator"`, and fail with `RithmicError::NoTradeRoute` when there is none.
+- **`cancel_all_orders` is now attributed to `Auto` instead of `Manual`,** changing what the server records for origination. Build the command with `.manual_or_auto(OrderPlacement::Manual)` to keep the previous attribution.
+- **`TrailingStop` no longer implements `Default`,** and gains a required `trail_by_price_id: i32`. Zero is the unset value Rithmic rejects with rp_code 1112, so `TrailingStop::default()` was a guaranteed rejection. Use `TrailingStop::new(trail_by_ticks, trail_by_price_id)`. The rule across the crate: `new()` always returns `Self`; a type with a `Default` takes no arguments, and a type without one takes its required fields positionally.
+- **`RithmicOrder`, `RithmicBracketOrder` and `RithmicOcoOrderLeg` gain a required `trade_route: Option<String>` field.** Leave it unset to keep the previous behavior. Orders now use the route the server publishes for their exchange instead of a fixed `"globex"`/`"simulator"`, and fail with `RithmicError::NoTradeRoute` when there is none.
 - **`RithmicOcoOrderLeg` gains a required `trailing_stop: Option<TrailingStop>` field** and **`RithmicModifyOrder` a required `trigger_price: Option<f64>`.** Add `None` to existing literals for prior behavior.
-- **`RithmicConfig` gains a required `request_timeout: Duration` field.** Use `RithmicConfig::builder(..)` or add `request_timeout: DEFAULT_REQUEST_TIMEOUT`.
+- **`RithmicConfig` gains a required `request_timeout: Duration` field.** Use `RithmicConfig::builder(env)` or `RithmicConfigBuilder::from_env(env)`; the type is now `#[non_exhaustive]`, so naming the field in a struct expression is no longer an option downstream.
 - **`RithmicOrderPlantHandle::subscribe_account_rms_updates` gains a required `update_bits` parameter.** Pass `vec![]` for prior behavior.
-- **`RithmicOrderPlantHandle::adjust_profit` and `adjust_stop` take a `RithmicBracketLevelAdjustment`** instead of `(id, ticks)`, adding a `level` that selects the bracket leg. `level: None` keeps the prior behavior.
+- **`RithmicOrderPlantHandle::adjust_target` (was `adjust_profit`) and `adjust_stop` take a `RithmicBracketLevelAdjustment`** instead of `(id, ticks)`, adding a `level` that selects the bracket leg. `level: None` keeps the prior behavior.
+- **`RithmicModifyOrder::qty` is renamed `quantity`,** field and setter. 1.0.0 made the same rename on `RithmicBracketOrder`; this retires the last field that spelled it the short way.
 - **An order placed with an empty `user_tag` now echoes back as `None` rather than `Some("")`,** since the field is no longer sent as `""`.
+- **Seven handle method names change, across ten methods** — `list_system_info` is on all four plants. Each is named for the request it sends: the template's own verb where it has one, and `get_` only where the template name has none. Nothing was added or removed and no signature changed.
+
+  | old | new | handle |
+  |---|---|---|
+  | `list_system_info` | `get_system_info` | all four plants |
+  | `list_exchanges` | `list_exchange_permissions` | ticker |
+  | `request_depth_by_order_snapshot` | `get_depth_by_order_snapshot` | ticker |
+  | `subscribe_order_book` | `subscribe_depth_by_order_update` | ticker |
+  | `unsubscribe_order_book` | `unsubscribe_depth_by_order_update` | ticker |
+  | `pnl_position_snapshots` | `get_pnl_position_snapshot` | pnl |
+  | `adjust_profit` | `adjust_target` | order |
+
+  `list_exchange_permissions` already existed on the order plant; the ticker method was renamed to match it, and both remain — they are two plants' handles onto the same request. `subscribe_order_book_summary`/`unsubscribe_order_book_summary` is a different pair and is deliberately unchanged. `adjust_stop` was already named correctly and did not move. `RithmicSenderApi::request_depth_by_order_snapshot` keeps its name — every sender-api method is `request_*`, and only the handle method was renamed.
 
 ### Added
 
-- **`validate()` on `RithmicOrder`, `RithmicOcoOrderLeg` and `RithmicAdvancedBracketOrder`** — check an order carries the prices its price type requires, returning `RithmicError::InvalidArgument`. Opt-in: placing an order does not call it.
-- **`RithmicOrderPlantHandle::exit_position_with_placement`** and **`cancel_all_orders_with_placement`** — the same calls under a chosen origination attribution.
-- **`RithmicOrderIfTouchedTrigger`** plus `NewOrderCondition`/`NewOrderPriceField` re-exports. Distinct from `RithmicIfTouchedTrigger`, which carries the `request_bracket_order` enums — the enum sets are generated per request module and are not interchangeable.
-- **`OrderPlacement` re-exports at the crate root** — `NewOrderPlacement`, `BracketOrderPlacement`, `OcoOrderPlacement`, `ModifyOrderPlacement`, `CancelOrderPlacement`, `CancelAllOrderPlacement` and `ExitPositionPlacement`.
-- **Multi-leg OCO orders** via `place_oco_order_multi(Vec<RithmicOcoOrderLeg>)` (minimum two legs), with **per-leg trailing stops** through the new `RithmicOcoOrderLeg::trailing_stop`.
-- **Per-order trade routes** via the new `trade_route` field, overriding the route the plant would pick — including one the server never published. `place_bracket_order` has no override; convert to `RithmicAdvancedBracketOrder`.
+- **`validate()` on every order command type** — checks the command carries the prices its price type requires, returning `RithmicError::InvalidArgument`. `build()` calls it; it is also public, so a command assembled another way can be checked. Nothing else is validated: Rithmic is the authority on what it accepts, and a stricter table compiled in here would refuse orders the server would have taken.
+- **`TrailingStop::new(trail_by_ticks, trail_by_price_id)`** and **`RithmicConfigBuilder::from_env(env)`** — construction paths for two types that lost struct-expression syntax. `from_env` pre-fills the builder from the same environment variables `RithmicConfig::from_env` reads, so a single field can be overridden.
+- **Crate-owned `OrderSide`, `OrderType`, `TimeInForce`, `OrderPlacement`, `BracketType`, `OrderCondition` and `OrderPriceField`** at the crate root, replacing the thirteen per-request-module generated re-exports (`NewOrderPriceType`, `BracketTransactionType`, `OcoDuration` and the rest). The generated sets were type-incompatible with each other despite naming the same concepts, so the same order could not be expressed against two request types. `OrderPlacement` is the one with no predecessor — origination was never exposed at all.
+- **Multi-leg OCO orders** — a `RithmicOcoOrder` carries two or more `RithmicOcoOrderLeg`s rather than a fixed pair, with **per-leg trailing stops** through the new `RithmicOcoOrderLeg::trailing_stop`. Fewer than two legs is rejected, since Rithmic has nothing to cancel a lone leg against.
+- **Per-order trade routes** via the new `trade_route` field, overriding the route the plant would pick — including one the server never published.
 - **`RithmicOrderPlantHandle::trade_route_for(exchange)`** and **`record_trade_route(update)`** — the route an order would take right now, and applying a `TradeRoute` update to the cache. Nothing applies those updates for you; see `examples/trade_routes.rs`.
 - **`RithmicError::NoTradeRoute { exchange, cached }`** — no route was published for that exchange and the order set none itself, so nothing was sent.
 - **`RithmicMessage::UnknownTemplate(UnknownTemplateMessage)`** — a frame whose `template_id` has no message definition here, body kept as received. `RithmicMessage` is `#[non_exhaustive]`, so the new variant does not break existing matches.
@@ -39,7 +71,9 @@ Public struct fields and a method signature change, so this lands in a major rel
 - **`RithmicMessage::RequestHeartbeat(RequestHeartbeat)`** — the server's keep-alive (template 18), which previously arrived as `UnknownTemplate`. The library does not reply to it.
 - **`rithmic_rs::prost`** — the `prost` this crate's types are generated against. It is a public dependency, so a major bump of it remains a breaking change here.
 - **`rithmic_rs::DEFAULT_REQUEST_TIMEOUT`**, `RithmicConfigBuilder::request_timeout` and `RITHMIC_REQUEST_TIMEOUT_SECS` — how long a request waits for a response. Defaults to 30 seconds; the environment variable takes plain digits only.
-- **`RithmicBracketLevelAdjustment`** — the command struct for `adjust_profit`/`adjust_stop`: basket `id`, new `ticks` distance, and the `level` selecting a leg.
+- **`RithmicBracketLevelAdjustment`** — the command struct for `adjust_target`/`adjust_stop`: basket `id`, new `ticks` distance, and the `level` selecting a leg.
+- **`RithmicCancelAllOrders`, `RithmicExitPosition`, `RithmicLinkOrders` and `RithmicModifyOrderReferenceData`** — command structs for the four order calls that previously took loose arguments, so every order call now takes one.
+- **`PartialEq` on `RithmicOrder`, `RithmicBracketOrder`, `RithmicOcoOrderLeg`, `RithmicModifyOrder`, `RithmicCancelOrder`, `RithmicIfTouchedTrigger` and `TrailingStop`** (and on the six command structs above, which are new), so a built command can be compared in a test. `Eq` is not derived: the `f64` price fields rule it out.
 - **RMS auto-liquidation streaming** — `subscribe_account_rms_updates` takes a `Vec` of selectors; pass the new `rithmic_rs::RmsUpdateBits::AutoLiqThresholdCurrentValue` to receive it. An empty `Vec` omits `update_bits` rather than sending `0`.
 - **`RithmicModifyOrder::trigger_price`** — StopLimit/StopMarket modifies can set a trigger distinct from the limit price. When `None`, it still defaults to `price` for stop types.
 
@@ -51,7 +85,7 @@ Public struct fields and a method signature change, so this lands in a major rel
 - **`RithmicError::RequestRejected` renders as `request rejected`** when the rejection carried no code and no message, instead of leaving a dangling separator.
 - **The crate-level "Error Handling" docs now cover every way an error surfaces** and what to do about each. Bad data never stops a plant; only transport failure does. `examples/error_handling.rs` is the same ground as runnable code.
 - **Documentation pass across the crate.** Comments and rustdoc stick to what the code does, without describing server behaviour or assuming familiarity with the wire protocol. No API changed.
-- **`RithmicAdvancedBracketOrder`'s rustdoc example is compiled rather than fenced ```ignore.** The old fence hid that the code inside used a struct expression its `#[non_exhaustive]` rejects downstream. A `compile_fail` doctest alongside it pins that contract, which only a doctest can check, since doctests compile as external crates.
+- **Command-type rustdoc examples are compiled rather than fenced ```ignore.** The old fences hid code that would not build. Each type also carries a `compile_fail` doctest pinning its `#[non_exhaustive]`, which only a doctest can check, since doctests compile as external crates.
 - **README samples no longer show incorrect API usage** — `cancel_order` takes a `RithmicCancelOrder` rather than a bare id, `place_bracket_order` had a literal `...` for its argument, and the history plant block passed `&str` where owned `String`s are required and used an unimported `BarType`.
 
 ### Fixed

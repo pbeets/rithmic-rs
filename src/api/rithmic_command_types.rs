@@ -1,7 +1,6 @@
 use crate::error::RithmicError;
-use crate::rti::{
-    request_bracket_order, request_cancel_order, request_modify_order, request_new_order,
-    request_oco_order,
+use crate::types::{
+    BracketType, OrderCondition, OrderPlacement, OrderPriceField, OrderSide, OrderType, TimeInForce,
 };
 
 /// Optional configuration for plant login requests.
@@ -18,13 +17,20 @@ use crate::rti::{
 /// handle.login().await?;
 ///
 /// // Aggregated quotes
-/// handle.login_with_config(LoginConfig {
-///     aggregated_quotes: Some(true),
-///     ..Default::default()
-/// }).await?;
+/// let mut config = LoginConfig::default();
+/// config.aggregated_quotes = Some(true);
+/// handle.login_with_config(config).await?;
+/// ```
+///
+/// This type is `#[non_exhaustive]`, so a struct expression does not compile
+/// downstream:
+///
+/// ```compile_fail
+/// let config = rithmic_rs::LoginConfig { aggregated_quotes: Some(true), ..Default::default() };
 /// ```
 #[derive(Debug, Clone, Default)]
 #[allow(missing_docs)]
+#[non_exhaustive]
 pub struct LoginConfig {
     /// Only applicable to the ticker plant.
     pub aggregated_quotes: Option<bool>,
@@ -33,42 +39,34 @@ pub struct LoginConfig {
     pub os_platform: Option<String>,
 }
 
-/// One leg of an OCO (One-Cancels-Other) order pair.
+/// One leg of an OCO (One-Cancels-Other) order group.
 ///
 /// # Example
 ///
-/// [`Default`] fills in the fields you do not care about, so name the ones you do
-/// and leave the rest:
-///
 /// ```
-/// use rithmic_rs::{OcoDuration, OcoPriceType, OcoTransactionType, RithmicOcoOrderLeg};
-///
-/// let take_profit = RithmicOcoOrderLeg {
-///     symbol: "ESH6".to_string(),
-///     exchange: "CME".to_string(),
-///     quantity: 1,
-///     price: Some(5020.0),
-///     transaction_type: OcoTransactionType::Sell,
-///     duration: OcoDuration::Day,
-///     price_type: OcoPriceType::Limit,
-///     user_tag: "take-profit".to_string(),
-///     ..Default::default()
-/// };
-///
-/// let stop_loss = RithmicOcoOrderLeg {
-///     symbol: "ESH6".to_string(),
-///     exchange: "CME".to_string(),
-///     quantity: 1,
-///     price: Some(4980.0),
-///     trigger_price: Some(4980.0),
-///     transaction_type: OcoTransactionType::Sell,
-///     duration: OcoDuration::Day,
-///     price_type: OcoPriceType::StopMarket,
-///     user_tag: "stop-loss".to_string(),
-///     ..Default::default()
-/// };
+/// use rithmic_rs::{OrderSide, OrderType, RithmicOcoOrderLeg};
+/// # fn main() -> Result<(), rithmic_rs::RithmicError> {
+/// let take_profit = RithmicOcoOrderLeg::new()
+///     .symbol("ESH6")
+///     .exchange("CME")
+///     .quantity(1)
+///     .transaction_type(OrderSide::Sell)
+///     .price_type(OrderType::Limit)
+///     .price(5020.0)
+///     .user_tag("take-profit")
+///     .build()?;
+/// # Ok(())
+/// # }
 /// ```
-#[derive(Debug, Clone)]
+///
+/// This type is `#[non_exhaustive]`, so a struct expression does not compile
+/// downstream:
+///
+/// ```compile_fail
+/// let leg = rithmic_rs::RithmicOcoOrderLeg { quantity: 1, ..Default::default() };
+/// ```
+#[derive(Debug, Clone, Default, PartialEq)]
+#[non_exhaustive]
 pub struct RithmicOcoOrderLeg {
     /// Trading symbol (e.g., "ESH6")
     pub symbol: String,
@@ -90,11 +88,13 @@ pub struct RithmicOcoOrderLeg {
     /// leg does.
     pub trigger_price: Option<f64>,
     /// Buy or Sell
-    pub transaction_type: request_oco_order::TransactionType,
+    pub transaction_type: OrderSide,
     /// Order duration
-    pub duration: request_oco_order::Duration,
-    /// Order type
-    pub price_type: request_oco_order::PriceType,
+    pub duration: TimeInForce,
+    /// Order type. `RequestOcoOrder` has no if-touched price types, so
+    /// [`OrderType::MarketIfTouched`] and [`OrderType::LimitIfTouched`] are
+    /// rejected here.
+    pub price_type: OrderType,
     /// Your identifier for this order
     pub user_tag: String,
     /// Optional trailing stop configuration for this leg
@@ -103,26 +103,7 @@ pub struct RithmicOcoOrderLeg {
     /// leg's exchange.
     pub trade_route: Option<String>,
     /// How this leg is attributed to its originator.
-    pub manual_or_auto: request_oco_order::OrderPlacement,
-}
-
-impl Default for RithmicOcoOrderLeg {
-    fn default() -> Self {
-        Self {
-            symbol: String::new(),
-            exchange: String::new(),
-            quantity: 0,
-            price: None,
-            trigger_price: None,
-            transaction_type: request_oco_order::TransactionType::Buy,
-            duration: request_oco_order::Duration::Day,
-            price_type: request_oco_order::PriceType::Limit,
-            user_tag: String::new(),
-            trailing_stop: None,
-            trade_route: None,
-            manual_or_auto: request_oco_order::OrderPlacement::Auto,
-        }
-    }
+    pub manual_or_auto: OrderPlacement,
 }
 
 impl RithmicOcoOrderLeg {
@@ -130,18 +111,21 @@ impl RithmicOcoOrderLeg {
     ///
     /// # Errors
     ///
-    /// [`RithmicError::InvalidArgument`] naming the missing field.
+    /// [`RithmicError::InvalidArgument`] naming the missing or unsupported field.
     pub fn validate(&self) -> Result<(), RithmicError> {
-        use request_oco_order::PriceType;
+        let order_type = self.price_type.as_str_name();
 
         let (needs_price, needs_trigger) = match self.price_type {
-            PriceType::Market => (false, false),
-            PriceType::Limit => (true, false),
-            PriceType::StopMarket => (false, true),
-            PriceType::StopLimit => (true, true),
+            OrderType::Market => (false, false),
+            OrderType::Limit => (true, false),
+            OrderType::StopMarket => (false, true),
+            OrderType::StopLimit => (true, true),
+            OrderType::MarketIfTouched | OrderType::LimitIfTouched => {
+                return Err(RithmicError::InvalidArgument(format!(
+                    "price_type {order_type} is not available on an OCO leg"
+                )));
+            }
         };
-
-        let order_type = self.price_type.as_str_name();
 
         if needs_price && self.price.is_none() {
             return Err(RithmicError::InvalidArgument(format!(
@@ -159,193 +143,129 @@ impl RithmicOcoOrderLeg {
     }
 }
 
-/// Entry order with linked profit target and stop loss orders.
-///
-/// One profit target and one stop, both sized to the full entry quantity and
-/// expressed as tick distances. For multiple targets, a stop entry, break-even
-/// or trailing management, or timed release, use [`RithmicAdvancedBracketOrder`]
-/// — this type converts into it, and that conversion is all
-/// `place_bracket_order` does.
+/// A group of OCO legs: when one fills, the others are cancelled.
 ///
 /// # Example
 ///
-/// [`Default`] fills in the fields you do not care about, so name the ones you do
-/// and leave the rest:
-///
 /// ```
-/// use rithmic_rs::{BracketPriceType, BracketTransactionType, RithmicBracketOrder};
+/// use rithmic_rs::{OrderSide, OrderType, RithmicOcoOrder, RithmicOcoOrderLeg};
+/// # fn main() -> Result<(), rithmic_rs::RithmicError> {
+/// let take_profit = RithmicOcoOrderLeg::new()
+///     .symbol("ESH6")
+///     .exchange("CME")
+///     .quantity(1)
+///     .transaction_type(OrderSide::Sell)
+///     .price_type(OrderType::Limit)
+///     .price(5020.0)
+///     .build()?;
+/// let stop_loss = RithmicOcoOrderLeg::new()
+///     .symbol("ESH6")
+///     .exchange("CME")
+///     .quantity(1)
+///     .transaction_type(OrderSide::Sell)
+///     .price_type(OrderType::StopMarket)
+///     .trigger_price(4980.0)
+///     .build()?;
 ///
-/// let order = RithmicBracketOrder {
-///     symbol: "ESH6".to_string(),
-///     exchange: "CME".to_string(),
-///     action: BracketTransactionType::Buy,
-///     quantity: 1,
-///     price_type: BracketPriceType::Limit,
-///     price: Some(5000.0),
-///     profit_ticks: 20, // 20 ticks above entry
-///     stop_ticks: 10,   // 10 ticks below entry
-///     localid: "my-order-1".to_string(),
-///     ..Default::default()
-/// };
+/// let order = RithmicOcoOrder::new().legs([take_profit, stop_loss]).build()?;
+/// # Ok(())
+/// # }
 /// ```
-#[derive(Debug, Clone)]
-pub struct RithmicBracketOrder {
-    /// Buy or Sell
-    pub action: request_bracket_order::TransactionType,
-    /// Order duration
-    pub duration: request_bracket_order::Duration,
-    /// Exchange code (e.g., "CME")
-    pub exchange: String,
-    /// Your identifier for tracking this order
-    pub localid: String,
-    /// Order type
-    pub price_type: request_bracket_order::PriceType,
-    /// Limit price (required for Limit orders)
-    pub price: Option<f64>,
-    /// Profit target distance in ticks from entry
-    pub profit_ticks: i32,
-    /// Number of contracts
-    pub quantity: i32,
-    /// Stop loss distance in ticks from entry
-    pub stop_ticks: i32,
-    /// Trading symbol (e.g., "ESH6")
-    pub symbol: String,
-    /// How this order is attributed to its originator.
-    pub manual_or_auto: request_bracket_order::OrderPlacement,
+///
+/// This type is `#[non_exhaustive]`, so a struct expression does not compile
+/// downstream:
+///
+/// ```compile_fail
+/// let order = rithmic_rs::RithmicOcoOrder { legs: Vec::new(), ..Default::default() };
+/// ```
+#[derive(Debug, Clone, Default, PartialEq)]
+#[non_exhaustive]
+pub struct RithmicOcoOrder {
+    /// The legs of the group, in the order they are sent.
+    pub legs: Vec<RithmicOcoOrderLeg>,
 }
 
-impl Default for RithmicBracketOrder {
-    fn default() -> Self {
-        Self {
-            action: request_bracket_order::TransactionType::Buy,
-            duration: request_bracket_order::Duration::Day,
-            exchange: String::new(),
-            localid: String::new(),
-            price_type: request_bracket_order::PriceType::Limit,
-            price: None,
-            profit_ticks: 0,
-            quantity: 0,
-            stop_ticks: 0,
-            symbol: String::new(),
-            // Written out rather than derived: the generated enum's own
-            // `Default` is its first variant, `Manual`.
-            manual_or_auto: request_bracket_order::OrderPlacement::Auto,
+impl RithmicOcoOrder {
+    /// Check each leg validates.
+    ///
+    /// # Errors
+    ///
+    /// [`RithmicError::InvalidArgument`] naming the first offending leg's problem.
+    pub fn validate(&self) -> Result<(), RithmicError> {
+        for leg in &self.legs {
+            leg.validate()?;
         }
+
+        Ok(())
     }
 }
 
-/// Conditional trigger for advanced bracket order entry.
+/// Entry order with linked profit target and stop loss orders.
 ///
-/// This maps directly to the `if_touched_*` fields on `RequestBracketOrder`.
+/// Maps directly to `RequestBracketOrder`, so it carries the full venue-native
+/// surface: multiple target and stop legs, triggered entry, break-even, trailing
+/// stop management, and timed release/cancel.
 ///
-/// # Example
-///
-/// ```ignore
-/// use rithmic_rs::{BracketCondition, BracketPriceField, RithmicIfTouchedTrigger};
-///
-/// let trigger = RithmicIfTouchedTrigger {
-///     symbol: "NQM6".to_string(),
-///     exchange: "CME".to_string(),
-///     condition: BracketCondition::GreaterThanEqualTo,
-///     price_field: BracketPriceField::TradePrice,
-///     price: 18250.5,
-/// };
-/// ```
-#[derive(Debug, Clone)]
-pub struct RithmicIfTouchedTrigger {
-    /// Trading symbol to monitor for the condition.
-    pub symbol: String,
-    /// Exchange for the monitored symbol.
-    pub exchange: String,
-    /// Comparison operator for the trigger.
-    pub condition: request_bracket_order::Condition,
-    /// Price field to evaluate.
-    pub price_field: request_bracket_order::PriceField,
-    /// Threshold price for the condition.
-    pub price: f64,
-}
-
-/// Richer bracket order request that maps directly to `RequestBracketOrder`.
-///
-/// This type exposes the full raw venue-native request surface currently
-/// available through the protobuf schema, including triggered entry, break-even,
-/// trailing-stop, timed release/cancel fields, and if-touched entry conditions.
-///
-/// Callers are responsible for providing a coherent combination of
-/// `bracket_type`, `target_*`, and `stop_*` fields for the shape they want
-/// Rithmic to create.
-///
-/// # Example
-///
-/// This struct is `#[non_exhaustive]`, so downstream crates cannot build it with
-/// a struct expression — including functional-update (`..Default::default()`)
-/// syntax. Start from [`Default`] and assign fields:
+/// # Example: one target, one stop
 ///
 /// ```
-/// use rithmic_rs::{
-///     BracketCondition, BracketDuration, BracketPriceField, BracketPriceType,
-///     BracketTransactionType, BracketType, RithmicAdvancedBracketOrder,
-///     RithmicIfTouchedTrigger,
-/// };
-///
-/// let mut order = RithmicAdvancedBracketOrder::default();
-///
-/// order.action = BracketTransactionType::Buy;
-/// order.duration = BracketDuration::Gtc;
-/// order.exchange = "CME".to_string();
-/// order.localid = "advanced-bracket-1".to_string();
-/// order.price_type = BracketPriceType::StopLimit;
-/// order.price = Some(5000.25);
-/// order.trigger_price = Some(4999.75);
-/// order.quantity = 3;
-/// order.symbol = "ESM6".to_string();
-///
-/// order.bracket_type = BracketType::TargetAndStop;
-/// order.target_quantity = vec![2, 1];
-/// order.target_ticks = vec![16, 24];
-/// order.stop_quantity = vec![3];
-/// order.stop_ticks = vec![8];
-///
-/// order.if_touched = Some(RithmicIfTouchedTrigger {
-///     symbol: "NQM6".to_string(),
-///     exchange: "CME".to_string(),
-///     condition: BracketCondition::GreaterThanEqualTo,
-///     price_field: BracketPriceField::TradePrice,
-///     price: 18250.5,
-/// });
-///
-/// order.break_even_ticks = Some(2);
-/// order.break_even_trigger_ticks = Some(10);
-/// order.trailing_stop_trigger_ticks = Some(12);
-/// order.target_market_order_if_touched = Some(true);
-/// order.stop_market_on_reject = Some(true);
-/// order.release_at_ssboe = Some(35900);
-/// order.cancel_after_secs = Some(120);
+/// use rithmic_rs::{OrderSide, OrderType, RithmicBracketOrder};
+/// # fn main() -> Result<(), rithmic_rs::RithmicError> {
+/// let order = RithmicBracketOrder::new()
+///     .symbol("ESH6")
+///     .exchange("CME")
+///     .quantity(1)
+///     .action(OrderSide::Buy)
+///     .price_type(OrderType::Limit)
+///     .price(5000.0)
+///     .target(20)
+///     .stop(10)
+///     .localid("my-order-1")
+///     .build()?;
+/// # Ok(())
+/// # }
 /// ```
 ///
-/// Functional-update syntax does not work around the attribute:
+/// # Example: staggered targets
+///
+/// ```
+/// use rithmic_rs::{OrderSide, OrderType, RithmicBracketOrder};
+/// # fn main() -> Result<(), rithmic_rs::RithmicError> {
+/// let order = RithmicBracketOrder::new()
+///     .symbol("ESM6")
+///     .exchange("CME")
+///     .quantity(3)
+///     .action(OrderSide::Buy)
+///     .price_type(OrderType::StopLimit)
+///     .price(5000.25)
+///     .trigger_price(4999.75)
+///     .targets([(2, 16), (1, 24)])
+///     .stops([(3, 8)])
+///     .break_even_ticks(2)
+///     .build()?;
+/// # Ok(())
+/// # }
+/// ```
+///
+/// This type is `#[non_exhaustive]`, so a struct expression does not compile
+/// downstream — not even with functional-update syntax:
 ///
 /// ```compile_fail
-/// use rithmic_rs::RithmicAdvancedBracketOrder;
-///
-/// let order = RithmicAdvancedBracketOrder {
-///     quantity: 1,
-///     ..RithmicAdvancedBracketOrder::default()
-/// };
+/// let order = rithmic_rs::RithmicBracketOrder { quantity: 1, ..Default::default() };
 /// ```
+#[derive(Debug, Clone, Default, PartialEq)]
 #[non_exhaustive]
-#[derive(Debug, Clone)]
-pub struct RithmicAdvancedBracketOrder {
+pub struct RithmicBracketOrder {
     /// Buy or Sell.
-    pub action: request_bracket_order::TransactionType,
+    pub action: OrderSide,
     /// Order duration.
-    pub duration: request_bracket_order::Duration,
+    pub duration: TimeInForce,
     /// Exchange code (e.g., "CME").
     pub exchange: String,
     /// Your identifier for tracking this order.
     pub localid: String,
     /// Order type.
-    pub price_type: request_bracket_order::PriceType,
+    pub price_type: OrderType,
     /// Entry price when required by the price type.
     pub price: Option<f64>,
     /// Trigger price for stop and if-touched entry types.
@@ -358,8 +278,9 @@ pub struct RithmicAdvancedBracketOrder {
     pub quantity: i32,
     /// Trading symbol (e.g., "ESH6").
     pub symbol: String,
-    /// Rithmic bracket shape.
-    pub bracket_type: request_bracket_order::BracketType,
+    /// Rithmic bracket shape. `None` means "derive it from the legs supplied";
+    /// the builder resolves it, so a built order always carries `Some`.
+    pub bracket_type: Option<BracketType>,
     /// Exit target quantities, one value per target leg.
     pub target_quantity: Vec<i32>,
     /// Exit target distances in ticks.
@@ -405,63 +326,25 @@ pub struct RithmicAdvancedBracketOrder {
     /// Route to send on. `None` uses the route the server published for `exchange`.
     pub trade_route: Option<String>,
     /// How this order is attributed to its originator.
-    pub manual_or_auto: request_bracket_order::OrderPlacement,
+    pub manual_or_auto: OrderPlacement,
 }
 
-impl Default for RithmicAdvancedBracketOrder {
-    fn default() -> Self {
-        Self {
-            action: request_bracket_order::TransactionType::Buy,
-            duration: request_bracket_order::Duration::Day,
-            exchange: String::new(),
-            localid: String::new(),
-            price_type: request_bracket_order::PriceType::Limit,
-            price: None,
-            trigger_price: None,
-            quantity: 0,
-            symbol: String::new(),
-            bracket_type: request_bracket_order::BracketType::TargetAndStopStatic,
-            target_quantity: Vec::new(),
-            target_ticks: Vec::new(),
-            stop_quantity: Vec::new(),
-            stop_ticks: Vec::new(),
-            if_touched: None,
-            break_even_ticks: None,
-            break_even_trigger_ticks: None,
-            trailing_stop_trigger_ticks: None,
-            trailing_stop_by_last_trade_price: None,
-            target_market_order_if_touched: None,
-            stop_market_on_reject: None,
-            target_market_at_ssboe: None,
-            target_market_at_usecs: None,
-            stop_market_at_ssboe: None,
-            stop_market_at_usecs: None,
-            target_market_order_after_secs: None,
-            release_at_ssboe: None,
-            release_at_usecs: None,
-            cancel_at_ssboe: None,
-            cancel_at_usecs: None,
-            cancel_after_secs: None,
-            trade_route: None,
-            manual_or_auto: request_bracket_order::OrderPlacement::Auto,
-        }
-    }
-}
-
-impl RithmicAdvancedBracketOrder {
-    /// Check the entry carries the prices its [`Self::price_type`] requires.
+impl RithmicBracketOrder {
+    /// Check the entry leg carries the prices its [`Self::price_type`] requires.
+    ///
+    /// The exit legs are not checked: Rithmic's own limits on multi-level
+    /// brackets are undocumented, so the crate sends what the caller asked for
+    /// rather than refusing orders the server might have accepted.
     ///
     /// # Errors
     ///
-    /// [`RithmicError::InvalidArgument`] naming the missing field.
+    /// [`RithmicError::InvalidArgument`] naming the missing price field.
     pub fn validate(&self) -> Result<(), RithmicError> {
-        use request_bracket_order::PriceType;
-
         let (needs_price, needs_trigger) = match self.price_type {
-            PriceType::Market => (false, false),
-            PriceType::Limit => (true, false),
-            PriceType::StopMarket | PriceType::MarketIfTouched => (false, true),
-            PriceType::StopLimit | PriceType::LimitIfTouched => (true, true),
+            OrderType::Market => (false, false),
+            OrderType::Limit => (true, false),
+            OrderType::StopMarket | OrderType::MarketIfTouched => (false, true),
+            OrderType::StopLimit | OrderType::LimitIfTouched => (true, true),
         };
 
         let order_type = self.price_type.as_str_name();
@@ -482,42 +365,68 @@ impl RithmicAdvancedBracketOrder {
     }
 }
 
-impl From<RithmicBracketOrder> for RithmicAdvancedBracketOrder {
-    fn from(value: RithmicBracketOrder) -> Self {
+/// Conditional trigger that releases an order once a price is touched.
+///
+/// Maps to the `if_touched_*` fields on `RequestNewOrder` and
+/// `RequestBracketOrder`, which are field-identical.
+///
+/// # Example
+///
+/// ```
+/// use rithmic_rs::{OrderCondition, OrderPriceField, RithmicIfTouchedTrigger};
+///
+/// let trigger = RithmicIfTouchedTrigger::new(
+///     "NQM6",
+///     "CME",
+///     OrderCondition::GreaterThanEqualTo,
+///     OrderPriceField::TradePrice,
+///     18250.5,
+/// );
+/// ```
+///
+/// This type is `#[non_exhaustive]`, so a struct expression does not compile
+/// downstream:
+///
+/// ```compile_fail
+/// use rithmic_rs::{OrderCondition, OrderPriceField, RithmicIfTouchedTrigger};
+///
+/// let trigger = RithmicIfTouchedTrigger {
+///     price: 18250.5,
+///     ..RithmicIfTouchedTrigger::new(
+///         "NQM6", "CME", OrderCondition::EqualTo, OrderPriceField::TradePrice, 1.0,
+///     )
+/// };
+/// ```
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub struct RithmicIfTouchedTrigger {
+    /// Trading symbol to monitor for the condition.
+    pub symbol: String,
+    /// Exchange for the monitored symbol.
+    pub exchange: String,
+    /// Comparison operator for the trigger.
+    pub condition: OrderCondition,
+    /// Price field to evaluate.
+    pub price_field: OrderPriceField,
+    /// Threshold price for the condition.
+    pub price: f64,
+}
+
+impl RithmicIfTouchedTrigger {
+    /// Build a trigger. Every field is required, so there is no builder.
+    pub fn new(
+        symbol: impl Into<String>,
+        exchange: impl Into<String>,
+        condition: OrderCondition,
+        price_field: OrderPriceField,
+        price: f64,
+    ) -> Self {
         Self {
-            action: value.action,
-            duration: value.duration,
-            exchange: value.exchange,
-            localid: value.localid,
-            price_type: value.price_type,
-            price: value.price,
-            trigger_price: None,
-            quantity: value.quantity,
-            symbol: value.symbol,
-            bracket_type: request_bracket_order::BracketType::TargetAndStopStatic,
-            target_quantity: vec![value.quantity],
-            target_ticks: vec![value.profit_ticks],
-            stop_quantity: vec![value.quantity],
-            stop_ticks: vec![value.stop_ticks],
-            if_touched: None,
-            break_even_ticks: None,
-            break_even_trigger_ticks: None,
-            trailing_stop_trigger_ticks: None,
-            trailing_stop_by_last_trade_price: None,
-            target_market_order_if_touched: None,
-            stop_market_on_reject: None,
-            target_market_at_ssboe: None,
-            target_market_at_usecs: None,
-            stop_market_at_ssboe: None,
-            stop_market_at_usecs: None,
-            target_market_order_after_secs: None,
-            release_at_ssboe: None,
-            release_at_usecs: None,
-            cancel_at_ssboe: None,
-            cancel_at_usecs: None,
-            cancel_after_secs: None,
-            trade_route: None,
-            manual_or_auto: value.manual_or_auto,
+            symbol: symbol.into(),
+            exchange: exchange.into(),
+            condition,
+            price_field,
+            price,
         }
     }
 }
@@ -527,21 +436,29 @@ impl From<RithmicBracketOrder> for RithmicAdvancedBracketOrder {
 /// # Example
 ///
 /// ```
-/// use rithmic_rs::{ModifyPriceType, RithmicModifyOrder};
-///
-/// let modification = RithmicModifyOrder {
-///     id: "123456".to_string(), // basket_id from order notification
-///     symbol: "ESH6".to_string(),
-///     exchange: "CME".to_string(),
-///     qty: 2,
-///     price: 5005.0,
-///     price_type: ModifyPriceType::Limit,
-///     ..Default::default()
-/// };
-///
-/// // handle.modify_order(modification).await?;
+/// use rithmic_rs::{OrderType, RithmicModifyOrder};
+/// # fn main() -> Result<(), rithmic_rs::RithmicError> {
+/// // "123456" is the basket_id from the order notification.
+/// let modification = RithmicModifyOrder::new()
+///     .id("123456")
+///     .symbol("ESH6")
+///     .exchange("CME")
+///     .quantity(2)
+///     .price(5005.0)
+///     .price_type(OrderType::Limit)
+///     .build()?;
+/// # Ok(())
+/// # }
 /// ```
-#[derive(Debug, Clone)]
+///
+/// This type is `#[non_exhaustive]`, so a struct expression does not compile
+/// downstream:
+///
+/// ```compile_fail
+/// let modification = rithmic_rs::RithmicModifyOrder { quantity: 2, ..Default::default() };
+/// ```
+#[derive(Debug, Clone, Default, PartialEq)]
+#[non_exhaustive]
 pub struct RithmicModifyOrder {
     /// The `basket_id` from the order notification
     pub id: String,
@@ -550,7 +467,7 @@ pub struct RithmicModifyOrder {
     /// Trading symbol
     pub symbol: String,
     /// New quantity
-    pub qty: i32,
+    pub quantity: i32,
     /// New price, always sent.
     ///
     /// Unlike [`RithmicOrder::price`] this is not an `Option`, because a modify
@@ -565,27 +482,24 @@ pub struct RithmicModifyOrder {
     /// not supply a new one.
     pub price: f64,
     /// Order type
-    pub price_type: request_modify_order::PriceType,
+    pub price_type: OrderType,
     /// Separate trigger price for StopLimit/StopMarket modifies. When `None`, the trigger defaults to `price` for stop order types.
     pub trigger_price: Option<f64>,
     /// How this modification is attributed to its originator.
-    pub manual_or_auto: request_modify_order::OrderPlacement,
+    pub manual_or_auto: OrderPlacement,
 }
 
-impl Default for RithmicModifyOrder {
-    fn default() -> Self {
-        Self {
-            id: String::new(),
-            exchange: String::new(),
-            symbol: String::new(),
-            qty: 0,
-            price: 0.0,
-            price_type: request_modify_order::PriceType::Limit,
-            trigger_price: None,
-            // Written out rather than derived: the generated enum's own
-            // `Default` is its first variant, `Manual`.
-            manual_or_auto: request_modify_order::OrderPlacement::Auto,
-        }
+impl RithmicModifyOrder {
+    /// Always succeeds.
+    ///
+    /// There is no price rule here: [`Self::price`] is always present, and the
+    /// sender already falls back to it for a stop modify's trigger.
+    ///
+    /// # Errors
+    ///
+    /// Never returns an error; the signature matches the other command types.
+    pub fn validate(&self) -> Result<(), RithmicError> {
+        Ok(())
     }
 }
 
@@ -595,59 +509,258 @@ impl Default for RithmicModifyOrder {
 ///
 /// ```
 /// use rithmic_rs::RithmicCancelOrder;
-///
-/// let cancel = RithmicCancelOrder {
-///     id: "123456".to_string(), // basket_id from order notification
-///     ..Default::default()
-/// };
-///
-/// // handle.cancel_order(cancel).await?;
+/// # fn main() -> Result<(), rithmic_rs::RithmicError> {
+/// // "123456" is the basket_id from the order notification.
+/// let cancel = RithmicCancelOrder::new().id("123456").build()?;
+/// # Ok(())
+/// # }
 /// ```
-#[derive(Debug, Clone)]
+///
+/// This type is `#[non_exhaustive]`, so a struct expression does not compile
+/// downstream:
+///
+/// ```compile_fail
+/// let cancel = rithmic_rs::RithmicCancelOrder { id: "123456".to_string(), ..Default::default() };
+/// ```
+#[derive(Debug, Clone, Default, PartialEq)]
+#[non_exhaustive]
 pub struct RithmicCancelOrder {
     /// The `basket_id` from the order notification
     pub id: String,
     /// How this cancellation is attributed to its originator.
-    pub manual_or_auto: request_cancel_order::OrderPlacement,
+    pub manual_or_auto: OrderPlacement,
 }
 
-impl Default for RithmicCancelOrder {
-    fn default() -> Self {
-        Self {
-            id: String::new(),
-            // Written out rather than derived: the generated enum's own
-            // `Default` is its first variant, `Manual`.
-            manual_or_auto: request_cancel_order::OrderPlacement::Auto,
-        }
+impl RithmicCancelOrder {
+    /// Always succeeds.
+    ///
+    /// # Errors
+    ///
+    /// Never returns an error; the signature matches the other command types.
+    pub fn validate(&self) -> Result<(), RithmicError> {
+        Ok(())
+    }
+}
+
+/// Cancel every working order on the account.
+///
+/// [`Self::new`] is the whole command for the common case; set
+/// [`Self::manual_or_auto`] to attribute it to a person instead.
+///
+/// # Example
+///
+/// ```
+/// use rithmic_rs::{OrderPlacement, RithmicCancelAllOrders};
+/// # fn main() -> Result<(), rithmic_rs::RithmicError> {
+/// let auto = RithmicCancelAllOrders::new().build()?;
+/// let manual = RithmicCancelAllOrders::new()
+///     .manual_or_auto(OrderPlacement::Manual)
+///     .build()?;
+/// # Ok(())
+/// # }
+/// ```
+///
+/// This type is `#[non_exhaustive]`, so a struct expression does not compile
+/// downstream:
+///
+/// ```compile_fail
+/// let command = rithmic_rs::RithmicCancelAllOrders { ..Default::default() };
+/// ```
+#[derive(Debug, Clone, Default, PartialEq)]
+#[non_exhaustive]
+pub struct RithmicCancelAllOrders {
+    /// How this cancellation is attributed to its originator.
+    pub manual_or_auto: OrderPlacement,
+}
+
+impl RithmicCancelAllOrders {
+    /// Always `Ok`; the command carries nothing to check.
+    ///
+    /// # Errors
+    ///
+    /// Never.
+    pub fn validate(&self) -> Result<(), RithmicError> {
+        Ok(())
+    }
+}
+
+/// Flatten the position in one instrument.
+///
+/// # Example
+///
+/// ```
+/// use rithmic_rs::RithmicExitPosition;
+/// # fn main() -> Result<(), rithmic_rs::RithmicError> {
+/// let command = RithmicExitPosition::new()
+///     .symbol("ESM6")
+///     .exchange("CME")
+///     .build()?;
+/// # Ok(())
+/// # }
+/// ```
+///
+/// This type is `#[non_exhaustive]`, so a struct expression does not compile
+/// downstream:
+///
+/// ```compile_fail
+/// let command = rithmic_rs::RithmicExitPosition { symbol: "ESM6".to_string(), ..Default::default() };
+/// ```
+#[derive(Debug, Clone, Default, PartialEq)]
+#[non_exhaustive]
+pub struct RithmicExitPosition {
+    /// Trading symbol (e.g., "ESM6")
+    pub symbol: String,
+    /// Exchange code (e.g., "CME")
+    pub exchange: String,
+    /// How this exit is attributed to its originator.
+    pub manual_or_auto: OrderPlacement,
+}
+
+impl RithmicExitPosition {
+    /// Always succeeds.
+    ///
+    /// # Errors
+    ///
+    /// Never returns an error; the signature matches the other command types.
+    pub fn validate(&self) -> Result<(), RithmicError> {
+        Ok(())
     }
 }
 
 /// Adjust one leg of a bracket's profit target or stop loss.
 ///
-/// The same shape serves `adjust_profit` and `adjust_stop`.
+/// The same shape serves `adjust_target` and `adjust_stop`.
 ///
 /// # Example
 ///
-/// ```ignore
-/// use rithmic_rs::RithmicBracketLevelAdjustment;
-///
-/// let adjustment = RithmicBracketLevelAdjustment {
-///     id: "123456".to_string(),  // basket_id from order notification
-///     ticks: 16,
-///     level: Some(2),
-/// };
-/// handle.adjust_profit(adjustment).await?;
 /// ```
-#[derive(Debug, Clone)]
+/// use rithmic_rs::RithmicBracketLevelAdjustment;
+/// # fn main() -> Result<(), rithmic_rs::RithmicError> {
+/// // "123456" is the basket_id from the order notification.
+/// let adjustment = RithmicBracketLevelAdjustment::new()
+///     .id("123456")
+///     .ticks(16)
+///     .level(2)
+///     .build()?;
+/// # Ok(())
+/// # }
+/// ```
+///
+/// This type is `#[non_exhaustive]`, so a struct expression does not compile
+/// downstream:
+///
+/// ```compile_fail
+/// let adjustment = rithmic_rs::RithmicBracketLevelAdjustment { ticks: 16, ..Default::default() };
+/// ```
+#[derive(Debug, Clone, Default, PartialEq)]
+#[non_exhaustive]
 pub struct RithmicBracketLevelAdjustment {
     /// The `basket_id` from the order notification
     pub id: String,
     /// The new distance in ticks
     pub ticks: i32,
     /// Which bracket leg to adjust, in the order the legs were placed (see
-    /// [`RithmicAdvancedBracketOrder`]). Sent verbatim; the crate defines no
-    /// numbering. `None` omits the field.
+    /// [`RithmicBracketOrder`]). Sent verbatim; the crate defines no numbering.
+    /// `None` omits the field.
     pub level: Option<i32>,
+}
+
+impl RithmicBracketLevelAdjustment {
+    /// Always succeeds.
+    ///
+    /// `ticks` is not checked: the crate defines no numbering and sends what it
+    /// is given.
+    ///
+    /// # Errors
+    ///
+    /// Never returns an error; the signature matches the other command types.
+    pub fn validate(&self) -> Result<(), RithmicError> {
+        Ok(())
+    }
+}
+
+/// Link working orders together so the server treats them as one group.
+///
+/// # Example
+///
+/// ```
+/// use rithmic_rs::RithmicLinkOrders;
+/// # fn main() -> Result<(), rithmic_rs::RithmicError> {
+/// let command = RithmicLinkOrders::new()
+///     .basket_ids(["123456", "123457"])
+///     .build()?;
+/// # Ok(())
+/// # }
+/// ```
+///
+/// This type is `#[non_exhaustive]`, so a struct expression does not compile
+/// downstream:
+///
+/// ```compile_fail
+/// let command = rithmic_rs::RithmicLinkOrders { basket_ids: Vec::new(), ..Default::default() };
+/// ```
+#[derive(Debug, Clone, Default, PartialEq)]
+#[non_exhaustive]
+pub struct RithmicLinkOrders {
+    /// The `basket_id`s to link, from the order notifications.
+    pub basket_ids: Vec<String>,
+}
+
+impl RithmicLinkOrders {
+    /// Always succeeds.
+    ///
+    /// # Errors
+    ///
+    /// Never returns an error; the signature matches the other command types.
+    pub fn validate(&self) -> Result<(), RithmicError> {
+        Ok(())
+    }
+}
+
+/// Change the `user_tag` reported on an order's subsequent notifications.
+///
+/// # Example
+///
+/// ```
+/// use rithmic_rs::RithmicModifyOrderReferenceData;
+/// # fn main() -> Result<(), rithmic_rs::RithmicError> {
+/// let command = RithmicModifyOrderReferenceData::new()
+///     .basket_id("123456")
+///     .user_tag("new-tag")
+///     .build()?;
+/// # Ok(())
+/// # }
+/// ```
+///
+/// This type is `#[non_exhaustive]`, so a struct expression does not compile
+/// downstream:
+///
+/// ```compile_fail
+/// let command = rithmic_rs::RithmicModifyOrderReferenceData {
+///     user_tag: "new-tag".to_string(),
+///     ..Default::default()
+/// };
+/// ```
+#[derive(Debug, Clone, Default, PartialEq)]
+#[non_exhaustive]
+pub struct RithmicModifyOrderReferenceData {
+    /// The `basket_id` from the order notification.
+    pub basket_id: String,
+    /// The new tag. Empty is how a tag is cleared, so it is sent as given.
+    pub user_tag: String,
+}
+
+impl RithmicModifyOrderReferenceData {
+    /// Always succeeds.
+    ///
+    /// `user_tag` is not checked: an empty tag is how a tag is cleared.
+    ///
+    /// # Errors
+    ///
+    /// Never returns an error; the signature matches the other command types.
+    pub fn validate(&self) -> Result<(), RithmicError> {
+        Ok(())
+    }
 }
 
 /// Configuration for trailing stop orders.
@@ -660,14 +773,22 @@ pub struct RithmicBracketLevelAdjustment {
 /// ```
 /// use rithmic_rs::TrailingStop;
 ///
-/// let trailing = TrailingStop { trail_by_ticks: 20, trail_by_price_id: 1 };
+/// let trailing = TrailingStop::new(20, 1);
 /// ```
 ///
 /// There is deliberately no [`Default`]. Both fields are required and neither
 /// has a meaningful zero: a `trail_by_price_id` of `0` is the unset value
 /// Rithmic rejects with rp_code 1112, so a defaulted `TrailingStop` would be a
 /// guaranteed rejection rather than a starting point.
-#[derive(Debug, Clone)]
+///
+/// This type is `#[non_exhaustive]`, so a struct expression does not compile
+/// downstream:
+///
+/// ```compile_fail
+/// let trailing = rithmic_rs::TrailingStop { trail_by_ticks: 20, trail_by_price_id: 1 };
+/// ```
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub struct TrailingStop {
     /// Number of ticks to trail behind the market price
     pub trail_by_ticks: i32,
@@ -676,91 +797,91 @@ pub struct TrailingStop {
     pub trail_by_price_id: i32,
 }
 
+impl TrailingStop {
+    /// Build a trailing stop from its two required fields.
+    pub fn new(trail_by_ticks: i32, trail_by_price_id: i32) -> Self {
+        Self {
+            trail_by_ticks,
+            trail_by_price_id,
+        }
+    }
+}
+
 /// A standalone order (not a bracket order).
-///
-/// Use this struct with `RithmicOrderPlantHandle::place_order()` to submit
-/// orders with advanced features like trigger prices and trailing stops.
 ///
 /// For orders with automatic profit targets and stop losses, use
 /// [`RithmicBracketOrder`] instead.
 ///
 /// This struct carries every field [`RequestNewOrder`](crate::rti::RequestNewOrder)
-/// accepts, most of which a given order does not use. Name the ones you need and
-/// let [`Default`] fill in the rest.
+/// accepts, most of which a given order does not use.
 ///
-/// # Example: Simple Limit Order
-///
-/// ```
-/// use rithmic_rs::{NewOrderPriceType, NewOrderTransactionType, RithmicOrder};
-///
-/// let order = RithmicOrder {
-///     symbol: "ESH6".to_string(),
-///     exchange: "CME".to_string(),
-///     quantity: 1,
-///     price: Some(5000.0),
-///     transaction_type: NewOrderTransactionType::Buy,
-///     price_type: NewOrderPriceType::Limit,
-///     user_tag: "my-order-1".to_string(),
-///     ..Default::default()
-/// };
-/// ```
-///
-/// # Example: Market Order
-///
-/// A market order has no price. Leaving `price` as `None` omits the field
-/// rather than pricing the order at zero.
+/// # Example: limit order
 ///
 /// ```
-/// use rithmic_rs::{NewOrderPriceType, NewOrderTransactionType, RithmicOrder};
+/// use rithmic_rs::{OrderSide, OrderType, RithmicOrder};
+/// # fn main() -> Result<(), rithmic_rs::RithmicError> {
+/// let order = RithmicOrder::new()
+///     .symbol("ESH6")
+///     .exchange("CME")
+///     .quantity(1)
+///     .transaction_type(OrderSide::Buy)
+///     .price_type(OrderType::Limit)
+///     .price(5000.0)
+///     .user_tag("my-order-1")
+///     .build()?;
+/// # Ok(())
+/// # }
+/// ```
 ///
-/// let order = RithmicOrder {
-///     symbol: "ESH6".to_string(),
-///     exchange: "CME".to_string(),
-///     quantity: 1,
-///     transaction_type: NewOrderTransactionType::Buy,
-///     price_type: NewOrderPriceType::Market,
-///     user_tag: "market-order".to_string(),
-///     ..Default::default()
-/// };
+/// # Example: market order
+///
+/// A market order has no price. Leaving `price` unset omits the field rather
+/// than pricing the order at zero.
+///
+/// ```
+/// use rithmic_rs::{OrderSide, OrderType, RithmicOrder};
+/// # fn main() -> Result<(), rithmic_rs::RithmicError> {
+/// let order = RithmicOrder::new()
+///     .symbol("ESH6")
+///     .exchange("CME")
+///     .quantity(1)
+///     .transaction_type(OrderSide::Buy)
+///     .price_type(OrderType::Market)
+///     .user_tag("market-order")
+///     .build()?;
 ///
 /// assert_eq!(order.price, None);
+/// # Ok(())
+/// # }
 /// ```
 ///
-/// # Example: Stop-Limit Order with Trigger Price
+/// # Example: stop-limit with a trailing stop
 ///
 /// ```
-/// use rithmic_rs::{NewOrderPriceType, NewOrderTransactionType, RithmicOrder};
-///
-/// let order = RithmicOrder {
-///     symbol: "ESH6".to_string(),
-///     exchange: "CME".to_string(),
-///     quantity: 1,
-///     price: Some(4980.0),
-///     trigger_price: Some(4985.0),
-///     transaction_type: NewOrderTransactionType::Sell,
-///     price_type: NewOrderPriceType::StopLimit,
-///     user_tag: "stop-order".to_string(),
-///     ..Default::default()
-/// };
+/// use rithmic_rs::{OrderSide, OrderType, RithmicOrder};
+/// # fn main() -> Result<(), rithmic_rs::RithmicError> {
+/// let order = RithmicOrder::new()
+///     .symbol("ESH6")
+///     .exchange("CME")
+///     .quantity(1)
+///     .transaction_type(OrderSide::Sell)
+///     .price_type(OrderType::StopLimit)
+///     .price(4980.0)
+///     .trigger_price(4985.0)
+///     .trailing_stop_by(20, 1)
+///     .build()?;
+/// # Ok(())
+/// # }
 /// ```
 ///
-/// # Example: Trailing Stop Order
+/// This type is `#[non_exhaustive]`, so a struct expression does not compile
+/// downstream:
 ///
+/// ```compile_fail
+/// let order = rithmic_rs::RithmicOrder { quantity: 1, ..Default::default() };
 /// ```
-/// use rithmic_rs::{NewOrderPriceType, NewOrderTransactionType, RithmicOrder, TrailingStop};
-///
-/// let order = RithmicOrder {
-///     symbol: "ESH6".to_string(),
-///     exchange: "CME".to_string(),
-///     quantity: 1,
-///     transaction_type: NewOrderTransactionType::Sell,
-///     price_type: NewOrderPriceType::StopMarket,
-///     trailing_stop: Some(TrailingStop { trail_by_ticks: 20, trail_by_price_id: 1 }),
-///     user_tag: "trailing-stop".to_string(),
-///     ..Default::default()
-/// };
-/// ```
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default, PartialEq)]
+#[non_exhaustive]
 pub struct RithmicOrder {
     /// Trading symbol (e.g., "ESH6")
     pub symbol: String,
@@ -775,13 +896,13 @@ pub struct RithmicOrder {
     /// builder has to guess the meaning of.
     pub price: Option<f64>,
     /// Buy or Sell
-    pub transaction_type: request_new_order::TransactionType,
+    pub transaction_type: OrderSide,
     /// Order type (Limit, Market, StopLimit, StopMarket, etc.)
-    pub price_type: request_new_order::PriceType,
+    pub price_type: OrderType,
     /// Your identifier for tracking this order
     pub user_tag: String,
     /// Order duration (defaults to Day if None)
-    pub duration: Option<request_new_order::Duration>,
+    pub duration: Option<TimeInForce>,
     /// Trigger price for stop orders (StopLimit, StopMarket, etc.)
     ///
     /// Required for stop orders; ignored for limit/market orders.
@@ -791,7 +912,7 @@ pub struct RithmicOrder {
     /// Route to send on. `None` uses the route the server published for `exchange`.
     pub trade_route: Option<String>,
     /// How this order is attributed to its originator.
-    pub manual_or_auto: request_new_order::OrderPlacement,
+    pub manual_or_auto: OrderPlacement,
     /// Originating window name reported to Rithmic.
     pub window_name: Option<String>,
     /// Release the order at this second-since-beginning-of-epoch value.
@@ -805,66 +926,7 @@ pub struct RithmicOrder {
     /// Cancel the order after this many seconds.
     pub cancel_after_secs: Option<i32>,
     /// Conditional trigger that releases this order once touched.
-    pub if_touched: Option<RithmicOrderIfTouchedTrigger>,
-}
-
-/// Conditional trigger for a standalone order's entry.
-///
-/// This maps directly to the `if_touched_*` fields on `RequestNewOrder`. It is
-/// separate from [`RithmicIfTouchedTrigger`], which carries the
-/// `request_bracket_order` enums.
-///
-/// # Example
-///
-/// ```
-/// use rithmic_rs::{NewOrderCondition, NewOrderPriceField, RithmicOrderIfTouchedTrigger};
-///
-/// let trigger = RithmicOrderIfTouchedTrigger {
-///     symbol: "NQM6".to_string(),
-///     exchange: "CME".to_string(),
-///     condition: NewOrderCondition::GreaterThanEqualTo,
-///     price_field: NewOrderPriceField::TradePrice,
-///     price: 18250.5,
-/// };
-/// ```
-#[derive(Debug, Clone)]
-pub struct RithmicOrderIfTouchedTrigger {
-    /// Trading symbol to monitor for the condition.
-    pub symbol: String,
-    /// Exchange for the monitored symbol.
-    pub exchange: String,
-    /// Comparison operator for the trigger.
-    pub condition: request_new_order::Condition,
-    /// Price field to evaluate.
-    pub price_field: request_new_order::PriceField,
-    /// Threshold price for the condition.
-    pub price: f64,
-}
-
-impl Default for RithmicOrder {
-    fn default() -> Self {
-        Self {
-            symbol: String::new(),
-            exchange: String::new(),
-            quantity: 0,
-            price: None,
-            transaction_type: request_new_order::TransactionType::Buy,
-            price_type: request_new_order::PriceType::Limit,
-            user_tag: String::new(),
-            duration: None,
-            trigger_price: None,
-            trailing_stop: None,
-            trade_route: None,
-            manual_or_auto: request_new_order::OrderPlacement::Auto,
-            window_name: None,
-            release_at_ssboe: None,
-            release_at_usecs: None,
-            cancel_at_ssboe: None,
-            cancel_at_usecs: None,
-            cancel_after_secs: None,
-            if_touched: None,
-        }
-    }
+    pub if_touched: Option<RithmicIfTouchedTrigger>,
 }
 
 impl RithmicOrder {
@@ -877,13 +939,11 @@ impl RithmicOrder {
     /// [`RithmicError::InvalidArgument`] naming the missing field and the order
     /// type that requires it.
     pub fn validate(&self) -> Result<(), RithmicError> {
-        use request_new_order::PriceType;
-
         let (needs_price, needs_trigger) = match self.price_type {
-            PriceType::Market => (false, false),
-            PriceType::Limit => (true, false),
-            PriceType::StopMarket | PriceType::MarketIfTouched => (false, true),
-            PriceType::StopLimit | PriceType::LimitIfTouched => (true, true),
+            OrderType::Market => (false, false),
+            OrderType::Limit => (true, false),
+            OrderType::StopMarket | OrderType::MarketIfTouched => (false, true),
+            OrderType::StopLimit | OrderType::LimitIfTouched => (true, true),
         };
 
         let order_type = self.price_type.as_str_name();
@@ -908,60 +968,42 @@ impl RithmicOrder {
 mod tests {
     use super::*;
 
-    /// Every order command type defaults its origination to `Auto`. The
-    /// generated `OrderPlacement` enums default to their first variant,
-    /// `Manual`, so a `#[derive(Default)]` on any of these would silently
-    /// invert the batch's semantics.
+    /// Every order command type defaults its origination to `Auto`, which is
+    /// only true because [`OrderPlacement`] is crate-owned — the generated
+    /// `OrderPlacement` enums have no `Default` at all.
     #[test]
     fn order_command_types_default_to_auto_placement() {
-        assert_eq!(
-            RithmicOrder::default().manual_or_auto,
-            request_new_order::OrderPlacement::Auto
-        );
+        assert_eq!(RithmicOrder::default().manual_or_auto, OrderPlacement::Auto);
         assert_eq!(
             RithmicOcoOrderLeg::default().manual_or_auto,
-            request_oco_order::OrderPlacement::Auto
-        );
-        assert_eq!(
-            RithmicAdvancedBracketOrder::default().manual_or_auto,
-            request_bracket_order::OrderPlacement::Auto
-        );
-        assert_eq!(
-            RithmicModifyOrder::default().manual_or_auto,
-            request_modify_order::OrderPlacement::Auto
-        );
-        assert_eq!(
-            RithmicCancelOrder::default().manual_or_auto,
-            request_cancel_order::OrderPlacement::Auto
+            OrderPlacement::Auto
         );
         assert_eq!(
             RithmicBracketOrder::default().manual_or_auto,
-            request_bracket_order::OrderPlacement::Auto
+            OrderPlacement::Auto
         );
-    }
-
-    /// The simple bracket type is a front-end for the advanced one, so its
-    /// origination has to survive the conversion rather than being re-pinned to
-    /// `Auto` on the way through — otherwise `Manual` would be silently dropped.
-    #[test]
-    fn the_simple_bracket_conversion_carries_its_placement() {
-        let order = RithmicBracketOrder {
-            manual_or_auto: request_bracket_order::OrderPlacement::Manual,
-            ..Default::default()
-        };
-
-        let advanced: RithmicAdvancedBracketOrder = order.into();
-
         assert_eq!(
-            advanced.manual_or_auto,
-            request_bracket_order::OrderPlacement::Manual
+            RithmicModifyOrder::default().manual_or_auto,
+            OrderPlacement::Auto
+        );
+        assert_eq!(
+            RithmicCancelOrder::default().manual_or_auto,
+            OrderPlacement::Auto
+        );
+        assert_eq!(
+            RithmicCancelAllOrders::default().manual_or_auto,
+            OrderPlacement::Auto
+        );
+        assert_eq!(
+            RithmicExitPosition::default().manual_or_auto,
+            OrderPlacement::Auto
         );
     }
 
     #[test]
     fn a_market_order_validates_without_a_price() {
         let order = RithmicOrder {
-            price_type: request_new_order::PriceType::Market,
+            price_type: OrderType::Market,
             ..Default::default()
         };
 
@@ -971,7 +1013,7 @@ mod tests {
     #[test]
     fn a_limit_order_needs_a_price() {
         let mut order = RithmicOrder {
-            price_type: request_new_order::PriceType::Limit,
+            price_type: OrderType::Limit,
             ..Default::default()
         };
 
@@ -985,7 +1027,7 @@ mod tests {
     #[test]
     fn a_stop_market_order_needs_a_trigger_but_no_price() {
         let mut order = RithmicOrder {
-            price_type: request_new_order::PriceType::StopMarket,
+            price_type: OrderType::StopMarket,
             ..Default::default()
         };
 
@@ -999,7 +1041,7 @@ mod tests {
     #[test]
     fn a_stop_limit_order_needs_both() {
         let mut order = RithmicOrder {
-            price_type: request_new_order::PriceType::StopLimit,
+            price_type: OrderType::StopLimit,
             price: Some(4980.0),
             ..Default::default()
         };
@@ -1010,10 +1052,24 @@ mod tests {
         assert!(order.validate().is_ok());
     }
 
+    /// `validate()` is the price rule and nothing else — a default order carries
+    /// no instrument and no size, and that is the server's call to make.
+    #[test]
+    fn an_order_does_not_check_its_instrument_or_size() {
+        let order = RithmicOrder {
+            price_type: OrderType::Market,
+            ..Default::default()
+        };
+
+        assert!(order.symbol.is_empty());
+        assert_eq!(order.quantity, 0);
+        assert!(order.validate().is_ok());
+    }
+
     #[test]
     fn an_oco_leg_validates_on_the_same_rules() {
         let mut leg = RithmicOcoOrderLeg {
-            price_type: request_oco_order::PriceType::Limit,
+            price_type: OrderType::Limit,
             ..Default::default()
         };
 
@@ -1023,10 +1079,55 @@ mod tests {
         assert!(leg.validate().is_ok());
     }
 
+    /// The one place a crate-owned enum is wider than the message it targets.
     #[test]
-    fn an_advanced_bracket_validates_its_entry_leg() {
-        let mut order = RithmicAdvancedBracketOrder {
-            price_type: request_bracket_order::PriceType::Limit,
+    fn an_oco_leg_rejects_the_if_touched_price_types() {
+        let leg = RithmicOcoOrderLeg {
+            price_type: OrderType::LimitIfTouched,
+            price: Some(5000.0),
+            trigger_price: Some(5000.0),
+            ..Default::default()
+        };
+
+        let err = leg.validate().unwrap_err().to_string();
+        assert!(err.contains("LIMIT_IF_TOUCHED"), "{err}");
+        assert!(err.contains("is not available on an OCO leg"), "{err}");
+    }
+
+    /// The group checks its legs, not how many of them there are.
+    #[test]
+    fn an_oco_order_validates_each_leg_but_not_the_count() {
+        let ok = RithmicOcoOrderLeg {
+            price_type: OrderType::Market,
+            ..Default::default()
+        };
+
+        assert!(RithmicOcoOrder { legs: Vec::new() }.validate().is_ok());
+        assert!(
+            RithmicOcoOrder {
+                legs: vec![ok.clone()]
+            }
+            .validate()
+            .is_ok()
+        );
+
+        let bad = RithmicOcoOrderLeg {
+            price_type: OrderType::Limit,
+            ..Default::default()
+        };
+        assert!(
+            RithmicOcoOrder {
+                legs: vec![ok, bad]
+            }
+            .validate()
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn a_bracket_validates_its_entry_leg() {
+        let mut order = RithmicBracketOrder {
+            price_type: OrderType::Limit,
             ..Default::default()
         };
 
@@ -1036,16 +1137,86 @@ mod tests {
         assert!(order.validate().is_ok());
     }
 
+    /// Nothing about the exit legs is checked. Rithmic's limits on multi-level
+    /// brackets are undocumented and no other client implements them, so the
+    /// crate would only be guessing at which shapes the server rejects.
+    #[test]
+    fn a_bracket_does_not_check_its_exit_legs() {
+        // Mismatched vector lengths.
+        let ragged = RithmicBracketOrder {
+            price_type: OrderType::Market,
+            target_quantity: vec![1],
+            target_ticks: vec![16, 24],
+            ..Default::default()
+        };
+        assert!(ragged.validate().is_ok());
+
+        // No exit legs at all.
+        let bare = RithmicBracketOrder {
+            price_type: OrderType::Market,
+            ..Default::default()
+        };
+        assert!(bare.validate().is_ok());
+
+        // A bracket_type that disagrees with the legs supplied.
+        let mismatched = RithmicBracketOrder {
+            price_type: OrderType::Market,
+            bracket_type: Some(BracketType::TargetOnly),
+            stop_quantity: vec![1],
+            stop_ticks: vec![10],
+            ..Default::default()
+        };
+        assert!(mismatched.validate().is_ok());
+    }
+
     /// The message names the protobuf type the caller set, not a Rust-side
     /// paraphrase, so it lines up with what Rithmic's docs call the order type.
     #[test]
     fn the_error_names_the_order_type() {
         let order = RithmicOrder {
-            price_type: request_new_order::PriceType::LimitIfTouched,
+            price_type: OrderType::LimitIfTouched,
             ..Default::default()
         };
 
         let err = order.validate().unwrap_err().to_string();
         assert!(err.contains("LIMIT_IF_TOUCHED"), "{err}");
+    }
+
+    /// A modify has no price rule to apply, so nothing is checked.
+    #[test]
+    fn a_modify_validates_unconditionally() {
+        assert!(RithmicModifyOrder::default().validate().is_ok());
+    }
+
+    /// A stop modify without a trigger stays valid — the sender falls back to
+    /// `price`, so a price rule here would reject something that works today.
+    #[test]
+    fn a_stop_modify_does_not_need_a_trigger_price() {
+        let modify = RithmicModifyOrder {
+            id: "123456".to_string(),
+            symbol: "ESH6".to_string(),
+            exchange: "CME".to_string(),
+            quantity: 2,
+            price: 5005.0,
+            price_type: OrderType::StopMarket,
+            ..Default::default()
+        };
+
+        assert!(modify.validate().is_ok());
+    }
+
+    /// The id-carrying commands have no price rule, so they check nothing.
+    #[test]
+    fn the_id_carrying_commands_validate_unconditionally() {
+        assert!(RithmicCancelOrder::default().validate().is_ok());
+        assert!(RithmicCancelAllOrders::default().validate().is_ok());
+        assert!(RithmicExitPosition::default().validate().is_ok());
+        assert!(RithmicBracketLevelAdjustment::default().validate().is_ok());
+        assert!(RithmicLinkOrders::default().validate().is_ok());
+        assert!(
+            RithmicModifyOrderReferenceData::default()
+                .validate()
+                .is_ok()
+        );
     }
 }

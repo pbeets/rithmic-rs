@@ -8,6 +8,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let proto_dir = src_dir.join("raw-proto");
 
     let mut config = prost_build::Config::new();
+    // Rithmic adds fields to existing messages in most template releases, so a
+    // generated type without this makes every proto refresh a semver-major event here.
+    config.type_attribute(".", "#[non_exhaustive]");
     config.out_dir(&src_dir);
     config.compile_protos(&[proto_dir.join("otps_proto_pool.proto")], &[&proto_dir])?;
 
@@ -29,7 +32,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .strip_prefix(GENERATED_HEADER)
         .ok_or("pool output does not start with the prost-build header")?;
 
-    let combined = format!("pub mod messages;\n\n{message_type_code}{pool_body}");
+    // Rithmic's vendored `.proto` files carry literal tabs in their trailing
+    // comments, which prost copies into doc comments. Allow it at the module
+    // level rather than editing the vendored protos, so the next refresh from
+    // Rithmic does not reintroduce a clippy failure under `-D warnings`.
+    let combined = format!(
+        "#![allow(clippy::tabs_in_doc_comments)]\n\npub mod messages;\n\n{message_type_code}{pool_body}"
+    );
     std::fs::write(&pool_path, combined)?;
 
     println!("Generated src/rti.rs — run `cargo fmt` to format it.");

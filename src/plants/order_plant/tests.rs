@@ -4,9 +4,7 @@ use super::*;
 use crate::{
     RithmicRequestError,
     api::{
-        rithmic_command_types::{
-            RithmicAdvancedBracketOrder, RithmicBracketOrder, RithmicOcoOrderLeg,
-        },
+        rithmic_command_types::{RithmicBracketOrder, RithmicOcoOrderLeg},
         sender_api::LoginUserType,
     },
     plants::test_support::{
@@ -14,6 +12,7 @@ use crate::{
         assert_sent_while_open, assert_wire_silent, awaited_caller_outcome, read_wire_request,
         test_account,
     },
+    types::{OrderPlacement, OrderSide, OrderType, TimeInForce},
 };
 
 fn test_handle() -> (RithmicOrderPlantHandle, mpsc::Receiver<OrderPlantCommand>) {
@@ -41,15 +40,15 @@ fn adjustment(id: &str, ticks: i32, level: Option<i32>) -> RithmicBracketLevelAd
 
 fn leg(tag: &str) -> RithmicOcoOrderLeg {
     RithmicOcoOrderLeg {
-        manual_or_auto: crate::rti::request_oco_order::OrderPlacement::Auto,
+        manual_or_auto: OrderPlacement::Auto,
         symbol: "ESM6".to_string(),
         exchange: "CME".to_string(),
         quantity: 1,
         price: Some(5000.0),
         trigger_price: None,
-        transaction_type: crate::rti::request_oco_order::TransactionType::Buy,
-        duration: crate::rti::request_oco_order::Duration::Day,
-        price_type: crate::rti::request_oco_order::PriceType::Limit,
+        transaction_type: OrderSide::Buy,
+        duration: TimeInForce::Day,
+        price_type: OrderType::Limit,
         user_tag: tag.to_string(),
         trailing_stop: None,
         trade_route: None,
@@ -81,15 +80,17 @@ fn place_order(response_sender: Responder) -> OrderPlantCommand {
 
 fn cancel_order(response_sender: Responder) -> OrderPlantCommand {
     OrderPlantCommand::CancelOrder {
-        manual_or_auto: CancelOrderPlacement::Auto,
-        order_id: "basket-1".to_string(),
+        order: RithmicCancelOrder::new()
+            .id("basket-1")
+            .build()
+            .expect("valid cancellation"),
         account: test_account(),
         response_sender,
     }
 }
 
 #[tokio::test]
-async fn place_oco_order_multi_rejects_fewer_than_two_legs() {
+async fn place_oco_order_rejects_fewer_than_two_legs() {
     for legs in [vec![], vec![leg("only")]] {
         let (handle, mut command_receiver) = test_handle();
 
@@ -97,7 +98,7 @@ async fn place_oco_order_multi_rejects_fewer_than_two_legs() {
         // timeout turns that into a failure rather than a hung suite.
         let err = tokio::time::timeout(
             std::time::Duration::from_secs(5),
-            handle.place_oco_order_multi(legs),
+            handle.place_oco_order(RithmicOcoOrder { legs }),
         )
         .await
         .expect("must be rejected without reaching the actor")
@@ -110,24 +111,29 @@ async fn place_oco_order_multi_rejects_fewer_than_two_legs() {
 }
 
 #[tokio::test]
-async fn place_oco_order_multi_forwards_two_or_more_legs() {
+async fn place_oco_order_forwards_two_or_more_legs() {
     let (handle, mut command_receiver) = test_handle();
 
     // The call parks on its response channel until the actor answers, so it
     // has to run alongside the receive below rather than before it.
     let call = tokio::spawn(async move {
         handle
-            .place_oco_order_multi(vec![leg("a"), leg("b"), leg("c")])
+            .place_oco_order(
+                RithmicOcoOrder::new()
+                    .legs([leg("a"), leg("b"), leg("c")])
+                    .build()
+                    .expect("valid oco group"),
+            )
             .await
     });
 
     match command_receiver.recv().await {
-        Some(OrderPlantCommand::PlaceOcoOrderMulti { legs, .. }) => {
-            assert_eq!(legs.len(), 3);
-            assert_eq!(legs[2].user_tag, "c");
+        Some(OrderPlantCommand::PlaceOcoOrder { order, .. }) => {
+            assert_eq!(order.legs.len(), 3);
+            assert_eq!(order.legs[2].user_tag, "c");
             // Dropping the command drops the responder, which unparks the call.
         }
-        _ => panic!("expected PlaceOcoOrderMulti to be queued"),
+        _ => panic!("expected PlaceOcoOrder to be queued"),
     }
 
     assert!(matches!(
@@ -139,40 +145,30 @@ async fn place_oco_order_multi_forwards_two_or_more_legs() {
 /// Both calls park on their response channels, so they run alongside the
 /// receives below. Dropping each command drops its responder and unparks one.
 #[tokio::test]
-async fn adjust_profit_and_stop_forward_the_bracket_level() {
+async fn adjust_target_and_stop_forward_the_bracket_level() {
     let (handle, mut command_receiver) = test_handle();
 
     let call = tokio::spawn(async move {
         let _ = handle
-            .adjust_profit(adjustment("basket-1", 16, Some(2)))
+            .adjust_target(adjustment("basket-1", 16, Some(2)))
             .await;
         let _ = handle.adjust_stop(adjustment("basket-2", 8, None)).await;
     });
 
     match command_receiver.recv().await {
-        Some(OrderPlantCommand::ModifyProfit {
-            basket_id,
-            ticks,
-            level,
-            ..
-        }) => {
-            assert_eq!(basket_id, "basket-1");
-            assert_eq!(ticks, 16);
-            assert_eq!(level, Some(2));
+        Some(OrderPlantCommand::ModifyTarget { adjustment, .. }) => {
+            assert_eq!(adjustment.id, "basket-1");
+            assert_eq!(adjustment.ticks, 16);
+            assert_eq!(adjustment.level, Some(2));
         }
-        _ => panic!("expected ModifyProfit to be queued"),
+        _ => panic!("expected ModifyTarget to be queued"),
     }
 
     match command_receiver.recv().await {
-        Some(OrderPlantCommand::ModifyStop {
-            basket_id,
-            ticks,
-            level,
-            ..
-        }) => {
-            assert_eq!(basket_id, "basket-2");
-            assert_eq!(ticks, 8);
-            assert_eq!(level, None);
+        Some(OrderPlantCommand::ModifyStop { adjustment, .. }) => {
+            assert_eq!(adjustment.id, "basket-2");
+            assert_eq!(adjustment.ticks, 8);
+            assert_eq!(adjustment.level, None);
         }
         _ => panic!("expected ModifyStop to be queued"),
     }
@@ -550,19 +546,19 @@ async fn sent_request<M: prost::Message + Default>(
 }
 
 fn bracket_order() -> RithmicBracketOrder {
-    RithmicBracketOrder {
-        action: crate::rti::request_bracket_order::TransactionType::Buy,
-        duration: crate::rti::request_bracket_order::Duration::Day,
-        exchange: "CME".to_string(),
-        localid: "bracket-1".to_string(),
-        price_type: crate::rti::request_bracket_order::PriceType::Limit,
-        price: Some(5000.0),
-        profit_ticks: 20,
-        quantity: 1,
-        stop_ticks: 10,
-        symbol: "ESM6".to_string(),
-        manual_or_auto: crate::rti::request_bracket_order::OrderPlacement::Auto,
-    }
+    RithmicBracketOrder::new()
+        .symbol("ESM6")
+        .exchange("CME")
+        .quantity(1)
+        .action(OrderSide::Buy)
+        .price_type(OrderType::Limit)
+        .duration(TimeInForce::Day)
+        .price(5000.0)
+        .target(20)
+        .stop(10)
+        .localid("bracket-1")
+        .build()
+        .expect("valid bracket")
 }
 
 /// 302 and 304 name no account, so the login scopes them outright; 330 and 346 name
@@ -603,7 +599,7 @@ async fn a_logged_in_actor_scopes_every_request_that_carries_a_user_type() {
     let bracket: crate::rti::RequestBracketOrder =
         sent_request(&mut plant, &mut client, |response_sender| {
             OrderPlantCommand::PlaceBracketOrder {
-                bracket_order: bracket_order(),
+                bracket_order: Box::new(bracket_order()),
                 account: test_account(),
                 response_sender,
             }
@@ -620,7 +616,7 @@ async fn a_logged_in_actor_scopes_every_request_that_carries_a_user_type() {
     let cancel_all: crate::rti::RequestCancelAllOrders =
         sent_request(&mut plant, &mut client, |response_sender| {
             OrderPlantCommand::CancelAllOrders {
-                manual_or_auto: CancelAllOrderPlacement::Auto,
+                command: RithmicCancelAllOrders::default(),
                 account: test_account(),
                 response_sender,
             }
@@ -642,10 +638,8 @@ async fn bracket_level_commands_carry_their_level_to_the_wire() {
 
     let target: crate::rti::RequestUpdateTargetBracketLevel =
         sent_request(&mut plant, &mut client, |response_sender| {
-            OrderPlantCommand::ModifyProfit {
-                basket_id: "basket-1".to_string(),
-                ticks: 16,
-                level: Some(2),
+            OrderPlantCommand::ModifyTarget {
+                adjustment: adjustment("basket-1", 16, Some(2)),
                 account: test_account(),
                 response_sender,
             }
@@ -659,9 +653,7 @@ async fn bracket_level_commands_carry_their_level_to_the_wire() {
     let stop: crate::rti::RequestUpdateStopBracketLevel =
         sent_request(&mut plant, &mut client, |response_sender| {
             OrderPlantCommand::ModifyStop {
-                basket_id: "basket-2".to_string(),
-                ticks: 8,
-                level: Some(3),
+                adjustment: adjustment("basket-2", 8, Some(3)),
                 account: test_account(),
                 response_sender,
             }
@@ -673,18 +665,26 @@ async fn bracket_level_commands_carry_their_level_to_the_wire() {
     assert_eq!(stop.level, Some(3));
 }
 
-fn advanced_bracket_order(
-    exchange: &str,
-    trade_route: Option<&str>,
-) -> RithmicAdvancedBracketOrder {
-    RithmicAdvancedBracketOrder {
-        exchange: exchange.to_string(),
-        localid: "advanced-1".to_string(),
-        symbol: "ESM6".to_string(),
-        quantity: 1,
-        trade_route: trade_route.map(str::to_string),
-        ..RithmicAdvancedBracketOrder::default()
+/// A bracket that names its own exchange, and optionally its own route.
+fn bracket_order_on(exchange: &str, trade_route: Option<&str>) -> RithmicBracketOrder {
+    let mut order = RithmicBracketOrder::new()
+        .symbol("ESM6")
+        .exchange(exchange)
+        .quantity(1)
+        .action(OrderSide::Buy)
+        .price_type(OrderType::Limit)
+        .price(5000.0)
+        .localid("advanced-1");
+    if let Some(trade_route) = trade_route {
+        order = order.trade_route(trade_route);
     }
+    order.build().expect("valid bracket")
+}
+
+/// An OCO group straight from its legs; the builder's two-leg minimum is
+/// asserted at the handle, and these tests drive the actor directly.
+fn oco_group(legs: Vec<RithmicOcoOrderLeg>) -> RithmicOcoOrder {
+    RithmicOcoOrder { legs }
 }
 
 fn leg_on(exchange: &str, trade_route: Option<&str>) -> RithmicOcoOrderLeg {
@@ -721,7 +721,7 @@ async fn every_order_command_sends_the_route_cached_for_its_exchange() {
     let bracket: crate::rti::RequestBracketOrder =
         sent_request(&mut plant, &mut client, |response_sender| {
             OrderPlantCommand::PlaceBracketOrder {
-                bracket_order: bracket_order(),
+                bracket_order: Box::new(bracket_order()),
                 account: test_account(),
                 response_sender,
             }
@@ -732,8 +732,8 @@ async fn every_order_command_sends_the_route_cached_for_its_exchange() {
 
     let advanced: crate::rti::RequestBracketOrder =
         sent_request(&mut plant, &mut client, |response_sender| {
-            OrderPlantCommand::PlaceAdvancedBracketOrder {
-                bracket_order: Box::new(advanced_bracket_order("NYMEX", None)),
+            OrderPlantCommand::PlaceBracketOrder {
+                bracket_order: Box::new(bracket_order_on("NYMEX", None)),
                 account: test_account(),
                 response_sender,
             }
@@ -746,8 +746,8 @@ async fn every_order_command_sends_the_route_cached_for_its_exchange() {
     // spanning exchanges must send one route per leg in the legs' own order.
     let oco: crate::rti::RequestOcoOrder =
         sent_request(&mut plant, &mut client, |response_sender| {
-            OrderPlantCommand::PlaceOcoOrderMulti {
-                legs: vec![leg_on("NYMEX", None), leg_on("CME", None)],
+            OrderPlantCommand::PlaceOcoOrder {
+                order: oco_group(vec![leg_on("NYMEX", None), leg_on("CME", None)]),
                 account: test_account(),
                 response_sender,
             }
@@ -758,12 +758,12 @@ async fn every_order_command_sends_the_route_cached_for_its_exchange() {
 
     let oco_multi: crate::rti::RequestOcoOrder =
         sent_request(&mut plant, &mut client, |response_sender| {
-            OrderPlantCommand::PlaceOcoOrderMulti {
-                legs: vec![
+            OrderPlantCommand::PlaceOcoOrder {
+                order: oco_group(vec![
                     leg_on("CME", None),
                     leg_on("NYMEX", None),
                     leg_on("CME", None),
-                ],
+                ]),
                 account: test_account(),
                 response_sender,
             }
@@ -801,8 +801,8 @@ async fn a_per_order_route_overrides_the_cached_one() {
 
     let advanced: crate::rti::RequestBracketOrder =
         sent_request(&mut plant, &mut client, |response_sender| {
-            OrderPlantCommand::PlaceAdvancedBracketOrder {
-                bracket_order: Box::new(advanced_bracket_order("CBOT", Some("cbot-route"))),
+            OrderPlantCommand::PlaceBracketOrder {
+                bracket_order: Box::new(bracket_order_on("CBOT", Some("cbot-route"))),
                 account: test_account(),
                 response_sender,
             }
@@ -813,8 +813,8 @@ async fn a_per_order_route_overrides_the_cached_one() {
 
     let oco: crate::rti::RequestOcoOrder =
         sent_request(&mut plant, &mut client, |response_sender| {
-            OrderPlantCommand::PlaceOcoOrderMulti {
-                legs: vec![leg_on("CME", Some("leg-route")), leg_on("CME", None)],
+            OrderPlantCommand::PlaceOcoOrder {
+                order: oco_group(vec![leg_on("CME", Some("leg-route")), leg_on("CME", None)]),
                 account: test_account(),
                 response_sender,
             }
@@ -838,20 +838,18 @@ async fn an_unroutable_order_is_refused_before_the_wire() {
             response_sender,
         }),
         Box::new(|response_sender| OrderPlantCommand::PlaceBracketOrder {
-            bracket_order: bracket_order(),
+            bracket_order: Box::new(bracket_order()),
             account: test_account(),
             response_sender,
         }),
-        Box::new(
-            |response_sender| OrderPlantCommand::PlaceAdvancedBracketOrder {
-                bracket_order: Box::new(advanced_bracket_order("CBOT", None)),
-                account: test_account(),
-                response_sender,
-            },
-        ),
+        Box::new(|response_sender| OrderPlantCommand::PlaceBracketOrder {
+            bracket_order: Box::new(bracket_order_on("CBOT", None)),
+            account: test_account(),
+            response_sender,
+        }),
         // Second leg only: the first resolves, so the whole group must still fail.
-        Box::new(|response_sender| OrderPlantCommand::PlaceOcoOrderMulti {
-            legs: vec![leg_on("CME", Some("leg-route")), leg_on("CBOT", None)],
+        Box::new(|response_sender| OrderPlantCommand::PlaceOcoOrder {
+            order: oco_group(vec![leg_on("CME", Some("leg-route")), leg_on("CBOT", None)]),
             account: test_account(),
             response_sender,
         }),
@@ -1115,26 +1113,33 @@ async fn record_trade_route_reports_connection_closed_when_the_plant_is_gone() {
 
 #[tokio::test]
 async fn cancel_all_orders_encodes_auto_placement_by_default() {
-    // The Manual -> Auto change lives in the handle's default argument, not in
-    // the builder, so this drives the command the handle actually queues and
-    // then decodes what that command puts on the wire.
+    // The Manual -> Auto change lives in the command's default, so this drives
+    // an unconfigured command through the handle and then decodes what that
+    // same command puts on the wire.
     let (handle, mut command_receiver) = test_handle();
-    let call = tokio::spawn(async move { handle.cancel_all_orders().await });
+    let call = tokio::spawn(async move {
+        handle
+            .cancel_all_orders(RithmicCancelAllOrders::default())
+            .await
+    });
 
     let command = command_receiver
         .recv()
         .await
         .expect("cancel_all_orders must queue a command");
 
-    let OrderPlantCommand::CancelAllOrders { manual_or_auto, .. } = &command else {
+    let OrderPlantCommand::CancelAllOrders {
+        command: queued, ..
+    } = &command
+    else {
         panic!("expected CancelAllOrders to be queued");
     };
     assert_eq!(
-        *manual_or_auto,
-        CancelAllOrderPlacement::Auto,
+        queued.manual_or_auto,
+        OrderPlacement::Auto,
         "cancel_all_orders() must attribute to Auto like every other order call"
     );
-    let placement = *manual_or_auto;
+    let queued = queued.clone();
 
     drop(command);
     let _ = call.await;
@@ -1143,7 +1148,7 @@ async fn cancel_all_orders_encodes_auto_placement_by_default() {
     let request: crate::rti::RequestCancelAllOrders =
         sent_request(&mut plant, &mut client, |response_sender| {
             OrderPlantCommand::CancelAllOrders {
-                manual_or_auto: placement,
+                command: queued,
                 account: test_account(),
                 response_sender,
             }
@@ -1169,7 +1174,7 @@ async fn an_unpriced_limit_order_is_still_sent() {
             OrderPlantCommand::PlaceOrder {
                 order: RithmicOrder {
                     exchange: "CME".to_string(),
-                    price_type: crate::rti::request_new_order::PriceType::Limit,
+                    price_type: OrderType::Limit,
                     price: None,
                     ..RithmicOrder::default()
                 },
@@ -1197,7 +1202,7 @@ async fn a_market_order_omits_price_on_the_wire() {
             OrderPlantCommand::PlaceOrder {
                 order: RithmicOrder {
                     exchange: "CME".to_string(),
-                    price_type: crate::rti::request_new_order::PriceType::Market,
+                    price_type: OrderType::Market,
                     price: None,
                     ..RithmicOrder::default()
                 },
@@ -1210,29 +1215,42 @@ async fn a_market_order_omits_price_on_the_wire() {
     assert_eq!(request.price, None);
 }
 
-/// The `Auto` attribution for an exit lives in the handle's default argument,
-/// not in the builder, which now takes an `Option` and sends exactly what it is
-/// given. So this drives the real handle call and decodes the transmitted
-/// frame — asserting on the builder alone could not detect the default moving.
+/// The `Auto` attribution for an exit lives in the command's default, and the
+/// sender now always states a placement. So this drives an unconfigured command
+/// through the real handle and decodes the transmitted frame — asserting on the
+/// builder alone could not detect the default moving.
 #[tokio::test]
 async fn exit_position_encodes_auto_placement_by_default() {
     let (handle, mut command_receiver) = test_handle();
-    let call = tokio::spawn(async move { handle.exit_position("ESM6", "CME").await });
+    let call = tokio::spawn(async move {
+        handle
+            .exit_position(
+                RithmicExitPosition::new()
+                    .symbol("ESM6")
+                    .exchange("CME")
+                    .build()
+                    .expect("valid exit"),
+            )
+            .await
+    });
 
     let command = command_receiver
         .recv()
         .await
         .expect("exit_position must queue a command");
 
-    let OrderPlantCommand::ExitPosition { manual_or_auto, .. } = &command else {
+    let OrderPlantCommand::ExitPosition {
+        command: queued, ..
+    } = &command
+    else {
         panic!("expected ExitPosition to be queued");
     };
     assert_eq!(
-        *manual_or_auto,
-        ExitPositionPlacement::Auto,
+        queued.manual_or_auto,
+        OrderPlacement::Auto,
         "exit_position() must attribute to Auto like every other order call"
     );
-    let placement = *manual_or_auto;
+    let queued = queued.clone();
 
     drop(command);
     let _ = call.await;
@@ -1241,9 +1259,7 @@ async fn exit_position_encodes_auto_placement_by_default() {
     let request: crate::rti::RequestExitPosition =
         sent_request(&mut plant, &mut client, |response_sender| {
             OrderPlantCommand::ExitPosition {
-                symbol: "ESM6".to_string(),
-                exchange: "CME".to_string(),
-                manual_or_auto: placement,
+                command: queued,
                 account: test_account(),
                 response_sender,
             }

@@ -13,9 +13,9 @@ use tokio::sync::broadcast::error::RecvError;
 use tracing::info;
 
 use rithmic_rs::{
-    BracketDuration, BracketPriceType, BracketTransactionType, ConnectStrategy, RithmicAccount,
-    RithmicBracketOrder, RithmicConfig, RithmicEnv, RithmicOrderPlant,
-    plants::subscription::SubscriptionFilter, rti::messages::RithmicMessage,
+    ConnectStrategy, OrderSide, OrderType, RithmicAccount, RithmicBracketOrder, RithmicConfig,
+    RithmicEnv, RithmicOrderPlant, TimeInForce, plants::subscription::SubscriptionFilter,
+    rti::messages::RithmicMessage,
 };
 
 /// Spawns a task to listen for order notifications
@@ -104,19 +104,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Define the bracket order
     // Note: Update symbol to a valid front-month contract for your use case
-    let bracket_order = RithmicBracketOrder {
-        action: BracketTransactionType::Buy,
-        duration: BracketDuration::Day,
-        exchange: "CME".to_string(),
-        localid: "example-bracket-1".to_string(),
-        price_type: BracketPriceType::Limit,
-        price: Some(5000.00), // Entry limit price
-        profit_ticks: 20,     // Take profit 20 ticks above entry
-        stop_ticks: 10,       // Stop loss 10 ticks below entry
-        quantity: 1,
-        symbol: "ESM6".to_string(), // Update to current front-month ES contract
-        ..Default::default()
-    };
+    let bracket_order = RithmicBracketOrder::new()
+        .symbol("ESM6")
+        .exchange("CME")
+        .quantity(1)
+        .action(OrderSide::Buy)
+        .price_type(OrderType::Limit)
+        .duration(TimeInForce::Day)
+        .localid("example-bracket-1")
+        .price(5000.00) // Entry limit price
+        .target(20) // Take profit 20 ticks above entry
+        .stop(10) // Stop loss 10 ticks below entry
+        .build()?;
 
     info!("Placing bracket order: {:?}", bracket_order);
 

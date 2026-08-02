@@ -82,7 +82,7 @@ pub(crate) enum PnlPlantCommand {
 ///     handle.login().await?;
 ///
 ///     // Step 5: Get a current snapshot of all PnL positions
-///     let snapshots = handle.pnl_position_snapshots().await?;
+///     let snapshots = handle.get_pnl_position_snapshot().await?;
 ///     println!("PnL position snapshot: {:?}", snapshots);
 ///
 ///     // Step 6: Subscribe to ongoing PnL updates
@@ -261,7 +261,7 @@ impl PlantActor for PnlPlant {
                 self.core.handle_close().await;
             }
             PnlPlantCommand::ListSystemInfo { response_sender } => {
-                self.core.handle_list_system_info(response_sender).await;
+                self.core.handle_get_system_info(response_sender).await;
             }
             PnlPlantCommand::Login {
                 config,
@@ -369,7 +369,7 @@ impl RithmicPnlPlantHandle {
     ///
     /// Returns information about the connected Rithmic system, including
     /// system name, gateway info, and available services.
-    pub async fn list_system_info(&self) -> Result<RithmicResponse, RithmicError> {
+    pub async fn get_system_info(&self) -> Result<RithmicResponse, RithmicError> {
         let (tx, rx) = oneshot::channel::<Result<Vec<RithmicResponse>, RithmicError>>();
 
         let command = PnlPlantCommand::ListSystemInfo {
@@ -516,7 +516,7 @@ impl RithmicPnlPlantHandle {
     ///
     /// # Returns
     /// The position snapshot response or an error message
-    pub async fn pnl_position_snapshots(&self) -> Result<RithmicResponse, RithmicError> {
+    pub async fn get_pnl_position_snapshot(&self) -> Result<RithmicResponse, RithmicError> {
         let (tx, rx) = oneshot::channel::<Result<Vec<RithmicResponse>, RithmicError>>();
 
         let command = PnlPlantCommand::PnlPositionSnapshots {

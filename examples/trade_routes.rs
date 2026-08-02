@@ -14,7 +14,7 @@ use tokio::sync::broadcast::error::RecvError;
 use tracing::{info, warn};
 
 use rithmic_rs::{
-    ConnectStrategy, RithmicAccount, RithmicConfig, RithmicEnv, RithmicOrder,
+    ConnectStrategy, OrderSide, OrderType, RithmicAccount, RithmicConfig, RithmicEnv, RithmicOrder,
     RithmicOrderPlantHandle, rti::messages::RithmicMessage,
 };
 
@@ -78,19 +78,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Placing an order picks the route for its exchange. An exchange with no
     // route fails with `RithmicError::NoTradeRoute` and nothing is sent.
-    let order = RithmicOrder {
-        symbol: "ESM6".to_string(),
-        exchange: "CME".to_string(),
-        quantity: 1,
-        price: Some(5000.0),
-        transaction_type: rithmic_rs::rti::request_new_order::TransactionType::Buy,
-        price_type: rithmic_rs::rti::request_new_order::PriceType::Limit,
-        user_tag: "example-routed".to_string(),
-        // Set this to send on a route of your own, including one the server
-        // never published. `None` uses the route for the exchange.
-        trade_route: None,
-        ..Default::default()
-    };
+    // Leave `trade_route` unset to use the route for the exchange; call
+    // `.trade_route(..)` to send on a route of your own, including one the
+    // server never published.
+    let order = RithmicOrder::new()
+        .symbol("ESM6")
+        .exchange("CME")
+        .quantity(1)
+        .transaction_type(OrderSide::Buy)
+        .price_type(OrderType::Limit)
+        .price(5000.0)
+        .user_tag("example-routed")
+        .build()?;
 
     match handle.place_order(order).await {
         Ok(responses) => {

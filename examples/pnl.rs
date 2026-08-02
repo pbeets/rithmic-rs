@@ -21,8 +21,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     handle.login().await?;
 
     // Get initial snapshot
-    let snapshots = handle.pnl_position_snapshots().await?;
-    info!("Position snapshot: {:?}", snapshots);
+    let snapshot = handle.get_pnl_position_snapshot().await?;
+    info!("Position snapshot: {:?}", snapshot);
 
     // Subscribe to real-time updates
     handle.subscribe_pnl_updates().await?;

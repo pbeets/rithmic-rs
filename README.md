@@ -101,42 +101,41 @@ let front_month = handle.get_front_month_contract("ES", "CME", false).await?;
 
 ```rust
 use rithmic_rs::{
-    ConnectStrategy, NewOrderPriceType, NewOrderTransactionType, RithmicAccount,
-    RithmicCancelOrder, RithmicConfig, RithmicEnv, RithmicOrder, RithmicOrderPlant,
+    ConnectStrategy, OrderSide, OrderType, RithmicAccount, RithmicCancelOrder, RithmicConfig,
+    RithmicEnv, RithmicExitPosition, RithmicOrder, RithmicOrderPlant,
 };
 
 let config = RithmicConfig::from_env(RithmicEnv::Demo)?;
 let account = RithmicAccount::from_env(RithmicEnv::Demo)?;
 let plant = RithmicOrderPlant::connect(&config, ConnectStrategy::Retry).await?;
-let mut handle = plant.get_handle(&account);
+let handle = plant.get_handle(&account);
 handle.login().await?;
 handle.subscribe_order_updates().await?;
 
-// Place orders using the RithmicOrder API. Name the fields you need and let
-// Default fill in the rest.
-let order = RithmicOrder {
-    symbol: "ESM6".to_string(),
-    exchange: "CME".to_string(),
-    quantity: 1,
-    price: Some(5000.0),
-    transaction_type: NewOrderTransactionType::Buy,
-    price_type: NewOrderPriceType::Limit,
-    user_tag: "my-order".to_string(),
-    ..Default::default()
-};
+// Every order command starts from `::new()`, which takes no arguments, and is
+// filled in by setters named after the fields they set. `build()` validates and
+// returns a `Result`.
+let order = RithmicOrder::new()
+    .symbol("ESM6")
+    .exchange("CME")
+    .quantity(1)
+    .transaction_type(OrderSide::Buy)
+    .price_type(OrderType::Limit)
+    .price(5000.0)
+    .user_tag("my-order")
+    .build()?;
 
 handle.place_order(order).await?;
 
-// Bracket orders, OCO orders, advanced bracket orders
+// Bracket and OCO orders build the same way
 handle.place_bracket_order(bracket_order).await?;
-handle.place_advanced_bracket_order(advanced_order).await?;
+handle.place_oco_order(oco_order).await?;
 
 // Cancel by the `basket_id` carried on the order notification
-let cancel = RithmicCancelOrder { id: basket_id, ..Default::default() };
-handle.cancel_order(cancel).await?;
+handle.cancel_order(RithmicCancelOrder::new().id(basket_id).build()?).await?;
 
 // Flatten by instrument, not by order
-handle.exit_position("ESM6", "CME").await?;
+handle.exit_position(RithmicExitPosition::new().symbol("ESM6").exchange("CME").build()?).await?;
 ```
 
 Order state arrives on the subscription stream as `RithmicOrderNotification`
@@ -180,7 +179,7 @@ handle.login().await?;
 
 // Monitor P&L
 handle.subscribe_pnl_updates().await?;
-let snapshot = handle.pnl_position_snapshots().await?;
+let snapshot = handle.get_pnl_position_snapshot().await?;
 ```
 
 ## Error Handling
