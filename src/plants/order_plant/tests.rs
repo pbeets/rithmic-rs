@@ -4,7 +4,7 @@ use super::*;
 use crate::{
     RithmicRequestError,
     api::{
-        rithmic_command_types::{RithmicBracketOrder, RithmicOcoOrderLeg},
+        commands::{RithmicBracketOrder, RithmicOcoOrderLeg},
         sender_api::LoginUserType,
     },
     plants::test_support::{
@@ -12,7 +12,7 @@ use crate::{
         assert_sent_while_open, assert_wire_silent, awaited_caller_outcome, read_wire_request,
         test_account,
     },
-    types::{OrderPlacement, OrderSide, OrderType, TimeInForce},
+    types::{OrderOrigin, OrderSide, OrderType, TimeInForce},
 };
 
 fn test_handle() -> (RithmicOrderPlantHandle, mpsc::Receiver<OrderPlantCommand>) {
@@ -40,7 +40,7 @@ fn adjustment(id: &str, ticks: i32, level: Option<i32>) -> RithmicBracketLevelAd
 
 fn leg(tag: &str) -> RithmicOcoOrderLeg {
     RithmicOcoOrderLeg {
-        manual_or_auto: OrderPlacement::Auto,
+        manual_or_auto: OrderOrigin::Auto,
         symbol: "ESM6".to_string(),
         exchange: "CME".to_string(),
         quantity: 1,
@@ -1136,7 +1136,7 @@ async fn cancel_all_orders_encodes_auto_placement_by_default() {
     };
     assert_eq!(
         queued.manual_or_auto,
-        OrderPlacement::Auto,
+        OrderOrigin::Auto,
         "cancel_all_orders() must attribute to Auto like every other order call"
     );
     let queued = queued.clone();
@@ -1247,7 +1247,7 @@ async fn exit_position_encodes_auto_placement_by_default() {
     };
     assert_eq!(
         queued.manual_or_auto,
-        OrderPlacement::Auto,
+        OrderOrigin::Auto,
         "exit_position() must attribute to Auto like every other order call"
     );
     let queued = queued.clone();

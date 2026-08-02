@@ -5,8 +5,8 @@ use tracing::{debug, error, info, warn};
 
 use crate::{
     ConnectStrategy,
-    api::{receiver_api::RithmicResponse, rithmic_command_types::LoginConfig},
-    config::{RithmicAccount, RithmicConfig},
+    api::receiver_api::RithmicResponse,
+    config::{LoginConfig, RithmicAccount, RithmicConfig},
     error::RithmicError,
     plants::{
         core::{PlantCore, SelectResult},

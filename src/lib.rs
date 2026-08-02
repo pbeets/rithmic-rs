@@ -328,6 +328,6 @@ pub use util::{
 
 // Re-export high-level trading types
 pub use types::{
-    BracketType, OrderCondition, OrderPlacement, OrderPriceField, OrderSide, OrderType,
+    BracketType, OrderCondition, OrderOrigin, OrderPriceField, OrderSide, OrderType,
     ParseOrderSideError, ParseOrderTypeError, ParseTimeInForceError, TimeInForce,
 };

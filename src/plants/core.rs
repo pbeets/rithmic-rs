@@ -22,10 +22,9 @@ use crate::{
     ConnectStrategy,
     api::{
         receiver_api::{RithmicReceiverApi, RithmicResponse},
-        rithmic_command_types::LoginConfig,
         sender_api::RithmicSenderApi,
     },
-    config::RithmicConfig,
+    config::{LoginConfig, RithmicConfig},
     error::RithmicError,
     ping_manager::PingManager,
     request_handler::{RithmicRequest, RithmicRequestHandler},

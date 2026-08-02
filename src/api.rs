@@ -16,27 +16,26 @@
 //!
 //! - [`RithmicResponse`]: Wrapper for all messages from Rithmic plants
 
-pub(crate) mod command_builders;
+pub(crate) mod commands;
 pub(crate) mod receiver_api;
 pub(crate) mod response;
-pub(crate) mod rithmic_command_types;
 pub(crate) mod rp_code;
 pub(crate) mod sender_api;
 
 // Re-export commonly used types
-pub use crate::config::RithmicAccount;
+pub use crate::config::{LoginConfig, RithmicAccount};
 pub use receiver_api::RithmicResponse;
 
-pub use rithmic_command_types::{
-    LoginConfig, RithmicBracketLevelAdjustment, RithmicBracketOrder, RithmicCancelAllOrders,
-    RithmicCancelOrder, RithmicExitPosition, RithmicIfTouchedTrigger, RithmicLinkOrders,
-    RithmicModifyOrder, RithmicModifyOrderReferenceData, RithmicOcoOrder, RithmicOcoOrderLeg,
-    RithmicOrder, TrailingStop,
+pub use commands::{
+    RithmicBracketLevelAdjustment, RithmicBracketOrder, RithmicCancelAllOrders, RithmicCancelOrder,
+    RithmicExitPosition, RithmicIfTouchedTrigger, RithmicLinkOrders, RithmicModifyOrder,
+    RithmicModifyOrderReferenceData, RithmicOcoOrder, RithmicOcoOrderLeg, RithmicOrder,
+    TrailingStop,
 };
 
-// Re-export the crate-owned order enums so `api::OrderPlacement` also resolves
+// Re-export the crate-owned order enums so `api::OrderOrigin` also resolves
 pub use crate::types::{
-    BracketType, OrderCondition, OrderPlacement, OrderPriceField, OrderSide, OrderType, TimeInForce,
+    BracketType, OrderCondition, OrderOrigin, OrderPriceField, OrderSide, OrderType, TimeInForce,
 };
 
 // Re-export easy-to-borrow list request type

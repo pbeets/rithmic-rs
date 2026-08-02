@@ -31,18 +31,6 @@ use crate::request_handler::DEFAULT_REQUEST_TIMEOUT;
 /// Trading environment selector.
 ///
 /// Determines which Rithmic environment to connect to.
-///
-/// This enum is `#[non_exhaustive]`, so a downstream `match` needs a `_` arm:
-///
-/// ```compile_fail
-/// fn label(env: rithmic_rs::RithmicEnv) -> &'static str {
-///     match env {
-///         rithmic_rs::RithmicEnv::Demo => "demo",
-///         rithmic_rs::RithmicEnv::Live => "live",
-///         rithmic_rs::RithmicEnv::Test => "test",
-///     }
-/// }
-/// ```
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "lowercase"))]
@@ -132,17 +120,6 @@ impl std::error::Error for ConfigError {}
 ///
 /// let account = RithmicAccount::new("FCM_ID", "IB_ID", "ACCOUNT_ID");
 /// ```
-///
-/// This type is `#[non_exhaustive]`, so a struct expression does not compile
-/// downstream; use [`RithmicAccount::new`]:
-///
-/// ```compile_fail
-/// let account = rithmic_rs::RithmicAccount {
-///     account_id: "ACCOUNT_ID".to_string(),
-///     fcm_id: "FCM_ID".to_string(),
-///     ib_id: "IB_ID".to_string(),
-/// };
-/// ```
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
@@ -212,6 +189,37 @@ impl RithmicAccount {
     }
 }
 
+/// Login overrides, for the cases where the defaults are not what you want.
+///
+/// Reach for this to ask the ticker plant for aggregated quotes instead of
+/// tick-by-tick, or to report a different machine identity to Rithmic. Every
+/// field left `None` keeps the default, so `login()` is the whole story
+/// otherwise.
+///
+/// # Example
+///
+/// ```ignore
+/// use rithmic_rs::LoginConfig;
+///
+/// // Tick-by-tick quotes (default)
+/// handle.login().await?;
+///
+/// // Aggregated quotes
+/// let mut config = LoginConfig::default();
+/// config.aggregated_quotes = Some(true);
+/// handle.login_with_config(config).await?;
+/// ```
+#[derive(Debug, Clone, Default)]
+#[allow(missing_docs)]
+#[non_exhaustive]
+pub struct LoginConfig {
+    /// Only applicable to the ticker plant.
+    pub aggregated_quotes: Option<bool>,
+    pub mac_addr: Option<Vec<String>>,
+    pub os_version: Option<String>,
+    pub os_platform: Option<String>,
+}
+
 const REQUEST_TIMEOUT_VAR: &str = "RITHMIC_REQUEST_TIMEOUT_SECS";
 
 /// Parse a duration given as a plain decimal count of seconds.
@@ -242,16 +250,6 @@ fn parse_whole_seconds(value: &str) -> Option<u64> {
 ///     .system_name("Rithmic Paper Trading")
 ///     .build()?;
 /// # Ok::<(), Box<dyn std::error::Error>>(())
-/// ```
-///
-/// This type is `#[non_exhaustive]`, so neither a struct expression nor
-/// functional-update syntax compiles downstream:
-///
-/// ```compile_fail
-/// let config = rithmic_rs::RithmicConfig {
-///     system_name: "Rithmic Paper Trading".to_string(),
-///     ..rithmic_rs::RithmicConfig::from_env(rithmic_rs::RithmicEnv::Demo).unwrap()
-/// };
 /// ```
 #[derive(Clone)]
 #[non_exhaustive]

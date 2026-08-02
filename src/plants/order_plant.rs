@@ -6,15 +6,15 @@ use tracing::{debug, error, info, warn};
 use crate::{
     ConnectStrategy,
     api::{
-        receiver_api::RithmicResponse,
-        rithmic_command_types::{
-            LoginConfig, RithmicBracketLevelAdjustment, RithmicBracketOrder,
-            RithmicCancelAllOrders, RithmicCancelOrder, RithmicExitPosition, RithmicLinkOrders,
-            RithmicModifyOrder, RithmicModifyOrderReferenceData, RithmicOcoOrder, RithmicOrder,
+        commands::{
+            RithmicBracketLevelAdjustment, RithmicBracketOrder, RithmicCancelAllOrders,
+            RithmicCancelOrder, RithmicExitPosition, RithmicLinkOrders, RithmicModifyOrder,
+            RithmicModifyOrderReferenceData, RithmicOcoOrder, RithmicOrder,
         },
+        receiver_api::RithmicResponse,
         sender_api::LoginScope,
     },
-    config::{RithmicAccount, RithmicConfig},
+    config::{LoginConfig, RithmicAccount, RithmicConfig},
     error::RithmicError,
     plants::{
         core::{PlantCore, SelectResult},

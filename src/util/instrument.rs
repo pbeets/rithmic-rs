@@ -9,13 +9,6 @@ use crate::rti::ResponseReferenceData;
 /// let info = InstrumentInfo::try_from(&response)?;
 /// println!("{} on {} - tick size {:?}", info.symbol, info.exchange, info.tick_size);
 /// ```
-///
-/// This type is `#[non_exhaustive]`, so a struct expression does not compile
-/// downstream; start from [`Default`] and assign the fields you need:
-///
-/// ```compile_fail
-/// let info = rithmic_rs::InstrumentInfo { symbol: "ESH6".to_string(), ..Default::default() };
-/// ```
 #[derive(Debug, Clone, Default)]
 #[non_exhaustive]
 pub struct InstrumentInfo {

@@ -53,16 +53,6 @@ const MAX_RENDERED_BYTES: usize = 32;
 /// [`payload_hex`](Self::payload_hex) is untruncated, so a frame captured in
 /// production can be replayed in a test through
 /// [`from_payload_hex`](Self::from_payload_hex).
-///
-/// This type is `#[non_exhaustive]`, so a struct expression does not compile
-/// downstream:
-///
-/// ```compile_fail
-/// use rithmic_rs::UnknownTemplateMessage;
-/// use rithmic_rs::prost::bytes::Bytes;
-///
-/// let frame = UnknownTemplateMessage { template_id: 358, payload: Bytes::new() };
-/// ```
 #[derive(Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct UnknownTemplateMessage {

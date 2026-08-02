@@ -3,8 +3,8 @@ use tracing::{debug, error, info, warn};
 
 use crate::{
     ConnectStrategy,
-    api::{receiver_api::RithmicResponse, rithmic_command_types::LoginConfig},
-    config::RithmicConfig,
+    api::receiver_api::RithmicResponse,
+    config::{LoginConfig, RithmicConfig},
     error::RithmicError,
     plants::core::{PlantCore, SelectResult},
     request_handler::RithmicRequest,

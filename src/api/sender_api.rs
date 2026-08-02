@@ -1,12 +1,12 @@
-use super::rithmic_command_types::{
-    LoginConfig, RithmicBracketLevelAdjustment, RithmicBracketOrder, RithmicCancelAllOrders,
-    RithmicCancelOrder, RithmicExitPosition, RithmicLinkOrders, RithmicModifyOrder,
-    RithmicModifyOrderReferenceData, RithmicOcoOrderLeg, RithmicOrder,
+use super::commands::{
+    RithmicBracketLevelAdjustment, RithmicBracketOrder, RithmicCancelAllOrders, RithmicCancelOrder,
+    RithmicExitPosition, RithmicLinkOrders, RithmicModifyOrder, RithmicModifyOrderReferenceData,
+    RithmicOcoOrderLeg, RithmicOrder,
 };
 use prost::Message;
 
 use crate::{
-    config::{RithmicAccount, RithmicConfig},
+    config::{LoginConfig, RithmicAccount, RithmicConfig},
     error::RithmicError,
     rti::{
         RequestAcceptAgreement, RequestAccountList, RequestAccountRmsInfo,
@@ -1994,10 +1994,10 @@ impl RithmicSenderApi {
 mod tests {
     use super::*;
     use crate::{
-        api::rithmic_command_types::{RithmicIfTouchedTrigger, TrailingStop},
+        api::commands::{RithmicIfTouchedTrigger, TrailingStop},
         config::RithmicEnv,
         types::{
-            BracketType, OrderCondition, OrderPlacement, OrderPriceField, OrderSide, OrderType,
+            BracketType, OrderCondition, OrderOrigin, OrderPriceField, OrderSide, OrderType,
             TimeInForce,
         },
     };
@@ -2241,7 +2241,7 @@ mod tests {
             user_tag: "oco-1".to_string(),
             trailing_stop: None,
             trade_route: None,
-            manual_or_auto: OrderPlacement::Auto,
+            manual_or_auto: OrderOrigin::Auto,
         };
         let leg2 = RithmicOcoOrderLeg {
             symbol: "ESM6".to_string(),
@@ -2255,7 +2255,7 @@ mod tests {
             user_tag: "oco-2".to_string(),
             trailing_stop: None,
             trade_route: None,
-            manual_or_auto: OrderPlacement::Auto,
+            manual_or_auto: OrderOrigin::Auto,
         };
 
         let (buf, _) = api
@@ -2396,7 +2396,7 @@ mod tests {
             user_tag: "leg-0".to_string(),
             trailing_stop: None,
             trade_route: None,
-            manual_or_auto: OrderPlacement::Auto,
+            manual_or_auto: OrderOrigin::Auto,
         };
         let leg1 = RithmicOcoOrderLeg {
             symbol: "NQM6".to_string(),
@@ -2410,7 +2410,7 @@ mod tests {
             user_tag: "leg-1".to_string(),
             trailing_stop: Some(TrailingStop::new(15, 7)),
             trade_route: None,
-            manual_or_auto: OrderPlacement::Auto,
+            manual_or_auto: OrderOrigin::Auto,
         };
         let leg2 = RithmicOcoOrderLeg {
             symbol: "CLM6".to_string(),
@@ -2424,7 +2424,7 @@ mod tests {
             user_tag: "leg-2".to_string(),
             trailing_stop: Some(TrailingStop::new(25, 9)),
             trade_route: None,
-            manual_or_auto: OrderPlacement::Auto,
+            manual_or_auto: OrderOrigin::Auto,
         };
 
         let (buf, _) = api
@@ -2810,7 +2810,7 @@ mod tests {
             user_tag: tag.to_string(),
             trailing_stop: None,
             trade_route: None,
-            manual_or_auto: OrderPlacement::Auto,
+            manual_or_auto: OrderOrigin::Auto,
         }
     }
 
@@ -2985,7 +2985,7 @@ mod tests {
             Some(request_new_order::OrderPlacement::Auto as i32)
         );
 
-        order.manual_or_auto = OrderPlacement::Manual;
+        order.manual_or_auto = OrderOrigin::Manual;
         let (buf, _) = api.request_order(&order, &default_account(), "globex");
         let request: RequestNewOrder = decode_request(&buf);
         assert_eq!(
@@ -3011,7 +3011,7 @@ mod tests {
         );
 
         let mut order = advanced_bracket();
-        order.manual_or_auto = OrderPlacement::Manual;
+        order.manual_or_auto = OrderOrigin::Manual;
         let (buf, _) = api.request_bracket_order(order, &default_account(), None, "globex");
         let request: RequestBracketOrder = decode_request(&buf);
         assert_eq!(
@@ -3023,7 +3023,7 @@ mod tests {
     #[test]
     fn oco_request_carries_each_legs_order_placement() {
         let mut leg_manual = oco_leg_priced("a", Some(5000.0), None);
-        leg_manual.manual_or_auto = OrderPlacement::Manual;
+        leg_manual.manual_or_auto = OrderOrigin::Manual;
 
         let request = oco_request(vec![leg_manual, oco_leg_priced("b", Some(4990.0), None)]);
 
@@ -3041,7 +3041,7 @@ mod tests {
         let mut api = RithmicSenderApi::new(&test_config());
 
         let (buf, _) = api.request_cancel_all_orders(
-            &RithmicCancelAllOrders::new().manual_or_auto(OrderPlacement::Auto),
+            &RithmicCancelAllOrders::new().manual_or_auto(OrderOrigin::Auto),
             &default_account(),
             None,
         );
@@ -3056,7 +3056,7 @@ mod tests {
         );
 
         let (buf, _) = api.request_cancel_all_orders(
-            &RithmicCancelAllOrders::new().manual_or_auto(OrderPlacement::Manual),
+            &RithmicCancelAllOrders::new().manual_or_auto(OrderOrigin::Manual),
             &default_account(),
             None,
         );
@@ -3074,7 +3074,7 @@ mod tests {
         let (buf, _) = api.request_cancel_order(
             &RithmicCancelOrder::new()
                 .id("basket-1")
-                .manual_or_auto(OrderPlacement::Manual)
+                .manual_or_auto(OrderOrigin::Manual)
                 .build()
                 .expect("valid cancellation"),
             &default_account(),
@@ -3093,7 +3093,7 @@ mod tests {
                 .quantity(1)
                 .price(5000.0)
                 .price_type(OrderType::Limit)
-                .manual_or_auto(OrderPlacement::Manual)
+                .manual_or_auto(OrderOrigin::Manual)
                 .build()
                 .expect("valid modification"),
             &default_account(),
@@ -3126,7 +3126,7 @@ mod tests {
         assert_eq!(request.user_type, Some(3));
 
         let (buf, _) = api.request_cancel_all_orders(
-            &RithmicCancelAllOrders::new().manual_or_auto(OrderPlacement::Auto),
+            &RithmicCancelAllOrders::new().manual_or_auto(OrderOrigin::Auto),
             &default_account(),
             None,
         );
@@ -3142,7 +3142,7 @@ mod tests {
             &RithmicExitPosition::new()
                 .symbol("ESM6")
                 .exchange("CME")
-                .manual_or_auto(OrderPlacement::Manual)
+                .manual_or_auto(OrderOrigin::Manual)
                 .build()
                 .expect("valid exit"),
             &default_account(),

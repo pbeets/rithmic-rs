@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use tracing::{debug, info, warn};
 
 use crate::{
-    api::{receiver_api::RithmicResponse, rithmic_command_types::RithmicOcoOrderLeg},
+    api::{commands::RithmicOcoOrderLeg, receiver_api::RithmicResponse},
     error::RithmicError,
     rti::{TradeRoute, messages::RithmicMessage},
 };

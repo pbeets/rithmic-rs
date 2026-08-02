@@ -320,14 +320,14 @@ impl From<TimeInForce> for request_oco_order::Duration {
     }
 }
 
-/// How a command is attributed to its originator.
+/// Whether an order was placed by a human or automatically.
 ///
 /// The generated `OrderPlacement` enums have no `Default` at all, so a command
 /// struct holding one cannot derive `Default`. This one defaults to `Auto`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[non_exhaustive]
-pub enum OrderPlacement {
+pub enum OrderOrigin {
     /// A person placed this.
     Manual,
     /// An algorithm placed this.
@@ -335,7 +335,7 @@ pub enum OrderPlacement {
     Auto,
 }
 
-impl OrderPlacement {
+impl OrderOrigin {
     /// The protobuf spelling, as `OrderPlacement::as_str_name` writes it.
     pub fn as_str_name(&self) -> &'static str {
         match self {
@@ -345,71 +345,71 @@ impl OrderPlacement {
     }
 }
 
-impl fmt::Display for OrderPlacement {
+impl fmt::Display for OrderOrigin {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str_name())
     }
 }
 
-impl From<OrderPlacement> for request_new_order::OrderPlacement {
-    fn from(placement: OrderPlacement) -> Self {
+impl From<OrderOrigin> for request_new_order::OrderPlacement {
+    fn from(placement: OrderOrigin) -> Self {
         match placement {
-            OrderPlacement::Manual => Self::Manual,
-            OrderPlacement::Auto => Self::Auto,
+            OrderOrigin::Manual => Self::Manual,
+            OrderOrigin::Auto => Self::Auto,
         }
     }
 }
 
-impl From<OrderPlacement> for request_bracket_order::OrderPlacement {
-    fn from(placement: OrderPlacement) -> Self {
+impl From<OrderOrigin> for request_bracket_order::OrderPlacement {
+    fn from(placement: OrderOrigin) -> Self {
         match placement {
-            OrderPlacement::Manual => Self::Manual,
-            OrderPlacement::Auto => Self::Auto,
+            OrderOrigin::Manual => Self::Manual,
+            OrderOrigin::Auto => Self::Auto,
         }
     }
 }
 
-impl From<OrderPlacement> for request_oco_order::OrderPlacement {
-    fn from(placement: OrderPlacement) -> Self {
+impl From<OrderOrigin> for request_oco_order::OrderPlacement {
+    fn from(placement: OrderOrigin) -> Self {
         match placement {
-            OrderPlacement::Manual => Self::Manual,
-            OrderPlacement::Auto => Self::Auto,
+            OrderOrigin::Manual => Self::Manual,
+            OrderOrigin::Auto => Self::Auto,
         }
     }
 }
 
-impl From<OrderPlacement> for request_modify_order::OrderPlacement {
-    fn from(placement: OrderPlacement) -> Self {
+impl From<OrderOrigin> for request_modify_order::OrderPlacement {
+    fn from(placement: OrderOrigin) -> Self {
         match placement {
-            OrderPlacement::Manual => Self::Manual,
-            OrderPlacement::Auto => Self::Auto,
+            OrderOrigin::Manual => Self::Manual,
+            OrderOrigin::Auto => Self::Auto,
         }
     }
 }
 
-impl From<OrderPlacement> for request_cancel_order::OrderPlacement {
-    fn from(placement: OrderPlacement) -> Self {
+impl From<OrderOrigin> for request_cancel_order::OrderPlacement {
+    fn from(placement: OrderOrigin) -> Self {
         match placement {
-            OrderPlacement::Manual => Self::Manual,
-            OrderPlacement::Auto => Self::Auto,
+            OrderOrigin::Manual => Self::Manual,
+            OrderOrigin::Auto => Self::Auto,
         }
     }
 }
 
-impl From<OrderPlacement> for request_cancel_all_orders::OrderPlacement {
-    fn from(placement: OrderPlacement) -> Self {
+impl From<OrderOrigin> for request_cancel_all_orders::OrderPlacement {
+    fn from(placement: OrderOrigin) -> Self {
         match placement {
-            OrderPlacement::Manual => Self::Manual,
-            OrderPlacement::Auto => Self::Auto,
+            OrderOrigin::Manual => Self::Manual,
+            OrderOrigin::Auto => Self::Auto,
         }
     }
 }
 
-impl From<OrderPlacement> for request_exit_position::OrderPlacement {
-    fn from(placement: OrderPlacement) -> Self {
+impl From<OrderOrigin> for request_exit_position::OrderPlacement {
+    fn from(placement: OrderOrigin) -> Self {
         match placement {
-            OrderPlacement::Manual => Self::Manual,
-            OrderPlacement::Auto => Self::Auto,
+            OrderOrigin::Manual => Self::Manual,
+            OrderOrigin::Auto => Self::Auto,
         }
     }
 }
@@ -622,12 +622,12 @@ mod tests {
     /// `Auto`.
     #[test]
     fn placement_defaults_to_auto() {
-        assert_eq!(OrderPlacement::default(), OrderPlacement::Auto);
+        assert_eq!(OrderOrigin::default(), OrderOrigin::Auto);
     }
 
     #[test]
     fn placement_converts_into_every_generated_enum() {
-        for placement in [OrderPlacement::Manual, OrderPlacement::Auto] {
+        for placement in [OrderOrigin::Manual, OrderOrigin::Auto] {
             let expected = placement.as_str_name();
 
             assert_eq!(
