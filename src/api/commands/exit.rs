@@ -1,7 +1,6 @@
 //! Flattening a position, and linking working orders into one group.
 
-use crate::error::RithmicError;
-use crate::types::OrderOrigin;
+use crate::{error::RithmicError, types::OrderOrigin};
 
 /// Flatten the position in one instrument.
 ///

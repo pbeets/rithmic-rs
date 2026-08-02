@@ -1,7 +1,9 @@
 //! Modifying a working order: its terms, and the tag it reports under.
 
-use crate::error::RithmicError;
-use crate::types::{OrderOrigin, OrderType};
+use crate::{
+    error::RithmicError,
+    types::{OrderOrigin, OrderType},
+};
 
 /// Modify an existing order's price, quantity, or type.
 ///

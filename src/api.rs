@@ -1,20 +1,8 @@
 //! Low-level API types for Rithmic communication.
 //!
-//! This module provides command types for order operations and the response wrapper
-//! used by all plant modules. Most users will interact with these types through
-//! the high-level plant APIs rather than directly.
-//!
-//! # Order Types
-//!
-//! - [`RithmicOrder`]: A standalone order
-//! - [`RithmicBracketOrder`]: Entry order with profit target and stop loss
-//! - [`RithmicOcoOrder`]: A group of One-Cancels-Other legs
-//! - [`RithmicModifyOrder`]: Modify an existing order's price/quantity
-//! - [`RithmicCancelOrder`]: Cancel an order by ID
-//!
-//! # Response Type
-//!
-//! - [`RithmicResponse`]: Wrapper for all messages from Rithmic plants
+//! The order command types, and [`RithmicResponse`], the wrapper every message
+//! from a plant arrives in. Most callers reach these through the plant handles
+//! rather than directly.
 
 pub(crate) mod commands;
 pub(crate) mod receiver_api;

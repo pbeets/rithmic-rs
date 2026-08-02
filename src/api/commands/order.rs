@@ -1,8 +1,10 @@
 //! A standalone order.
 
 use super::trailing::{RithmicIfTouchedTrigger, TrailingStop};
-use crate::error::RithmicError;
-use crate::types::{OrderOrigin, OrderSide, OrderType, TimeInForce};
+use crate::{
+    error::RithmicError,
+    types::{OrderOrigin, OrderSide, OrderType, TimeInForce},
+};
 
 /// A standalone order (not a bracket order).
 ///

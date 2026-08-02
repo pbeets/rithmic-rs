@@ -1,7 +1,7 @@
 //! The two value types an order embeds: trailing stops and if-touched triggers.
 //!
-//! Neither has a [`Default`], so neither takes chained setters — their `new()`
-//! is positional and every field is required.
+//! Neither takes chained setters: their `new()` is positional and every field
+//! is required.
 
 use crate::types::{OrderCondition, OrderPriceField};
 

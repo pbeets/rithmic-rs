@@ -1,7 +1,6 @@
 //! Cancelling one working order, or every one on the account.
 
-use crate::error::RithmicError;
-use crate::types::OrderOrigin;
+use crate::{error::RithmicError, types::OrderOrigin};
 
 /// Cancel an existing order.
 ///

@@ -202,8 +202,8 @@ impl From<OrderType> for request_bracket_order::PriceType {
     }
 }
 
-/// `RequestOcoOrder` has no if-touched price types, so this conversion is the one
-/// place a crate-owned enum is wider than the message it targets.
+/// An OCO leg cannot be if-touched: template 328 has no such price type, so
+/// [`OrderType::MarketIfTouched`] and [`OrderType::LimitIfTouched`] are rejected.
 impl TryFrom<OrderType> for request_oco_order::PriceType {
     type Error = RithmicError;
 
@@ -320,10 +320,7 @@ impl From<TimeInForce> for request_oco_order::Duration {
     }
 }
 
-/// Whether an order was placed by a human or automatically.
-///
-/// The generated `OrderPlacement` enums have no `Default` at all, so a command
-/// struct holding one cannot derive `Default`. This one defaults to `Auto`.
+/// Whether an order was placed by a human or automatically. Defaults to `Auto`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[non_exhaustive]
@@ -416,8 +413,9 @@ impl From<OrderOrigin> for request_exit_position::OrderPlacement {
 
 /// The shape of a bracket order's exit legs.
 ///
-/// The `Static` variants hold their tick distances fixed relative to the entry;
-/// the others let Rithmic manage them.
+/// Rithmic does not document the difference between the plain and `Static`
+/// variants. Our reading is that the `Static` variants hold their tick distances
+/// fixed relative to the entry, while the others let Rithmic manage them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[non_exhaustive]
@@ -617,9 +615,6 @@ impl From<OrderPriceField> for request_modify_order::PriceField {
 mod tests {
     use super::*;
 
-    /// The payoff of owning the enum: the generated `OrderPlacement` has no
-    /// `Default` at all, so every command struct had to write one by hand to say
-    /// `Auto`.
     #[test]
     fn placement_defaults_to_auto() {
         assert_eq!(OrderOrigin::default(), OrderOrigin::Auto);

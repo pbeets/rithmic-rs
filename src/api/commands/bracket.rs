@@ -1,8 +1,10 @@
 //! Bracket entry orders and the adjustment that moves one of their exit legs.
 
 use super::trailing::RithmicIfTouchedTrigger;
-use crate::error::RithmicError;
-use crate::types::{BracketType, OrderOrigin, OrderSide, OrderType, TimeInForce};
+use crate::{
+    error::RithmicError,
+    types::{BracketType, OrderOrigin, OrderSide, OrderType, TimeInForce},
+};
 
 /// Entry order with linked profit target and stop loss orders.
 ///
@@ -76,7 +78,8 @@ pub struct RithmicBracketOrder {
     /// Trading symbol (e.g., "ESH6").
     pub symbol: String,
     /// Rithmic bracket shape. `None` means "derive it from the legs supplied";
-    /// the builder resolves it, so a built order always carries `Some`.
+    /// [`Self::build`] resolves it from the target and stop legs, and leaves it
+    /// unset when there are none.
     pub bracket_type: Option<BracketType>,
     /// Exit target quantities, one value per target leg.
     pub target_quantity: Vec<i32>,

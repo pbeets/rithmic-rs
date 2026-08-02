@@ -4,6 +4,9 @@ use crate::rti::ResponseReferenceData;
 
 /// Parsed instrument information from Rithmic reference data.
 ///
+/// Normally obtained by parsing a response. To build one yourself, start from
+/// [`Default`] and assign the fields you need.
+///
 /// # Example
 /// ```ignore
 /// let info = InstrumentInfo::try_from(&response)?;

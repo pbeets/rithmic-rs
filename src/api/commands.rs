@@ -17,12 +17,6 @@
 //!     .build()?;
 //! # Ok::<(), rithmic_rs::RithmicError>(())
 //! ```
-//!
-//! There is no separate builder type: the command is its own builder, and the
-//! setters are sugar over the public fields. The command types are
-//! `#[non_exhaustive]`, so a downstream crate cannot write `T { .. }` or
-//! `..Default::default()`. `T::new()` is the replacement for both — it is the
-//! same starting point `Default` would have given you.
 
 pub(crate) mod bracket;
 pub(crate) mod cancel;
@@ -45,9 +39,7 @@ mod tests {
     use super::*;
     use crate::types::OrderOrigin;
 
-    /// Every order command type defaults its origination to `Auto`, which is
-    /// only true because [`OrderOrigin`] is crate-owned — the generated
-    /// `OrderPlacement` enums have no `Default` at all.
+    /// Every order command type defaults its origination to `Auto`.
     #[test]
     fn order_command_types_default_to_auto_placement() {
         assert_eq!(RithmicOrder::default().manual_or_auto, OrderOrigin::Auto);

@@ -34,12 +34,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let combined = format!("pub mod messages;\n\n{message_type_code}{pool_body}");
 
-    // Rithmic's vendored `.proto` files carry literal tabs in some trailing
-    // comments, which prost copies verbatim into doc comments and clippy then
-    // rejects under `-D warnings`. Replace them where they land rather than
-    // editing the vendored protos or muting the lint for the whole module, so
-    // the next refresh from Rithmic cannot reintroduce the failure. Only doc
-    // comments are touched; prost indents the code itself with spaces.
+    // Some Rithmic comments contain tabs, which prost copies into doc comments
+    // and clippy rejects. Strip them here so a proto refresh cannot break the
+    // build. Code is untouched — prost indents with spaces.
     let mut detabbed = String::with_capacity(combined.len());
 
     for line in combined.lines() {

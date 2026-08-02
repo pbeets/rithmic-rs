@@ -115,7 +115,7 @@ impl std::error::Error for ConfigError {}
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
 /// use rithmic_rs::RithmicAccount;
 ///
 /// let account = RithmicAccount::new("FCM_ID", "IB_ID", "ACCOUNT_ID");
@@ -189,34 +189,39 @@ impl RithmicAccount {
     }
 }
 
-/// Login overrides, for the cases where the defaults are not what you want.
-///
-/// Reach for this to ask the ticker plant for aggregated quotes instead of
-/// tick-by-tick, or to report a different machine identity to Rithmic. Every
-/// field left `None` keeps the default, so `login()` is the whole story
-/// otherwise.
+/// Login overrides. Every field left `None` keeps the default, so `login()` is
+/// the whole story unless you need one of these.
 ///
 /// # Example
 ///
-/// ```ignore
-/// use rithmic_rs::LoginConfig;
+/// ```no_run
+/// use rithmic_rs::{ConnectStrategy, LoginConfig, RithmicConfig, RithmicEnv, RithmicTickerPlant};
+///
+/// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
+/// let config = RithmicConfig::from_env(RithmicEnv::Demo)?;
+/// let plant = RithmicTickerPlant::connect(&config, ConnectStrategy::Retry).await?;
+/// let handle = plant.get_handle();
 ///
 /// // Tick-by-tick quotes (default)
 /// handle.login().await?;
 ///
 /// // Aggregated quotes
-/// let mut config = LoginConfig::default();
-/// config.aggregated_quotes = Some(true);
-/// handle.login_with_config(config).await?;
+/// let mut login = LoginConfig::default();
+/// login.aggregated_quotes = Some(true);
+/// handle.login_with_config(login).await?;
+/// # Ok(())
+/// # }
 /// ```
 #[derive(Debug, Clone, Default)]
-#[allow(missing_docs)]
 #[non_exhaustive]
 pub struct LoginConfig {
-    /// Only applicable to the ticker plant.
+    /// Aggregated rather than tick-by-tick quotes. Ticker plant only.
     pub aggregated_quotes: Option<bool>,
+    /// MAC addresses reported to Rithmic. None are sent when unset.
     pub mac_addr: Option<Vec<String>>,
+    /// OS version reported to Rithmic. Sent empty when unset.
     pub os_version: Option<String>,
+    /// OS platform reported to Rithmic. Sent empty when unset.
     pub os_platform: Option<String>,
 }
 
@@ -445,20 +450,7 @@ pub struct RithmicConfigBuilder {
 impl RithmicConfigBuilder {
     /// Create a builder pre-filled from the same environment variables
     /// [`RithmicConfig::from_env`] reads, so a single field can be overridden.
-    ///
-    /// # Errors
-    ///
-    /// Whatever [`RithmicConfig::from_env`] rejects.
-    ///
-    /// # Example
-    /// ```no_run
-    /// use rithmic_rs::{RithmicConfigBuilder, RithmicEnv};
-    ///
-    /// let config = RithmicConfigBuilder::from_env(RithmicEnv::Demo)?
-    ///     .system_name("Rithmic Paper Trading")
-    ///     .build()?;
-    /// # Ok::<(), Box<dyn std::error::Error>>(())
-    /// ```
+    /// Rejects whatever [`RithmicConfig::from_env`] rejects.
     pub fn from_env(env: RithmicEnv) -> Result<Self, ConfigError> {
         let config = RithmicConfig::from_env(env)?;
 

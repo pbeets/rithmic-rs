@@ -1479,11 +1479,11 @@ impl RithmicOrderPlantHandle {
 
     /// Place a bracket order (entry order with profit target and stop loss)
     ///
+    /// Fails with [`RithmicError::NoTradeRoute`] when the order's exchange has
+    /// no route.
+    ///
     /// # Arguments
     /// * `bracket_order` - The bracket order parameters
-    ///
-    /// # Errors
-    /// [`RithmicError::NoTradeRoute`] when the order's exchange has no route.
     ///
     /// # Returns
     /// The order placement responses or an error message
@@ -1647,9 +1647,6 @@ impl RithmicOrderPlantHandle {
     }
 
     /// Cancel all active orders on the account.
-    ///
-    /// # Arguments
-    /// * `command` - How the cancellation is attributed to its originator
     ///
     /// # Returns
     /// The cancel-all response or an error message
@@ -1937,13 +1934,12 @@ impl RithmicOrderPlantHandle {
     ///
     /// When one leg is filled, the others are automatically cancelled.
     ///
+    /// Fails with [`RithmicError::InvalidArgument`] if fewer than two legs are
+    /// supplied or if a leg names a price type template 328 cannot express, and
+    /// with [`RithmicError::NoTradeRoute`] when a leg's exchange has no route.
+    ///
     /// # Arguments
     /// * `order` - The order legs (at least two)
-    ///
-    /// # Errors
-    /// [`RithmicError::InvalidArgument`] if fewer than two legs are supplied, if a
-    /// leg names a price type template 328 cannot express, or
-    /// [`RithmicError::NoTradeRoute`] when a leg's exchange has no route.
     ///
     /// # Returns
     /// A vector of order placement responses or an error message

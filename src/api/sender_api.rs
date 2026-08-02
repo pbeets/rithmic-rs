@@ -1171,7 +1171,7 @@ impl RithmicSenderApi {
     /// This will cancel all active orders across all symbols and exchanges for the account.
     ///
     /// # Arguments
-    /// * `command` - How the cancellation is attributed to its originator
+    /// * `command` - The cancellation and how it is attributed to its originator
     /// * `account` - The account whose orders are cancelled
     /// * `scope` - Supplies the user type the login granted
     ///

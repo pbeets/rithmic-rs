@@ -1,8 +1,10 @@
 //! OCO (One-Cancels-Other) groups and the legs they hold.
 
 use super::trailing::TrailingStop;
-use crate::error::RithmicError;
-use crate::types::{OrderOrigin, OrderSide, OrderType, TimeInForce};
+use crate::{
+    error::RithmicError,
+    types::{OrderOrigin, OrderSide, OrderType, TimeInForce},
+};
 
 /// One leg of an OCO (One-Cancels-Other) order group.
 ///
