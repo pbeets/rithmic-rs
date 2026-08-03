@@ -63,8 +63,8 @@ pub(crate) enum OrderPlantCommand {
         response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
     },
     PlaceBracketOrder {
-        // Boxed: the bracket carries the widest field set of any command, and an
-        // unboxed variant makes every other one that size.
+        // Boxed: the widest command by some margin, and unboxed it would set the
+        // size of every other variant.
         bracket_order: Box<RithmicBracketOrder>,
         account: Arc<RithmicAccount>,
         response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
@@ -884,10 +884,11 @@ impl PlantActor for OrderPlant {
                 account,
                 response_sender,
             } => {
-                if let Err(err) = order.validate() {
-                    let _ = response_sender.send(Err(err));
-                    return;
-                }
+                // Not re-validated here: `build()` is where a command is
+                // checked, same as `PlaceOrder` and `PlaceBracketOrder`. A leg
+                // whose price type template 328 does not declare is still
+                // refused by the sender.
+                let timing = order.cancel_timing();
 
                 let legs = match self.trade_routes.resolve_legs(order.legs) {
                     Ok(legs) => legs,
@@ -900,7 +901,7 @@ impl PlantActor for OrderPlant {
                 let (req_buf, id) = match self
                     .core
                     .rithmic_sender_api
-                    .request_oco_order(legs, &account)
+                    .request_oco_order(legs, timing, &account)
                 {
                     Ok(request) => request,
                     Err(err) => {
@@ -1479,9 +1480,6 @@ impl RithmicOrderPlantHandle {
 
     /// Place a bracket order (entry order with profit target and stop loss)
     ///
-    /// Fails with [`RithmicError::NoTradeRoute`] when the order's exchange has
-    /// no route.
-    ///
     /// # Arguments
     /// * `bracket_order` - The bracket order parameters
     ///
@@ -1762,9 +1760,6 @@ impl RithmicOrderPlantHandle {
     /// The route an order for `exchange` would go out on right now, without sending
     /// anything. Call it after [`login`](Self::login) to check your venues are routable.
     ///
-    /// Fails with [`RithmicError::NoTradeRoute`] where an order would, so an `Ok`
-    /// here means an order that names no route of its own takes this one.
-    ///
     /// # Arguments
     /// * `exchange` - The exchange to look up, as it appears on your orders
     ///
@@ -1934,10 +1929,6 @@ impl RithmicOrderPlantHandle {
     ///
     /// When one leg is filled, the others are automatically cancelled.
     ///
-    /// Fails with [`RithmicError::InvalidArgument`] if fewer than two legs are
-    /// supplied or if a leg names a price type template 328 cannot express, and
-    /// with [`RithmicError::NoTradeRoute`] when a leg's exchange has no route.
-    ///
     /// # Arguments
     /// * `order` - The order legs (at least two)
     ///
@@ -1947,9 +1938,9 @@ impl RithmicOrderPlantHandle {
         &self,
         order: RithmicOcoOrder,
     ) -> Result<Vec<RithmicResponse>, RithmicError> {
-        // The builder takes two legs positionally, so only a defaulted or
-        // drained group reaches here short. Rithmic has nothing to cancel
-        // against a single leg, so it is rejected rather than sent.
+        // `legs()` is variadic and `validate()` deliberately ignores the count,
+        // so a short group is only caught here. A lone leg has nothing to be
+        // cancelled against, so it is rejected rather than sent.
         if order.legs.len() < 2 {
             return Err(RithmicError::InvalidArgument(
                 "OCO order requires at least 2 legs".to_string(),

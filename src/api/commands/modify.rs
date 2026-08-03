@@ -1,8 +1,9 @@
 //! Modifying a working order: its terms, and the tag it reports under.
 
+use super::triggers::RithmicIfTouchedTrigger;
 use crate::{
     error::RithmicError,
-    types::{OrderOrigin, OrderType},
+    types::{ManualOrAutoEntry, OrderType},
 };
 
 /// Modify an existing order's price, quantity, or type.
@@ -40,10 +41,23 @@ pub struct RithmicModifyOrder {
     pub price: f64,
     /// Order type
     pub price_type: OrderType,
-    /// Trigger price. Unset, a stop modify falls back to `price`.
+    /// Trigger price. Left unset, the four triggering price types — the stop and
+    /// if-touched pairs — send `price` in its place.
     pub trigger_price: Option<f64>,
     /// Whether the modification was made by a human or automatically.
-    pub manual_or_auto: OrderOrigin,
+    pub manual_or_auto: ManualOrAutoEntry,
+    /// Originating window name reported to Rithmic.
+    pub window_name: Option<String>,
+    /// Ticks to trail behind the market price.
+    ///
+    /// A bare distance rather than a [`TrailingStop`](crate::TrailingStop):
+    /// template version 5.28 added `trailing_stop` and `trail_by_ticks` to
+    /// `RequestModifyOrder`, but `trail_by_price_id` only to `RequestNewOrder`,
+    /// `RequestBracketOrder` and `RequestOCOOrder`. There is no price-id field
+    /// here to set.
+    pub trail_by_ticks: Option<i32>,
+    /// Conditional trigger on the resulting order.
+    pub if_touched: Option<RithmicIfTouchedTrigger>,
 }
 
 impl RithmicModifyOrder {
@@ -91,15 +105,34 @@ impl RithmicModifyOrder {
         self
     }
 
-    /// Separate trigger price. Unset, stop types fall back to `price`.
+    /// Trigger price distinct from the limit price. Left unset, the triggering
+    /// price types send `price` in its place.
     pub fn trigger_price(mut self, trigger_price: f64) -> Self {
         self.trigger_price = Some(trigger_price);
         self
     }
 
     /// Whether this was done by a human or automatically.
-    pub fn manual_or_auto(mut self, manual_or_auto: OrderOrigin) -> Self {
+    pub fn manual_or_auto(mut self, manual_or_auto: ManualOrAutoEntry) -> Self {
         self.manual_or_auto = manual_or_auto;
+        self
+    }
+
+    /// Window name to report this modification under.
+    pub fn window_name(mut self, window_name: impl Into<String>) -> Self {
+        self.window_name = Some(window_name.into());
+        self
+    }
+
+    /// Trail the resulting order this many ticks behind the market price.
+    pub fn trail_by_ticks(mut self, trail_by_ticks: i32) -> Self {
+        self.trail_by_ticks = Some(trail_by_ticks);
+        self
+    }
+
+    /// Attach a conditional trigger to the resulting order.
+    pub fn if_touched(mut self, if_touched: RithmicIfTouchedTrigger) -> Self {
+        self.if_touched = Some(if_touched);
         self
     }
 

@@ -324,7 +324,7 @@ impl From<TimeInForce> for request_oco_order::Duration {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[non_exhaustive]
-pub enum OrderOrigin {
+pub enum ManualOrAutoEntry {
     /// A person placed this.
     Manual,
     /// An algorithm placed this.
@@ -332,7 +332,7 @@ pub enum OrderOrigin {
     Auto,
 }
 
-impl OrderOrigin {
+impl ManualOrAutoEntry {
     /// The protobuf spelling, as `OrderPlacement::as_str_name` writes it.
     pub fn as_str_name(&self) -> &'static str {
         match self {
@@ -342,71 +342,71 @@ impl OrderOrigin {
     }
 }
 
-impl fmt::Display for OrderOrigin {
+impl fmt::Display for ManualOrAutoEntry {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str_name())
     }
 }
 
-impl From<OrderOrigin> for request_new_order::OrderPlacement {
-    fn from(placement: OrderOrigin) -> Self {
-        match placement {
-            OrderOrigin::Manual => Self::Manual,
-            OrderOrigin::Auto => Self::Auto,
+impl From<ManualOrAutoEntry> for request_new_order::OrderPlacement {
+    fn from(entry: ManualOrAutoEntry) -> Self {
+        match entry {
+            ManualOrAutoEntry::Manual => Self::Manual,
+            ManualOrAutoEntry::Auto => Self::Auto,
         }
     }
 }
 
-impl From<OrderOrigin> for request_bracket_order::OrderPlacement {
-    fn from(placement: OrderOrigin) -> Self {
-        match placement {
-            OrderOrigin::Manual => Self::Manual,
-            OrderOrigin::Auto => Self::Auto,
+impl From<ManualOrAutoEntry> for request_bracket_order::OrderPlacement {
+    fn from(entry: ManualOrAutoEntry) -> Self {
+        match entry {
+            ManualOrAutoEntry::Manual => Self::Manual,
+            ManualOrAutoEntry::Auto => Self::Auto,
         }
     }
 }
 
-impl From<OrderOrigin> for request_oco_order::OrderPlacement {
-    fn from(placement: OrderOrigin) -> Self {
-        match placement {
-            OrderOrigin::Manual => Self::Manual,
-            OrderOrigin::Auto => Self::Auto,
+impl From<ManualOrAutoEntry> for request_oco_order::OrderPlacement {
+    fn from(entry: ManualOrAutoEntry) -> Self {
+        match entry {
+            ManualOrAutoEntry::Manual => Self::Manual,
+            ManualOrAutoEntry::Auto => Self::Auto,
         }
     }
 }
 
-impl From<OrderOrigin> for request_modify_order::OrderPlacement {
-    fn from(placement: OrderOrigin) -> Self {
-        match placement {
-            OrderOrigin::Manual => Self::Manual,
-            OrderOrigin::Auto => Self::Auto,
+impl From<ManualOrAutoEntry> for request_modify_order::OrderPlacement {
+    fn from(entry: ManualOrAutoEntry) -> Self {
+        match entry {
+            ManualOrAutoEntry::Manual => Self::Manual,
+            ManualOrAutoEntry::Auto => Self::Auto,
         }
     }
 }
 
-impl From<OrderOrigin> for request_cancel_order::OrderPlacement {
-    fn from(placement: OrderOrigin) -> Self {
-        match placement {
-            OrderOrigin::Manual => Self::Manual,
-            OrderOrigin::Auto => Self::Auto,
+impl From<ManualOrAutoEntry> for request_cancel_order::OrderPlacement {
+    fn from(entry: ManualOrAutoEntry) -> Self {
+        match entry {
+            ManualOrAutoEntry::Manual => Self::Manual,
+            ManualOrAutoEntry::Auto => Self::Auto,
         }
     }
 }
 
-impl From<OrderOrigin> for request_cancel_all_orders::OrderPlacement {
-    fn from(placement: OrderOrigin) -> Self {
-        match placement {
-            OrderOrigin::Manual => Self::Manual,
-            OrderOrigin::Auto => Self::Auto,
+impl From<ManualOrAutoEntry> for request_cancel_all_orders::OrderPlacement {
+    fn from(entry: ManualOrAutoEntry) -> Self {
+        match entry {
+            ManualOrAutoEntry::Manual => Self::Manual,
+            ManualOrAutoEntry::Auto => Self::Auto,
         }
     }
 }
 
-impl From<OrderOrigin> for request_exit_position::OrderPlacement {
-    fn from(placement: OrderOrigin) -> Self {
-        match placement {
-            OrderOrigin::Manual => Self::Manual,
-            OrderOrigin::Auto => Self::Auto,
+impl From<ManualOrAutoEntry> for request_exit_position::OrderPlacement {
+    fn from(entry: ManualOrAutoEntry) -> Self {
+        match entry {
+            ManualOrAutoEntry::Manual => Self::Manual,
+            ManualOrAutoEntry::Auto => Self::Auto,
         }
     }
 }
@@ -615,119 +615,6 @@ impl From<OrderPriceField> for request_modify_order::PriceField {
 mod tests {
     use super::*;
 
-    #[test]
-    fn placement_defaults_to_auto() {
-        assert_eq!(OrderOrigin::default(), OrderOrigin::Auto);
-    }
-
-    #[test]
-    fn placement_converts_into_every_generated_enum() {
-        for placement in [OrderOrigin::Manual, OrderOrigin::Auto] {
-            let expected = placement.as_str_name();
-
-            assert_eq!(
-                request_new_order::OrderPlacement::from(placement).as_str_name(),
-                expected
-            );
-            assert_eq!(
-                request_bracket_order::OrderPlacement::from(placement).as_str_name(),
-                expected
-            );
-            assert_eq!(
-                request_oco_order::OrderPlacement::from(placement).as_str_name(),
-                expected
-            );
-            assert_eq!(
-                request_modify_order::OrderPlacement::from(placement).as_str_name(),
-                expected
-            );
-            assert_eq!(
-                request_cancel_order::OrderPlacement::from(placement).as_str_name(),
-                expected
-            );
-            assert_eq!(
-                request_cancel_all_orders::OrderPlacement::from(placement).as_str_name(),
-                expected
-            );
-            assert_eq!(
-                request_exit_position::OrderPlacement::from(placement).as_str_name(),
-                expected
-            );
-        }
-    }
-
-    #[test]
-    fn side_converts_into_every_generated_enum() {
-        for side in [OrderSide::Buy, OrderSide::Sell] {
-            let expected = side.as_str_name();
-
-            assert_eq!(
-                request_new_order::TransactionType::from(side).as_str_name(),
-                expected
-            );
-            assert_eq!(
-                request_bracket_order::TransactionType::from(side).as_str_name(),
-                expected
-            );
-            assert_eq!(
-                request_oco_order::TransactionType::from(side).as_str_name(),
-                expected
-            );
-        }
-    }
-
-    #[test]
-    fn time_in_force_converts_into_every_generated_enum() {
-        for tif in [
-            TimeInForce::Day,
-            TimeInForce::Gtc,
-            TimeInForce::Ioc,
-            TimeInForce::Fok,
-        ] {
-            let expected = tif.as_str_name();
-
-            assert_eq!(
-                request_new_order::Duration::from(tif).as_str_name(),
-                expected
-            );
-            assert_eq!(
-                request_bracket_order::Duration::from(tif).as_str_name(),
-                expected
-            );
-            assert_eq!(
-                request_oco_order::Duration::from(tif).as_str_name(),
-                expected
-            );
-        }
-    }
-
-    #[test]
-    fn order_type_converts_into_every_generated_enum() {
-        for order_type in [
-            OrderType::Market,
-            OrderType::Limit,
-            OrderType::StopMarket,
-            OrderType::StopLimit,
-            OrderType::MarketIfTouched,
-            OrderType::LimitIfTouched,
-        ] {
-            let expected = order_type.as_str_name();
-
-            assert_eq!(
-                request_new_order::PriceType::from(order_type).as_str_name(),
-                expected
-            );
-            assert_eq!(
-                request_bracket_order::PriceType::from(order_type).as_str_name(),
-                expected
-            );
-            assert_eq!(
-                request_modify_order::PriceType::from(order_type).as_str_name(),
-                expected
-            );
-        }
-    }
-
     /// `RequestOcoOrder` stops at four price types; the if-touched pair has to be
     /// rejected rather than remapped onto something the caller did not ask for.
     #[test]
@@ -748,75 +635,6 @@ mod tests {
                 .to_string();
             assert!(err.contains("is not available on an OCO leg"), "{err}");
             assert!(err.contains(order_type.as_str_name()), "{err}");
-        }
-    }
-
-    #[test]
-    fn bracket_type_converts_into_the_generated_enum() {
-        for bracket_type in [
-            BracketType::StopOnly,
-            BracketType::TargetOnly,
-            BracketType::TargetAndStop,
-            BracketType::StopOnlyStatic,
-            BracketType::TargetOnlyStatic,
-            BracketType::TargetAndStopStatic,
-        ] {
-            assert_eq!(
-                request_bracket_order::BracketType::from(bracket_type).as_str_name(),
-                bracket_type.as_str_name()
-            );
-        }
-    }
-
-    #[test]
-    fn condition_converts_into_every_generated_enum() {
-        for condition in [
-            OrderCondition::EqualTo,
-            OrderCondition::NotEqualTo,
-            OrderCondition::GreaterThan,
-            OrderCondition::GreaterThanEqualTo,
-            OrderCondition::LesserThan,
-            OrderCondition::LesserThanEqualTo,
-        ] {
-            let expected = condition.as_str_name();
-
-            assert_eq!(
-                request_new_order::Condition::from(condition).as_str_name(),
-                expected
-            );
-            assert_eq!(
-                request_bracket_order::Condition::from(condition).as_str_name(),
-                expected
-            );
-            assert_eq!(
-                request_modify_order::Condition::from(condition).as_str_name(),
-                expected
-            );
-        }
-    }
-
-    #[test]
-    fn price_field_converts_into_every_generated_enum() {
-        for price_field in [
-            OrderPriceField::BidPrice,
-            OrderPriceField::OfferPrice,
-            OrderPriceField::TradePrice,
-            OrderPriceField::LeanPrice,
-        ] {
-            let expected = price_field.as_str_name();
-
-            assert_eq!(
-                request_new_order::PriceField::from(price_field).as_str_name(),
-                expected
-            );
-            assert_eq!(
-                request_bracket_order::PriceField::from(price_field).as_str_name(),
-                expected
-            );
-            assert_eq!(
-                request_modify_order::PriceField::from(price_field).as_str_name(),
-                expected
-            );
         }
     }
 

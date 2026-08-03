@@ -12,7 +12,7 @@ use crate::{
         assert_sent_while_open, assert_wire_silent, awaited_caller_outcome, read_wire_request,
         test_account,
     },
-    types::{OrderOrigin, OrderSide, OrderType, TimeInForce},
+    types::{ManualOrAutoEntry, OrderSide, OrderType, TimeInForce},
 };
 
 fn test_handle() -> (RithmicOrderPlantHandle, mpsc::Receiver<OrderPlantCommand>) {
@@ -40,7 +40,7 @@ fn adjustment(id: &str, ticks: i32, level: Option<i32>) -> RithmicBracketLevelAd
 
 fn leg(tag: &str) -> RithmicOcoOrderLeg {
     RithmicOcoOrderLeg {
-        manual_or_auto: OrderOrigin::Auto,
+        manual_or_auto: ManualOrAutoEntry::Auto,
         symbol: "ESM6".to_string(),
         exchange: "CME".to_string(),
         quantity: 1,
@@ -52,6 +52,7 @@ fn leg(tag: &str) -> RithmicOcoOrderLeg {
         user_tag: tag.to_string(),
         trailing_stop: None,
         trade_route: None,
+        ..Default::default()
     }
 }
 
@@ -98,7 +99,10 @@ async fn place_oco_order_rejects_fewer_than_two_legs() {
         // timeout turns that into a failure rather than a hung suite.
         let err = tokio::time::timeout(
             std::time::Duration::from_secs(5),
-            handle.place_oco_order(RithmicOcoOrder { legs }),
+            handle.place_oco_order(RithmicOcoOrder {
+                legs,
+                ..Default::default()
+            }),
         )
         .await
         .expect("must be rejected without reaching the actor")
@@ -684,7 +688,10 @@ fn bracket_order_on(exchange: &str, trade_route: Option<&str>) -> RithmicBracket
 /// An OCO group straight from its legs; the builder's two-leg minimum is
 /// asserted at the handle, and these tests drive the actor directly.
 fn oco_group(legs: Vec<RithmicOcoOrderLeg>) -> RithmicOcoOrder {
-    RithmicOcoOrder { legs }
+    RithmicOcoOrder {
+        legs,
+        ..Default::default()
+    }
 }
 
 fn leg_on(exchange: &str, trade_route: Option<&str>) -> RithmicOcoOrderLeg {
@@ -1136,7 +1143,7 @@ async fn cancel_all_orders_encodes_auto_placement_by_default() {
     };
     assert_eq!(
         queued.manual_or_auto,
-        OrderOrigin::Auto,
+        ManualOrAutoEntry::Auto,
         "cancel_all_orders() must attribute to Auto like every other order call"
     );
     let queued = queued.clone();
@@ -1247,7 +1254,7 @@ async fn exit_position_encodes_auto_placement_by_default() {
     };
     assert_eq!(
         queued.manual_or_auto,
-        OrderOrigin::Auto,
+        ManualOrAutoEntry::Auto,
         "exit_position() must attribute to Auto like every other order call"
     );
     let queued = queued.clone();

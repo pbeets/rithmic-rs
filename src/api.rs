@@ -21,9 +21,10 @@ pub use commands::{
     TrailingStop,
 };
 
-// Re-export the crate-owned order enums so `api::OrderOrigin` also resolves
+// Re-export the crate-owned order enums so `api::ManualOrAutoEntry` also resolves
 pub use crate::types::{
-    BracketType, OrderCondition, OrderOrigin, OrderPriceField, OrderSide, OrderType, TimeInForce,
+    BracketType, ManualOrAutoEntry, OrderCondition, OrderPriceField, OrderSide, OrderType,
+    TimeInForce,
 };
 
 // Re-export easy-to-borrow list request type

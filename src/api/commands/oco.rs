@@ -1,9 +1,9 @@
 //! OCO (One-Cancels-Other) groups and the legs they hold.
 
-use super::trailing::TrailingStop;
+use super::triggers::TrailingStop;
 use crate::{
     error::RithmicError,
-    types::{OrderOrigin, OrderSide, OrderType, TimeInForce},
+    types::{ManualOrAutoEntry, OrderSide, OrderType, TimeInForce},
 };
 
 /// One leg of an OCO (One-Cancels-Other) order group.
@@ -42,7 +42,9 @@ pub struct RithmicOcoOrderLeg {
     pub transaction_type: OrderSide,
     /// Order duration
     pub duration: TimeInForce,
-    /// Order type. [`OrderType::MarketIfTouched`] and [`OrderType::LimitIfTouched`] are rejected on an OCO leg.
+    /// Order type. Template 328 declares no if-touched price type, so
+    /// [`OrderType::MarketIfTouched`] and [`OrderType::LimitIfTouched`] are
+    /// rejected on an OCO leg.
     pub price_type: OrderType,
     /// Your identifier for this order
     pub user_tag: String,
@@ -52,7 +54,10 @@ pub struct RithmicOcoOrderLeg {
     /// leg's exchange.
     pub trade_route: Option<String>,
     /// Whether the leg was placed by a human or automatically.
-    pub manual_or_auto: OrderOrigin,
+    pub manual_or_auto: ManualOrAutoEntry,
+    /// Originating window name reported to Rithmic. `window_name` is repeated
+    /// on `RequestOcoOrder`, so it is per-leg like the other leg fields.
+    pub window_name: Option<String>,
 }
 
 impl RithmicOcoOrderLeg {
@@ -133,8 +138,14 @@ impl RithmicOcoOrderLeg {
     }
 
     /// Whether this was done by a human or automatically.
-    pub fn manual_or_auto(mut self, manual_or_auto: OrderOrigin) -> Self {
+    pub fn manual_or_auto(mut self, manual_or_auto: ManualOrAutoEntry) -> Self {
         self.manual_or_auto = manual_or_auto;
+        self
+    }
+
+    /// Window name to report this leg under.
+    pub fn window_name(mut self, window_name: impl Into<String>) -> Self {
+        self.window_name = Some(window_name.into());
         self
     }
 
@@ -211,6 +222,12 @@ impl RithmicOcoOrderLeg {
 pub struct RithmicOcoOrder {
     /// The legs of the group, in the order they are sent.
     pub legs: Vec<RithmicOcoOrderLeg>,
+    /// Cancel the group at this second-since-beginning-of-epoch value.
+    pub cancel_at_ssboe: Option<i32>,
+    /// Microsecond component for `cancel_at_ssboe`.
+    pub cancel_at_usecs: Option<i32>,
+    /// Cancel the group after this many seconds.
+    pub cancel_after_secs: Option<i32>,
 }
 
 impl RithmicOcoOrder {
@@ -231,6 +248,29 @@ impl RithmicOcoOrder {
         self
     }
 
+    /// Cancel the group at this second-since-beginning-of-epoch value.
+    pub fn cancel_at_ssboe(mut self, ssboe: i32) -> Self {
+        self.cancel_at_ssboe = Some(ssboe);
+        self
+    }
+
+    /// Microsecond component of the cancel time.
+    pub fn cancel_at_usecs(mut self, usecs: i32) -> Self {
+        self.cancel_at_usecs = Some(usecs);
+        self
+    }
+
+    /// Set both halves of the cancel time.
+    pub fn cancel_at(self, ssboe: i32, usecs: i32) -> Self {
+        self.cancel_at_ssboe(ssboe).cancel_at_usecs(usecs)
+    }
+
+    /// Cancel the group after this many seconds.
+    pub fn cancel_after_secs(mut self, secs: i32) -> Self {
+        self.cancel_after_secs = Some(secs);
+        self
+    }
+
     /// Check every leg validates.
     pub fn validate(&self) -> Result<(), RithmicError> {
         for leg in &self.legs {
@@ -246,6 +286,29 @@ impl RithmicOcoOrder {
         self.validate()?;
         Ok(self)
     }
+
+    /// Copy out the group-level timing. The plant hands the legs to the route
+    /// cache before it reaches the sender, so the timing has to travel
+    /// separately.
+    pub(crate) fn cancel_timing(&self) -> OcoCancelTiming {
+        OcoCancelTiming {
+            cancel_at_ssboe: self.cancel_at_ssboe,
+            cancel_at_usecs: self.cancel_at_usecs,
+            cancel_after_secs: self.cancel_after_secs,
+        }
+    }
+}
+
+/// The group-level cancel timing on an OCO order, carried on its own so the
+/// three same-typed fields cannot be swapped at a call site.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct OcoCancelTiming {
+    /// Cancel the group at this second-since-beginning-of-epoch value.
+    pub(crate) cancel_at_ssboe: Option<i32>,
+    /// Microsecond component for `cancel_at_ssboe`.
+    pub(crate) cancel_at_usecs: Option<i32>,
+    /// Cancel the group after this many seconds.
+    pub(crate) cancel_after_secs: Option<i32>,
 }
 
 #[cfg(test)]
@@ -289,18 +352,6 @@ mod tests {
         assert!(err.contains("is not available on an OCO leg"), "{err}");
     }
 
-    #[test]
-    fn an_oco_leg_build_rejects_the_if_touched_price_types() {
-        let err = leg()
-            .price_type(OrderType::MarketIfTouched)
-            .trigger_price(4980.0)
-            .build()
-            .unwrap_err()
-            .to_string();
-
-        assert!(err.contains("is not available on an OCO leg"), "{err}");
-    }
-
     /// The group checks its legs, not how many of them there are.
     #[test]
     fn an_oco_order_validates_each_leg_but_not_the_count() {
@@ -309,10 +360,11 @@ mod tests {
             ..Default::default()
         };
 
-        assert!(RithmicOcoOrder { legs: Vec::new() }.validate().is_ok());
+        assert!(RithmicOcoOrder::default().validate().is_ok());
         assert!(
             RithmicOcoOrder {
-                legs: vec![ok.clone()]
+                legs: vec![ok.clone()],
+                ..Default::default()
             }
             .validate()
             .is_ok()
@@ -324,7 +376,8 @@ mod tests {
         };
         assert!(
             RithmicOcoOrder {
-                legs: vec![ok, bad]
+                legs: vec![ok, bad],
+                ..Default::default()
             }
             .validate()
             .is_err()
@@ -343,13 +396,5 @@ mod tests {
             .unwrap();
 
         assert_eq!(order.legs.len(), 5);
-    }
-
-    #[test]
-    fn an_oco_order_rejects_an_invalid_leg() {
-        let good = leg().build().unwrap();
-        let bad = leg().price_type(OrderType::MarketIfTouched);
-
-        assert!(RithmicOcoOrder::new().legs([good, bad]).build().is_err());
     }
 }

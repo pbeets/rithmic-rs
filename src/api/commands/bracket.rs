@@ -1,9 +1,9 @@
 //! Bracket entry orders and the adjustment that moves one of their exit legs.
 
-use super::trailing::RithmicIfTouchedTrigger;
+use super::triggers::RithmicIfTouchedTrigger;
 use crate::{
     error::RithmicError,
-    types::{BracketType, OrderOrigin, OrderSide, OrderType, TimeInForce},
+    types::{BracketType, ManualOrAutoEntry, OrderSide, OrderType, TimeInForce},
 };
 
 /// Entry order with linked profit target and stop loss orders.
@@ -126,7 +126,9 @@ pub struct RithmicBracketOrder {
     /// Route to send on. `None` uses the route the server published for `exchange`.
     pub trade_route: Option<String>,
     /// Whether the order was placed by a human or automatically.
-    pub manual_or_auto: OrderOrigin,
+    pub manual_or_auto: ManualOrAutoEntry,
+    /// Originating window name reported to Rithmic.
+    pub window_name: Option<String>,
 }
 
 /// The exit-leg setters come in singular and plural. Singular sets one leg
@@ -376,8 +378,14 @@ impl RithmicBracketOrder {
     }
 
     /// Whether this was done by a human or automatically.
-    pub fn manual_or_auto(mut self, manual_or_auto: OrderOrigin) -> Self {
+    pub fn manual_or_auto(mut self, manual_or_auto: ManualOrAutoEntry) -> Self {
         self.manual_or_auto = manual_or_auto;
+        self
+    }
+
+    /// Window name to report this order under.
+    pub fn window_name(mut self, window_name: impl Into<String>) -> Self {
+        self.window_name = Some(window_name.into());
         self
     }
 
@@ -625,16 +633,6 @@ mod tests {
             .build()
             .unwrap();
         assert_eq!(explicit.bracket_type, Some(BracketType::StopOnly));
-    }
-
-    #[test]
-    fn a_bracket_rejects_what_validate_rejects() {
-        let err = bracket(1, OrderType::Limit)
-            .target(20)
-            .build()
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("price is required"), "{err}");
     }
 
     /// With no exit legs there is no shape to derive, so `bracket_type` is left

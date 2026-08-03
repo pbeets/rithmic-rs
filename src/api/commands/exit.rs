@@ -1,6 +1,6 @@
-//! Flattening a position, and linking working orders into one group.
+//! Flattening a position.
 
-use crate::{error::RithmicError, types::OrderOrigin};
+use crate::{error::RithmicError, types::ManualOrAutoEntry};
 
 /// Flatten the position in one instrument.
 ///
@@ -24,7 +24,11 @@ pub struct RithmicExitPosition {
     /// Exchange code (e.g., "CME")
     pub exchange: String,
     /// Whether the exit was made by a human or automatically.
-    pub manual_or_auto: OrderOrigin,
+    pub manual_or_auto: ManualOrAutoEntry,
+    /// Originating window name reported to Rithmic.
+    pub window_name: Option<String>,
+    /// Name of the trading algorithm credited with the exit.
+    pub trading_algorithm: Option<String>,
 }
 
 impl RithmicExitPosition {
@@ -46,74 +50,25 @@ impl RithmicExitPosition {
     }
 
     /// Whether this was done by a human or automatically.
-    pub fn manual_or_auto(mut self, manual_or_auto: OrderOrigin) -> Self {
+    pub fn manual_or_auto(mut self, manual_or_auto: ManualOrAutoEntry) -> Self {
         self.manual_or_auto = manual_or_auto;
         self
     }
 
-    /// Return the command.
-    pub fn build(self) -> Result<Self, RithmicError> {
-        Ok(self)
-    }
-}
-
-/// Link working orders together so the server treats them as one group.
-///
-/// # Example
-///
-/// ```
-/// use rithmic_rs::RithmicLinkOrders;
-/// # fn main() -> Result<(), rithmic_rs::RithmicError> {
-/// let command = RithmicLinkOrders::new()
-///     .basket_ids(["123456", "123457"])
-///     .build()?;
-/// # Ok(())
-/// # }
-/// ```
-#[derive(Debug, Clone, Default, PartialEq)]
-#[non_exhaustive]
-pub struct RithmicLinkOrders {
-    /// The `basket_id`s to link, from the order notifications.
-    pub basket_ids: Vec<String>,
-}
-
-impl RithmicLinkOrders {
-    /// Start from the defaults, with no baskets to link.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Append one more `basket_id`.
-    pub fn basket_id(mut self, basket_id: impl Into<String>) -> Self {
-        self.basket_ids.push(basket_id.into());
+    /// Window name to report this exit under.
+    pub fn window_name(mut self, window_name: impl Into<String>) -> Self {
+        self.window_name = Some(window_name.into());
         self
     }
 
-    /// Append several more `basket_id`s.
-    pub fn basket_ids(mut self, basket_ids: impl IntoIterator<Item = impl Into<String>>) -> Self {
-        self.basket_ids
-            .extend(basket_ids.into_iter().map(Into::into));
+    /// Trading algorithm to credit with this exit.
+    pub fn trading_algorithm(mut self, trading_algorithm: impl Into<String>) -> Self {
+        self.trading_algorithm = Some(trading_algorithm.into());
         self
     }
 
     /// Return the command.
     pub fn build(self) -> Result<Self, RithmicError> {
         Ok(self)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_link_command_collects_its_ids() {
-        let command = RithmicLinkOrders::new()
-            .basket_ids(["123456"])
-            .basket_id("123457")
-            .build()
-            .unwrap();
-
-        assert_eq!(command.basket_ids, ["123456", "123457"]);
     }
 }

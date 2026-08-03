@@ -1,8 +1,8 @@
 //! The order commands, one module per command type.
 //!
 //! Every command is built the same way: `T::new()` starts from the command's
-//! defaults, a chained setter covers each field, and `build()` runs
-//! `validate()` before handing back the command.
+//! defaults, a chained setter covers each field, and `build()` hands the command
+//! back. Where the command type has a `validate()`, `build()` runs it first.
 //!
 //! ```
 //! use rithmic_rs::{OrderSide, OrderType, RithmicOrder};
@@ -21,91 +21,17 @@
 pub(crate) mod bracket;
 pub(crate) mod cancel;
 pub(crate) mod exit;
+pub(crate) mod link;
 pub(crate) mod modify;
 pub(crate) mod oco;
 pub(crate) mod order;
-pub(crate) mod trailing;
+pub(crate) mod triggers;
 
 pub use bracket::{RithmicBracketLevelAdjustment, RithmicBracketOrder};
 pub use cancel::{RithmicCancelAllOrders, RithmicCancelOrder};
-pub use exit::{RithmicExitPosition, RithmicLinkOrders};
+pub use exit::RithmicExitPosition;
+pub use link::RithmicLinkOrders;
 pub use modify::{RithmicModifyOrder, RithmicModifyOrderReferenceData};
 pub use oco::{RithmicOcoOrder, RithmicOcoOrderLeg};
 pub use order::RithmicOrder;
-pub use trailing::{RithmicIfTouchedTrigger, TrailingStop};
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::types::OrderOrigin;
-
-    /// Every order command type defaults its origination to `Auto`.
-    #[test]
-    fn order_command_types_default_to_auto_placement() {
-        assert_eq!(RithmicOrder::default().manual_or_auto, OrderOrigin::Auto);
-        assert_eq!(
-            RithmicOcoOrderLeg::default().manual_or_auto,
-            OrderOrigin::Auto
-        );
-        assert_eq!(
-            RithmicBracketOrder::default().manual_or_auto,
-            OrderOrigin::Auto
-        );
-        assert_eq!(
-            RithmicModifyOrder::default().manual_or_auto,
-            OrderOrigin::Auto
-        );
-        assert_eq!(
-            RithmicCancelOrder::default().manual_or_auto,
-            OrderOrigin::Auto
-        );
-        assert_eq!(
-            RithmicCancelAllOrders::default().manual_or_auto,
-            OrderOrigin::Auto
-        );
-        assert_eq!(
-            RithmicExitPosition::default().manual_or_auto,
-            OrderOrigin::Auto
-        );
-    }
-
-    /// `new()` is the starting point `Default` would have given you.
-    #[test]
-    fn new_matches_default() {
-        assert_eq!(RithmicOrder::new(), RithmicOrder::default());
-        assert_eq!(RithmicBracketOrder::new(), RithmicBracketOrder::default());
-        assert_eq!(RithmicOcoOrder::new(), RithmicOcoOrder::default());
-        assert_eq!(
-            RithmicCancelAllOrders::new(),
-            RithmicCancelAllOrders::default()
-        );
-    }
-
-    /// None of these carry a price rule, so `build()` only assembles them.
-    #[test]
-    fn the_id_carrying_commands_accept_an_empty_id() {
-        assert!(RithmicCancelOrder::new().build().is_ok());
-        assert!(
-            RithmicBracketLevelAdjustment::new()
-                .ticks(16)
-                .level(2)
-                .build()
-                .is_ok()
-        );
-        assert!(
-            RithmicModifyOrderReferenceData::new()
-                .user_tag("tag")
-                .build()
-                .is_ok()
-        );
-        assert!(RithmicExitPosition::new().build().is_ok());
-        assert!(RithmicLinkOrders::new().basket_id("123456").build().is_ok());
-        assert!(
-            RithmicModifyOrder::new()
-                .price(5005.0)
-                .price_type(crate::types::OrderType::Limit)
-                .build()
-                .is_ok()
-        );
-    }
-}
+pub use triggers::{RithmicIfTouchedTrigger, TrailingStop};

@@ -1,4 +1,5 @@
-//! The two value types an order embeds: trailing stops and if-touched triggers.
+//! The trigger conditions an order embeds: trailing stops and if-touched
+//! triggers.
 //!
 //! Neither takes chained setters: their `new()` is positional and every field
 //! is required.
@@ -41,8 +42,8 @@ impl TrailingStop {
 
 /// Conditional trigger that releases an order once a price is touched.
 ///
-/// Maps to the `if_touched_*` fields on `RequestNewOrder` and
-/// `RequestBracketOrder`, which are field-identical.
+/// Maps to the `if_touched_*` fields on `RequestNewOrder`,
+/// `RequestBracketOrder` and `RequestModifyOrder`, which are field-identical.
 ///
 /// # Example
 ///

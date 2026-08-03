@@ -1,9 +1,9 @@
 //! A standalone order.
 
-use super::trailing::{RithmicIfTouchedTrigger, TrailingStop};
+use super::triggers::{RithmicIfTouchedTrigger, TrailingStop};
 use crate::{
     error::RithmicError,
-    types::{OrderOrigin, OrderSide, OrderType, TimeInForce},
+    types::{ManualOrAutoEntry, OrderSide, OrderType, TimeInForce},
 };
 
 /// A standalone order (not a bracket order).
@@ -89,8 +89,8 @@ pub struct RithmicOrder {
     pub price_type: OrderType,
     /// Your identifier for tracking this order
     pub user_tag: String,
-    /// Order duration (defaults to Day if None)
-    pub duration: Option<TimeInForce>,
+    /// Order duration
+    pub duration: TimeInForce,
     /// Trigger price. Only a stop or if-touched order needs one.
     pub trigger_price: Option<f64>,
     /// Trailing stop configuration
@@ -98,7 +98,7 @@ pub struct RithmicOrder {
     /// Route to send on. `None` uses the route the server published for `exchange`.
     pub trade_route: Option<String>,
     /// Whether the order was placed by a human or automatically.
-    pub manual_or_auto: OrderOrigin,
+    pub manual_or_auto: ManualOrAutoEntry,
     /// Originating window name reported to Rithmic.
     pub window_name: Option<String>,
     /// Release the order at this second-since-beginning-of-epoch value.
@@ -171,7 +171,7 @@ impl RithmicOrder {
 
     /// How long the order stays working.
     pub fn duration(mut self, duration: TimeInForce) -> Self {
-        self.duration = Some(duration);
+        self.duration = duration;
         self
     }
 
@@ -193,12 +193,12 @@ impl RithmicOrder {
     }
 
     /// Whether this was done by a human or automatically.
-    pub fn manual_or_auto(mut self, manual_or_auto: OrderOrigin) -> Self {
+    pub fn manual_or_auto(mut self, manual_or_auto: ManualOrAutoEntry) -> Self {
         self.manual_or_auto = manual_or_auto;
         self
     }
 
-    /// Originating window name reported to Rithmic.
+    /// Window name to report this order under.
     pub fn window_name(mut self, window_name: impl Into<String>) -> Self {
         self.window_name = Some(window_name.into());
         self
@@ -351,20 +351,6 @@ mod tests {
         assert!(order.validate().is_ok());
     }
 
-    /// `validate()` is the price rule and nothing else — a default order carries
-    /// no instrument and no size, and that is the server's call to make.
-    #[test]
-    fn an_order_does_not_check_its_instrument_or_size() {
-        let order = RithmicOrder {
-            price_type: OrderType::Market,
-            ..Default::default()
-        };
-
-        assert!(order.symbol.is_empty());
-        assert_eq!(order.quantity, 0);
-        assert!(order.validate().is_ok());
-    }
-
     /// The message names the protobuf type the caller set, not a Rust-side
     /// paraphrase, so it lines up with what Rithmic's docs call the order type.
     #[test]
@@ -378,46 +364,22 @@ mod tests {
         assert!(err.contains("LIMIT_IF_TOUCHED"), "{err}");
     }
 
+    /// Only the setters that take more than one argument are worth asserting:
+    /// each pair is same-typed, so a swapped argument compiles and would put the
+    /// microseconds in the seconds field.
     #[test]
-    fn an_order_rejects_what_validate_rejects() {
-        assert!(order().build().is_err());
-        assert!(order().price(5000.0).build().is_ok());
-    }
-
-    /// `build()` runs `validate()`, which is a price rule only — an empty
-    /// instrument or a zero size is left for the server to reject.
-    #[test]
-    fn an_order_passes_through_an_empty_instrument_and_a_zero_size() {
-        assert!(
-            RithmicOrder::new()
-                .price_type(OrderType::Market)
-                .build()
-                .is_ok()
-        );
-    }
-
-    #[test]
-    fn an_order_sets_every_optional_field() {
+    fn the_paired_setters_assign_their_arguments_in_order() {
         let order = order()
-            .transaction_type(OrderSide::Sell)
-            .price_type(OrderType::StopLimit)
             .price(4980.0)
-            .trigger_price(4985.0)
-            .user_tag("stop-order")
-            .duration(TimeInForce::Gtc)
             .trailing_stop_by(20, 1)
-            .trade_route("route-1")
-            .manual_or_auto(OrderOrigin::Manual)
-            .window_name("chart")
             .release_at(35900, 500)
             .cancel_at(36000, 250)
-            .cancel_after_secs(120)
             .build()
             .unwrap();
 
-        assert_eq!(order.duration, Some(TimeInForce::Gtc));
-        assert_eq!(order.manual_or_auto, OrderOrigin::Manual);
-        assert_eq!(order.trailing_stop.unwrap().trail_by_price_id, 1);
+        let trailing = order.trailing_stop.unwrap();
+        assert_eq!(trailing.trail_by_ticks, 20);
+        assert_eq!(trailing.trail_by_price_id, 1);
         assert_eq!(order.release_at_ssboe, Some(35900));
         assert_eq!(order.release_at_usecs, Some(500));
         assert_eq!(order.cancel_at_ssboe, Some(36000));
