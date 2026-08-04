@@ -882,10 +882,6 @@ impl PlantActor for OrderPlant {
                 account,
                 response_sender,
             } => {
-                // Not re-validated here: `build()` is where a command is
-                // checked, same as `PlaceOrder` and `PlaceBracketOrder`. A leg
-                // whose price type template 328 does not declare is still
-                // refused by the sender.
                 let timing = order.cancel_timing();
 
                 let legs = match self.trade_routes.resolve_legs(order.legs) {
