@@ -36,9 +36,10 @@ pub struct RithmicModifyOrder {
     pub symbol: String,
     /// New quantity
     pub quantity: i32,
-    /// New price. A modify restates the order, so set this to the order's
-    /// current price when only the quantity is changing.
-    pub price: f64,
+    /// New price, omitted from the request when unset. A modify restates the
+    /// order, so set this to the order's current price when only the quantity
+    /// is changing.
+    pub price: Option<f64>,
     /// Order type
     pub price_type: OrderType,
     /// Trigger price. Left unset, the four triggering price types — the stop and
@@ -51,10 +52,8 @@ pub struct RithmicModifyOrder {
     /// Ticks to trail behind the market price.
     ///
     /// A bare distance rather than a [`TrailingStop`](crate::TrailingStop):
-    /// template version 5.28 added `trailing_stop` and `trail_by_ticks` to
-    /// `RequestModifyOrder`, but `trail_by_price_id` only to `RequestNewOrder`,
-    /// `RequestBracketOrder` and `RequestOCOOrder`. There is no price-id field
-    /// here to set.
+    /// `RequestModifyOrder` declares `trailing_stop` and `trail_by_ticks` but
+    /// no `trail_by_price_id`, so there is no price-id field to set.
     pub trail_by_ticks: Option<i32>,
     /// Conditional trigger on the resulting order.
     pub if_touched: Option<RithmicIfTouchedTrigger>,
@@ -95,7 +94,7 @@ impl RithmicModifyOrder {
 
     /// The order's price after the modification.
     pub fn price(mut self, price: f64) -> Self {
-        self.price = price;
+        self.price = Some(price);
         self
     }
 
@@ -136,8 +135,39 @@ impl RithmicModifyOrder {
         self
     }
 
-    /// Return the modification.
+    /// Check the modification carries the prices its [`Self::price_type`]
+    /// requires: `Limit`, `StopLimit` and `LimitIfTouched` need [`Self::price`];
+    /// `StopMarket`, `StopLimit`, `MarketIfTouched` and `LimitIfTouched` need a
+    /// trigger, which is [`Self::trigger_price`] or the [`Self::price`] that
+    /// stands in for it. `Market` needs neither.
+    pub fn validate(&self) -> Result<(), RithmicError> {
+        let (needs_price, needs_trigger) = match self.price_type {
+            OrderType::Market => (false, false),
+            OrderType::Limit => (true, false),
+            OrderType::StopMarket | OrderType::MarketIfTouched => (false, true),
+            OrderType::StopLimit | OrderType::LimitIfTouched => (true, true),
+        };
+
+        let order_type = self.price_type.as_str_name();
+
+        if needs_price && self.price.is_none() {
+            return Err(RithmicError::InvalidArgument(format!(
+                "price is required for a {order_type} order"
+            )));
+        }
+
+        if needs_trigger && self.trigger_price.is_none() && self.price.is_none() {
+            return Err(RithmicError::InvalidArgument(format!(
+                "trigger_price, or a price to stand in for it, is required for a {order_type} order"
+            )));
+        }
+
+        Ok(())
+    }
+
+    /// Validate and return the modification.
     pub fn build(self) -> Result<Self, RithmicError> {
+        self.validate()?;
         Ok(self)
     }
 }
@@ -186,5 +216,52 @@ impl RithmicModifyOrderReferenceData {
     /// Return the command.
     pub fn build(self) -> Result<Self, RithmicError> {
         Ok(self)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn modify(price_type: OrderType) -> RithmicModifyOrder {
+        RithmicModifyOrder::new().id("b").price_type(price_type)
+    }
+
+    /// The table is `RithmicOrder::validate`'s, except that a triggering type
+    /// accepts `price` standing in for the trigger — a modify restates the
+    /// order, and moving a stop by its price alone predates `trigger_price`.
+    #[test]
+    fn a_modify_requires_the_prices_its_type_needs() {
+        assert!(modify(OrderType::Market).build().is_ok());
+
+        assert!(modify(OrderType::Limit).build().is_err());
+        assert!(modify(OrderType::Limit).price(5000.0).build().is_ok());
+
+        // Neither a trigger nor a price to stand in for it.
+        assert!(modify(OrderType::StopMarket).build().is_err());
+        assert!(modify(OrderType::StopMarket).price(5000.0).build().is_ok());
+        assert!(
+            modify(OrderType::StopMarket)
+                .trigger_price(5000.0)
+                .build()
+                .is_ok()
+        );
+
+        // The limit price cannot be stood in for.
+        assert!(
+            modify(OrderType::StopLimit)
+                .trigger_price(4999.0)
+                .build()
+                .is_err()
+        );
+        assert!(modify(OrderType::StopLimit).price(5000.0).build().is_ok());
+
+        assert!(modify(OrderType::MarketIfTouched).build().is_err());
+        assert!(
+            modify(OrderType::LimitIfTouched)
+                .price(5000.0)
+                .build()
+                .is_ok()
+        );
     }
 }

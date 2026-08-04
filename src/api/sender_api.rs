@@ -747,17 +747,18 @@ impl RithmicSenderApi {
             symbol: Some(order.symbol.clone()),
             price_type: Some(price_type.into()),
             quantity: Some(order.quantity),
-            price: Some(order.price),
+            price: order.price,
             user_msg: vec![id.clone()],
             // The same four types `RithmicOrder::validate` demands a trigger for
             // when the order is placed, so a modify to one of them carries a
             // trigger too. The order's own price is the stand-in when the caller
-            // named no separate level.
+            // named no separate level; `RithmicModifyOrder::validate` guarantees
+            // a built command has one or the other.
             trigger_price: order.trigger_price.or(match order.price_type {
                 OrderType::StopMarket
                 | OrderType::StopLimit
                 | OrderType::MarketIfTouched
-                | OrderType::LimitIfTouched => Some(order.price),
+                | OrderType::LimitIfTouched => order.price,
                 OrderType::Market | OrderType::Limit => None,
             }),
             window_name: order.window_name.clone(),
@@ -1722,7 +1723,9 @@ impl RithmicSenderApi {
         // fields, so once any leg trails, all three carry a slot per leg. A leg
         // that does not trail fills its slots with `false` and zeroes. When no leg
         // trails at all the three fields are dropped rather than sent as a run of
-        // zeroes.
+        // zeroes. Zero is the `trail_by_price_id` Rithmic rejected with rp_code
+        // 1112 on a single order's trailing stop; whether it tolerates the
+        // zero-filled slots of a mixed group is unverified.
         let (trailing_stop, trail_by_ticks, trail_by_price_id) = if trailing_stop.contains(&true) {
             (trailing_stop, trail_by_ticks, trail_by_price_id)
         } else {

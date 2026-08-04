@@ -22,7 +22,7 @@ fn subscribe_pnl_updates(response_sender: Responder) -> PnlPlantCommand {
 }
 
 fn position_snapshots(response_sender: Responder) -> PnlPlantCommand {
-    PnlPlantCommand::PnlPositionSnapshots {
+    PnlPlantCommand::GetPnlPositionSnapshot {
         account: test_account(),
         response_sender,
     }

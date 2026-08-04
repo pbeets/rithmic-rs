@@ -215,7 +215,7 @@ impl RithmicBracketOrder {
     /// One target leg at this tick distance, sized to the entry quantity.
     ///
     /// Reads [`Self::quantity`] as it stands right now, so set the quantity
-    /// first — otherwise the leg is sized to 0.
+    /// first — otherwise the leg is sized to 0 and [`Self::build`] rejects it.
     pub fn target(mut self, ticks: i32) -> Self {
         self.target_quantity = vec![self.quantity];
         self.target_ticks = vec![ticks];
@@ -225,7 +225,7 @@ impl RithmicBracketOrder {
     /// One stop leg at this tick distance, sized to the entry quantity.
     ///
     /// Reads [`Self::quantity`] as it stands right now, so set the quantity
-    /// first — otherwise the leg is sized to 0.
+    /// first — otherwise the leg is sized to 0 and [`Self::build`] rejects it.
     pub fn stop(mut self, ticks: i32) -> Self {
         self.stop_quantity = vec![self.quantity];
         self.stop_ticks = vec![ticks];
@@ -392,8 +392,13 @@ impl RithmicBracketOrder {
     /// Check the entry carries the prices its [`Self::price_type`] requires:
     /// `Limit`, `StopLimit` and `LimitIfTouched` need [`Self::price`];
     /// `StopMarket`, `StopLimit`, `MarketIfTouched` and `LimitIfTouched` need
-    /// [`Self::trigger_price`]. `Market` needs neither. The exit legs are not
-    /// checked.
+    /// [`Self::trigger_price`]. `Market` needs neither.
+    ///
+    /// Also check the exit legs hold together: each side's quantities and tick
+    /// distances pair up one to one, every leg's quantity is positive, and a
+    /// [`Self::bracket_type`] set by hand names the sides the legs actually
+    /// form. Tick distances themselves are not judged — Rithmic is the
+    /// authority on what it accepts.
     pub fn validate(&self) -> Result<(), RithmicError> {
         let (needs_price, needs_trigger) = match self.price_type {
             OrderType::Market => (false, false),
@@ -414,6 +419,45 @@ impl RithmicBracketOrder {
             return Err(RithmicError::InvalidArgument(format!(
                 "trigger_price is required for a {order_type} order"
             )));
+        }
+
+        for (side, quantities, ticks) in [
+            ("target", &self.target_quantity, &self.target_ticks),
+            ("stop", &self.stop_quantity, &self.stop_ticks),
+        ] {
+            if quantities.len() != ticks.len() {
+                return Err(RithmicError::InvalidArgument(format!(
+                    "{side} legs are ragged: {} quantities for {} tick distances",
+                    quantities.len(),
+                    ticks.len()
+                )));
+            }
+
+            if let Some(quantity) = quantities.iter().find(|quantity| **quantity <= 0) {
+                return Err(RithmicError::InvalidArgument(format!(
+                    "every {side} leg needs a positive quantity, got {quantity} — \
+                     `target(..)`/`stop(..)` size the leg to the quantity set so far"
+                )));
+            }
+        }
+
+        if let Some(bracket_type) = self.bracket_type {
+            let wants = match bracket_type {
+                BracketType::TargetOnly | BracketType::TargetOnlyStatic => (true, false),
+                BracketType::StopOnly | BracketType::StopOnlyStatic => (false, true),
+                BracketType::TargetAndStop | BracketType::TargetAndStopStatic => (true, true),
+            };
+
+            let has = (!self.target_ticks.is_empty(), !self.stop_ticks.is_empty());
+
+            if has != wants {
+                return Err(RithmicError::InvalidArgument(format!(
+                    "bracket_type {} does not match the exit legs: {} target and {} stop",
+                    bracket_type.as_str_name(),
+                    self.target_ticks.len(),
+                    self.stop_ticks.len()
+                )));
+            }
         }
 
         Ok(())
@@ -528,11 +572,11 @@ mod tests {
         assert!(order.validate().is_ok());
     }
 
-    /// Nothing about the exit legs is checked. Rithmic's limits on multi-level
-    /// brackets are undocumented and no other client implements them, so the
-    /// crate would only be guessing at which shapes the server rejects.
+    /// The exit legs have to hold together as a structure — paired vectors,
+    /// positive sizes, a `bracket_type` that names the sides supplied. Tick
+    /// distances themselves are left to Rithmic to judge.
     #[test]
-    fn a_bracket_does_not_check_its_exit_legs() {
+    fn a_bracket_checks_its_exit_legs_hold_together() {
         // Mismatched vector lengths.
         let ragged = RithmicBracketOrder {
             price_type: OrderType::Market,
@@ -540,14 +584,16 @@ mod tests {
             target_ticks: vec![16, 24],
             ..Default::default()
         };
-        assert!(ragged.validate().is_ok());
+        assert!(ragged.validate().is_err());
 
-        // No exit legs at all.
-        let bare = RithmicBracketOrder {
+        // A zero-quantity leg.
+        let zero_sized = RithmicBracketOrder {
             price_type: OrderType::Market,
+            stop_quantity: vec![0],
+            stop_ticks: vec![10],
             ..Default::default()
         };
-        assert!(bare.validate().is_ok());
+        assert!(zero_sized.validate().is_err());
 
         // A bracket_type that disagrees with the legs supplied.
         let mismatched = RithmicBracketOrder {
@@ -557,7 +603,24 @@ mod tests {
             stop_ticks: vec![10],
             ..Default::default()
         };
-        assert!(mismatched.validate().is_ok());
+        assert!(mismatched.validate().is_err());
+
+        // No exit legs at all is still fine: template 330 carries the entry.
+        let bare = RithmicBracketOrder {
+            price_type: OrderType::Market,
+            ..Default::default()
+        };
+        assert!(bare.validate().is_ok());
+
+        // A hand-set bracket_type that agrees with the legs passes.
+        let matched = RithmicBracketOrder {
+            price_type: OrderType::Market,
+            bracket_type: Some(BracketType::StopOnly),
+            stop_quantity: vec![1],
+            stop_ticks: vec![10],
+            ..Default::default()
+        };
+        assert!(matched.validate().is_ok());
     }
 
     /// The ergonomic one-target/one-stop path has to produce exactly what the
@@ -592,7 +655,8 @@ mod tests {
     }
 
     /// The sizing reads `quantity` where it stands, so the setter order that
-    /// looks equivalent is not.
+    /// looks equivalent is not — and the zero-sized leg the wrong order
+    /// produces is refused rather than sent.
     #[test]
     fn the_bracket_sugar_sizes_its_leg_to_the_quantity_set_so_far() {
         let after = RithmicBracketOrder::new()
@@ -607,12 +671,11 @@ mod tests {
             .price_type(OrderType::Market)
             .target(20)
             .quantity(3)
-            .build()
-            .unwrap();
-        assert_eq!(
-            before.target_quantity,
-            vec![0],
-            "quantity set after the leg cannot reach back and resize it"
+            .build();
+        assert!(
+            before.is_err(),
+            "quantity set after the leg cannot reach back and resize it, \
+             so the zero-sized leg fails the build"
         );
     }
 

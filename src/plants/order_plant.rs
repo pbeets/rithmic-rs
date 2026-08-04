@@ -37,7 +37,7 @@ use tokio::{
 pub(crate) enum OrderPlantCommand {
     Close,
     Abort,
-    ListSystemInfo {
+    GetSystemInfo {
         response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
     },
     Login {
@@ -486,7 +486,7 @@ impl PlantActor for OrderPlant {
             OrderPlantCommand::Close => {
                 self.core.handle_close().await;
             }
-            OrderPlantCommand::ListSystemInfo { response_sender } => {
+            OrderPlantCommand::GetSystemInfo { response_sender } => {
                 self.core.handle_get_system_info(response_sender).await;
             }
             OrderPlantCommand::Login {
@@ -1241,7 +1241,7 @@ impl RithmicOrderPlantHandle {
     pub async fn get_system_info(&self) -> Result<RithmicResponse, RithmicError> {
         let (tx, rx) = oneshot::channel::<Result<Vec<RithmicResponse>, RithmicError>>();
 
-        let command = OrderPlantCommand::ListSystemInfo {
+        let command = OrderPlantCommand::GetSystemInfo {
             response_sender: tx,
         };
 

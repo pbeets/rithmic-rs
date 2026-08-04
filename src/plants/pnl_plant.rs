@@ -22,7 +22,7 @@ use tokio::sync::{broadcast, mpsc, oneshot};
 pub(crate) enum PnlPlantCommand {
     Close,
     Abort,
-    ListSystemInfo {
+    GetSystemInfo {
         response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
     },
     Login {
@@ -33,7 +33,7 @@ pub(crate) enum PnlPlantCommand {
     Logout {
         response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
     },
-    PnlPositionSnapshots {
+    GetPnlPositionSnapshot {
         account: Arc<RithmicAccount>,
         response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
     },
@@ -260,7 +260,7 @@ impl PlantActor for PnlPlant {
             PnlPlantCommand::Close => {
                 self.core.handle_close().await;
             }
-            PnlPlantCommand::ListSystemInfo { response_sender } => {
+            PnlPlantCommand::GetSystemInfo { response_sender } => {
                 self.core.handle_get_system_info(response_sender).await;
             }
             PnlPlantCommand::Login {
@@ -299,7 +299,7 @@ impl PlantActor for PnlPlant {
                     .send_or_fail(Message::Binary(subscribe_buf.into()), &id)
                     .await;
             }
-            PnlPlantCommand::PnlPositionSnapshots {
+            PnlPlantCommand::GetPnlPositionSnapshot {
                 account,
                 response_sender,
             } => {
@@ -372,7 +372,7 @@ impl RithmicPnlPlantHandle {
     pub async fn get_system_info(&self) -> Result<RithmicResponse, RithmicError> {
         let (tx, rx) = oneshot::channel::<Result<Vec<RithmicResponse>, RithmicError>>();
 
-        let command = PnlPlantCommand::ListSystemInfo {
+        let command = PnlPlantCommand::GetSystemInfo {
             response_sender: tx,
         };
 
@@ -519,7 +519,7 @@ impl RithmicPnlPlantHandle {
     pub async fn get_pnl_position_snapshot(&self) -> Result<RithmicResponse, RithmicError> {
         let (tx, rx) = oneshot::channel::<Result<Vec<RithmicResponse>, RithmicError>>();
 
-        let command = PnlPlantCommand::PnlPositionSnapshots {
+        let command = PnlPlantCommand::GetPnlPositionSnapshot {
             account: self.account.clone(),
             response_sender: tx,
         };

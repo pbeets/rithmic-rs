@@ -23,7 +23,7 @@ use tokio::sync::{broadcast, mpsc, oneshot};
 pub(crate) enum TickerPlantCommand {
     Close,
     Abort,
-    ListSystemInfo {
+    GetSystemInfo {
         response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
     },
     Login {
@@ -63,7 +63,7 @@ pub(crate) enum TickerPlantCommand {
         pattern: Option<request_search_symbols::Pattern>,
         response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
     },
-    ListExchanges {
+    ListExchangePermissions {
         user: String,
         response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
     },
@@ -364,7 +364,7 @@ impl PlantActor for TickerPlant {
             TickerPlantCommand::Close => {
                 self.core.handle_close().await;
             }
-            TickerPlantCommand::ListSystemInfo { response_sender } => {
+            TickerPlantCommand::GetSystemInfo { response_sender } => {
                 self.core.handle_get_system_info(response_sender).await;
             }
             TickerPlantCommand::Login {
@@ -472,7 +472,7 @@ impl PlantActor for TickerPlant {
                     .send_or_fail(Message::Binary(search_buf.into()), &id)
                     .await;
             }
-            TickerPlantCommand::ListExchanges {
+            TickerPlantCommand::ListExchangePermissions {
                 user,
                 response_sender,
             } => {
@@ -709,7 +709,7 @@ impl RithmicTickerPlantHandle {
     pub async fn get_system_info(&self) -> Result<RithmicResponse, RithmicError> {
         let (tx, rx) = oneshot::channel::<Result<Vec<RithmicResponse>, RithmicError>>();
 
-        let command = TickerPlantCommand::ListSystemInfo {
+        let command = TickerPlantCommand::GetSystemInfo {
             response_sender: tx,
         };
 
@@ -1522,7 +1522,7 @@ impl RithmicTickerPlantHandle {
     ) -> Result<Vec<RithmicResponse>, RithmicError> {
         let (tx, rx) = oneshot::channel::<Result<Vec<RithmicResponse>, RithmicError>>();
 
-        let command = TickerPlantCommand::ListExchanges {
+        let command = TickerPlantCommand::ListExchangePermissions {
             user: user.to_string(),
             response_sender: tx,
         };

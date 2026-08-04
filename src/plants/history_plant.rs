@@ -23,7 +23,7 @@ use tokio::{
 pub(crate) enum HistoryPlantCommand {
     Close,
     Abort,
-    ListSystemInfo {
+    GetSystemInfo {
         response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
     },
     Login {
@@ -288,7 +288,7 @@ impl PlantActor for HistoryPlant {
             HistoryPlantCommand::Close => {
                 self.core.handle_close().await;
             }
-            HistoryPlantCommand::ListSystemInfo { response_sender } => {
+            HistoryPlantCommand::GetSystemInfo { response_sender } => {
                 self.core.handle_get_system_info(response_sender).await;
             }
             HistoryPlantCommand::Login {
@@ -501,7 +501,7 @@ impl RithmicHistoryPlantHandle {
     pub async fn get_system_info(&self) -> Result<RithmicResponse, RithmicError> {
         let (tx, rx) = oneshot::channel::<Result<Vec<RithmicResponse>, RithmicError>>();
 
-        let command = HistoryPlantCommand::ListSystemInfo {
+        let command = HistoryPlantCommand::GetSystemInfo {
             response_sender: tx,
         };
 
