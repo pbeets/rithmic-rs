@@ -63,8 +63,6 @@ pub(crate) enum OrderPlantCommand {
         response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
     },
     PlaceBracketOrder {
-        // Boxed: the widest command by some margin, and unboxed it would set the
-        // size of every other variant.
         bracket_order: Box<RithmicBracketOrder>,
         account: Arc<RithmicAccount>,
         response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
