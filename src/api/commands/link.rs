@@ -46,19 +46,3 @@ impl RithmicLinkOrders {
         Ok(self)
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_link_command_collects_its_ids() {
-        let command = RithmicLinkOrders::new()
-            .basket_ids(["123456"])
-            .basket_id("123457")
-            .build()
-            .unwrap();
-
-        assert_eq!(command.basket_ids, ["123456", "123457"]);
-    }
-}

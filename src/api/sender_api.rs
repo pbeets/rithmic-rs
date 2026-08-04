@@ -118,14 +118,14 @@ fn omit_if_empty(value: String) -> Option<String> {
     (!value.is_empty()).then_some(value)
 }
 
-/// Collapse a per-leg optional price into the repeated field that goes on the
+/// Zero-fill per-leg optional prices into the repeated field that goes on the
 /// wire.
 ///
-/// A repeated price is index-aligned with the other per-leg fields, so once one
-/// leg carries a price every leg needs a slot and the ones without a price take
-/// `0.0`. When no leg carries one the field is left out entirely rather than
-/// sent as a run of zeroes, which would price every leg at zero.
-fn align_optional_prices(prices: Vec<Option<f64>>) -> Vec<f64> {
+/// The repeated field is positional — slot `i` prices leg `i` — so once one
+/// leg carries a price every leg needs a slot and the ones without take `0.0`.
+/// When no leg carries one the field is left out entirely rather than sent as
+/// a run of zeroes, which would price every leg at zero.
+fn zero_fill_prices(prices: Vec<Option<f64>>) -> Vec<f64> {
     if prices.iter().all(Option::is_none) {
         return vec![];
     }
@@ -1701,8 +1701,6 @@ impl RithmicSenderApi {
                 leg.transaction_type,
             )));
             duration.push(i32::from(request_oco_order::Duration::from(leg.duration)));
-            // Rejected rather than remapped: a leg the template cannot express is
-            // not the same trade as some nearby price type.
             price_type.push(i32::from(request_oco_order::PriceType::try_from(
                 leg.price_type,
             )?));
@@ -1719,30 +1717,19 @@ impl RithmicSenderApi {
             );
         }
 
-        // The three trailing-stop fields are index-aligned with the other repeated
-        // fields, so once any leg trails, all three carry a slot per leg. A leg
-        // that does not trail fills its slots with `false` and zeroes. When no leg
-        // trails at all the three fields are dropped rather than sent as a run of
-        // zeroes. Zero is the `trail_by_price_id` Rithmic rejected with rp_code
-        // 1112 on a single order's trailing stop; whether it tolerates the
-        // zero-filled slots of a mixed group is unverified.
+        // If any leg trails, all three trailing fields keep one slot per leg so
+        // they stay lined up with the legs; if none do, leave the fields out.
         let (trailing_stop, trail_by_ticks, trail_by_price_id) = if trailing_stop.contains(&true) {
             (trailing_stop, trail_by_ticks, trail_by_price_id)
         } else {
             (vec![], vec![], vec![])
         };
 
-        let price = align_optional_prices(price);
-        let trigger_price = align_optional_prices(trigger_price);
+        let price = zero_fill_prices(price);
+        let trigger_price = zero_fill_prices(trigger_price);
 
-        // `RequestOCOOrder` carries the per-leg fields as parallel repeated
-        // fields with no leg id, so position is what ties a value to a leg:
-        // entry `i` describes leg `i`. `user_tag` and `window_name` are among
-        // them (both are singular on `RequestNewOrder`), so the loop above
-        // pushes a slot per leg, empty strings included — a shorter vector would
-        // land the values on the wrong legs. What is left to decide is only
-        // whether a field nobody set goes out as a run of empty strings, and it
-        // does not.
+        // Position is what ties a value to a leg, so each vector keeps one slot
+        // per leg; leave a field out only when no leg sets it.
         if user_tag.iter().all(String::is_empty) {
             user_tag.clear();
         }

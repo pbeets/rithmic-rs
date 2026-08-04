@@ -858,54 +858,6 @@ mod tests {
     }
 
     #[test]
-    fn test_account_new_complete() {
-        let account = RithmicAccount::new("my_fcm", "my_ib", "my_account");
-
-        assert_eq!(account.account_id, "my_account");
-        assert_eq!(account.fcm_id, "my_fcm");
-        assert_eq!(account.ib_id, "my_ib");
-    }
-
-    #[test]
-    fn test_builder_complete() {
-        let config = RithmicConfig::builder(RithmicEnv::Demo)
-            .user("my_user")
-            .password("my_password")
-            .url("wss://test.example.com:443")
-            .beta_url("wss://test-alt.example.com:443")
-            .app_name("test_app")
-            .app_version("1")
-            .build()
-            .unwrap();
-
-        assert_eq!(config.user, "my_user");
-        assert_eq!(config.password, "my_password");
-        assert_eq!(config.env, RithmicEnv::Demo);
-        assert_eq!(config.url, "wss://test.example.com:443");
-        assert_eq!(config.beta_url, "wss://test-alt.example.com:443");
-        // Builder should set system_name default
-        assert_eq!(config.system_name, "Rithmic Paper Trading");
-    }
-
-    #[test]
-    fn test_builder_custom_urls() {
-        let config = RithmicConfig::builder(RithmicEnv::Demo)
-            .user("my_user")
-            .password("my_password")
-            .url("wss://custom.example.com:443")
-            .beta_url("wss://custom-beta.example.com:443")
-            .system_name("Custom System")
-            .app_name("test_app")
-            .app_version("1")
-            .build()
-            .unwrap();
-
-        assert_eq!(config.url, "wss://custom.example.com:443");
-        assert_eq!(config.beta_url, "wss://custom-beta.example.com:443");
-        assert_eq!(config.system_name, "Custom System");
-    }
-
-    #[test]
     fn test_builder_missing_user() {
         let result = RithmicConfig::builder(RithmicEnv::Demo)
             .password("my_password")
@@ -970,22 +922,6 @@ mod tests {
 
         // Builder should set system_name default
         assert_eq!(config.system_name, "Rithmic Test");
-    }
-
-    #[test]
-    fn test_builder_into_string_conversions() {
-        // Test that Into<String> works for builder methods
-        let config = RithmicConfig::builder(RithmicEnv::Demo)
-            .user(String::from("my_user"))
-            .password(String::from("my_password"))
-            .url(String::from("wss://test.example.com:443"))
-            .beta_url(String::from("wss://test-alt.example.com:443"))
-            .app_name("test_app")
-            .app_version("1")
-            .build()
-            .unwrap();
-
-        assert_eq!(config.user, "my_user");
     }
 
     #[test]

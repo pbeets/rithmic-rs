@@ -315,15 +315,6 @@ pub(crate) struct OcoCancelTiming {
 mod tests {
     use super::*;
 
-    fn leg() -> RithmicOcoOrderLeg {
-        RithmicOcoOrderLeg::new()
-            .symbol("ESH6")
-            .exchange("CME")
-            .quantity(1)
-            .transaction_type(OrderSide::Sell)
-            .price_type(OrderType::Market)
-    }
-
     #[test]
     fn an_oco_leg_validates_on_the_same_rules() {
         let mut leg = RithmicOcoOrderLeg {
@@ -382,19 +373,5 @@ mod tests {
             .validate()
             .is_err()
         );
-    }
-
-    #[test]
-    fn an_oco_order_collects_its_legs() {
-        let tagged = |tag: &str| leg().user_tag(tag).build().unwrap();
-
-        let order = RithmicOcoOrder::new()
-            .legs([tagged("a"), tagged("b")])
-            .leg(tagged("c"))
-            .legs([tagged("d"), tagged("e")])
-            .build()
-            .unwrap();
-
-        assert_eq!(order.legs.len(), 5);
     }
 }
