@@ -26,6 +26,7 @@ use crate::{
         TradeRoute, messages::RithmicMessage, request_account_rms_updates,
         request_easy_to_borrow_list, request_login::SysInfraType,
     },
+    types::FillHistoryRange,
     ws::PlantActor,
 };
 
@@ -177,6 +178,17 @@ pub(crate) enum OrderPlantCommand {
     ReplayExecutions {
         start_index_sec: i32,
         finish_index_sec: i32,
+        account: Arc<RithmicAccount>,
+        response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
+    },
+    GetUserInfo {
+        user: Option<String>,
+        account: Arc<RithmicAccount>,
+        response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
+    },
+    ShowFillHistory {
+        range: FillHistoryRange,
+        max_record_count: Option<i32>,
         account: Arc<RithmicAccount>,
         response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
     },
@@ -1048,6 +1060,46 @@ impl PlantActor for OrderPlant {
                 let (req_buf, id) = self.core.rithmic_sender_api.request_replay_executions(
                     start_index_sec,
                     finish_index_sec,
+                    &account,
+                );
+
+                self.core.request_handler.register_request(RithmicRequest {
+                    request_id: id.clone(),
+                    responder: response_sender,
+                });
+
+                self.core
+                    .send_or_fail(Message::Binary(req_buf.into()), &id)
+                    .await;
+            }
+            OrderPlantCommand::GetUserInfo {
+                user,
+                account,
+                response_sender,
+            } => {
+                let (req_buf, id) = self
+                    .core
+                    .rithmic_sender_api
+                    .request_get_user_info(user.as_deref(), &account);
+
+                self.core.request_handler.register_request(RithmicRequest {
+                    request_id: id.clone(),
+                    responder: response_sender,
+                });
+
+                self.core
+                    .send_or_fail(Message::Binary(req_buf.into()), &id)
+                    .await;
+            }
+            OrderPlantCommand::ShowFillHistory {
+                range,
+                max_record_count,
+                account,
+                response_sender,
+            } => {
+                let (req_buf, id) = self.core.rithmic_sender_api.request_show_fill_history(
+                    range,
+                    max_record_count,
                     &account,
                 );
 
@@ -2141,6 +2193,71 @@ impl RithmicOrderPlantHandle {
         let command = OrderPlantCommand::ReplayExecutions {
             start_index_sec,
             finish_index_sec,
+            account: self.account.clone(),
+            response_sender: tx,
+        };
+
+        let _ = self.sender.send(command).await;
+
+        rx.await.map_err(|_| RithmicError::ConnectionClosed)?
+    }
+
+    /// Look up a user's profile: name, contact details, entitlement status,
+    /// and session limits.
+    ///
+    /// # Arguments
+    /// * `user` - The user to look up. `None` asks about the logged-in user.
+    ///
+    /// # Returns
+    /// The user info responses or an error message
+    pub async fn get_user_info(
+        &self,
+        user: Option<&str>,
+    ) -> Result<Vec<RithmicResponse>, RithmicError> {
+        let (tx, rx) = oneshot::channel::<Result<Vec<RithmicResponse>, RithmicError>>();
+
+        let command = OrderPlantCommand::GetUserInfo {
+            user: user.map(str::to_string),
+            account: self.account.clone(),
+            response_sender: tx,
+        };
+
+        let _ = self.sender.send(command).await;
+
+        rx.await.map_err(|_| RithmicError::ConnectionClosed)?
+    }
+
+    /// Request the account's fill history, one response per fill.
+    ///
+    /// # Arguments
+    /// * `range` - The window to report on
+    /// * `max_record_count` - Cap on the number of fills returned, at most
+    ///   10,000. `None` leaves the cap to the server.
+    ///
+    /// # Errors
+    /// [`RithmicError::InvalidArgument`] when `max_record_count` is above
+    /// 10,000, which Rithmic rejects.
+    ///
+    /// # Returns
+    /// The fill responses or an error message
+    pub async fn show_fill_history(
+        &self,
+        range: FillHistoryRange,
+        max_record_count: Option<i32>,
+    ) -> Result<Vec<RithmicResponse>, RithmicError> {
+        if let Some(count) = max_record_count
+            && !(0..=10_000).contains(&count)
+        {
+            return Err(RithmicError::InvalidArgument(format!(
+                "max_record_count must be between 0 and 10,000, got {count}"
+            )));
+        }
+
+        let (tx, rx) = oneshot::channel::<Result<Vec<RithmicResponse>, RithmicError>>();
+
+        let command = OrderPlantCommand::ShowFillHistory {
+            range,
+            max_record_count,
             account: self.account.clone(),
             response_sender: tx,
         };

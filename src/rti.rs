@@ -199,6 +199,8 @@ pub struct ResponseReferenceData {
     pub min_fprice_change: ::core::option::Option<f64>,
     #[prost(double, optional, tag = "154389")]
     pub single_point_value: ::core::option::Option<f64>,
+    #[prost(int32, optional, tag = "153068")]
+    pub min_qprice_change_precision: ::core::option::Option<i32>,
 }
 /// Nested message and enum types in `ResponseReferenceData`.
 pub mod response_reference_data {
@@ -391,97 +393,6 @@ pub struct ForcedLogout {
     /// PB_OFFSET + MNM_TEMPLATE_ID
     #[prost(int32, required, tag = "154467")]
     pub template_id: i32,
-}
-#[non_exhaustive]
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct UserAccountUpdate {
-    #[prost(int32, required, tag = "154467")]
-    pub template_id: i32,
-    #[prost(
-        enumeration = "user_account_update::UpdateType",
-        optional,
-        tag = "154288"
-    )]
-    pub update_type: ::core::option::Option<i32>,
-    #[prost(
-        enumeration = "user_account_update::AccessType",
-        optional,
-        tag = "154000"
-    )]
-    pub access_type: ::core::option::Option<i32>,
-    #[prost(string, optional, tag = "154247")]
-    pub source_user_id: ::core::option::Option<::prost::alloc::string::String>,
-    #[prost(string, optional, tag = "131003")]
-    pub user: ::core::option::Option<::prost::alloc::string::String>,
-    #[prost(string, optional, tag = "154013")]
-    pub fcm_id: ::core::option::Option<::prost::alloc::string::String>,
-    #[prost(string, optional, tag = "154014")]
-    pub ib_id: ::core::option::Option<::prost::alloc::string::String>,
-    #[prost(string, optional, tag = "154008")]
-    pub account_id: ::core::option::Option<::prost::alloc::string::String>,
-    #[prost(string, optional, tag = "154002")]
-    pub account_name: ::core::option::Option<::prost::alloc::string::String>,
-    #[prost(int32, optional, tag = "150100")]
-    pub ssboe: ::core::option::Option<i32>,
-    #[prost(int32, optional, tag = "150101")]
-    pub usecs: ::core::option::Option<i32>,
-}
-/// Nested message and enum types in `UserAccountUpdate`.
-pub mod user_account_update {
-    #[non_exhaustive]
-    #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
-    #[repr(i32)]
-    pub enum UpdateType {
-        Add = 1,
-        Remove = 2,
-    }
-    impl UpdateType {
-        /// String value of the enum field names used in the ProtoBuf definition.
-        ///
-        /// The values are not transformed in any way and thus are considered stable
-        /// (if the ProtoBuf definition does not change) and safe for programmatic use.
-        pub fn as_str_name(&self) -> &'static str {
-            match self {
-                Self::Add => "ADD",
-                Self::Remove => "REMOVE",
-            }
-        }
-        /// Creates an enum from field names used in the ProtoBuf definition.
-        pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
-            match value {
-                "ADD" => Some(Self::Add),
-                "REMOVE" => Some(Self::Remove),
-                _ => None,
-            }
-        }
-    }
-    #[non_exhaustive]
-    #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
-    #[repr(i32)]
-    pub enum AccessType {
-        ReadOnly = 0,
-        ReadWrite = 1,
-    }
-    impl AccessType {
-        /// String value of the enum field names used in the ProtoBuf definition.
-        ///
-        /// The values are not transformed in any way and thus are considered stable
-        /// (if the ProtoBuf definition does not change) and safe for programmatic use.
-        pub fn as_str_name(&self) -> &'static str {
-            match self {
-                Self::ReadOnly => "READ_ONLY",
-                Self::ReadWrite => "READ_WRITE",
-            }
-        }
-        /// Creates an enum from field names used in the ProtoBuf definition.
-        pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
-            match value {
-                "READ_ONLY" => Some(Self::ReadOnly),
-                "READ_WRITE" => Some(Self::ReadWrite),
-                _ => None,
-            }
-        }
-    }
 }
 /// update bits and Request enum defined here is also referred in request_subscribe_by_underlying.proto
 /// make sure both these proto files are always same.
@@ -2626,38 +2537,64 @@ pub struct RequestLoginInfo {
     #[prost(string, repeated, tag = "132760")]
     pub user_msg: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
 }
-/// PB_OFFSET = 100000, is the offset added for each MNM field id
 #[non_exhaustive]
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ResponseLoginInfo {
-    /// PB_OFFSET + MNM_TEMPLATE_ID
     #[prost(int32, required, tag = "154467")]
     pub template_id: i32,
-    /// PB_OFFSET + MNM_USER_MSG
     #[prost(string, repeated, tag = "132760")]
     pub user_msg: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
-    /// PB_OFFSET + MNM_RESPONSE_CODE
     #[prost(string, repeated, tag = "132766")]
     pub rp_code: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
-    /// PB_OFFSET + MNM_FCM_ID
     #[prost(string, optional, tag = "154013")]
     pub fcm_id: ::core::option::Option<::prost::alloc::string::String>,
-    /// PB_OFFSET + MNM_IB_ID
     #[prost(string, optional, tag = "154014")]
     pub ib_id: ::core::option::Option<::prost::alloc::string::String>,
-    /// PB_OFFSET + MNM_FIRST_NAME
+    #[prost(string, optional, tag = "131003")]
+    pub user: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(string, optional, tag = "154216")]
     pub first_name: ::core::option::Option<::prost::alloc::string::String>,
-    /// PB_OFFSET + MNM_LAST_NAME
     #[prost(string, optional, tag = "154217")]
     pub last_name: ::core::option::Option<::prost::alloc::string::String>,
-    /// PB_OFFSET + MNM_USER_TYPE
+    #[prost(string, optional, tag = "150110")]
+    pub email_address: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(
         enumeration = "response_login_info::UserType",
         optional,
         tag = "154036"
     )]
     pub user_type: ::core::option::Option<i32>,
+    /// enabled or disabled
+    #[prost(string, optional, tag = "158206")]
+    pub order_copy_status: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "154712")]
+    pub country_code: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "154713")]
+    pub state_code: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "144511")]
+    pub address_street_1: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "144512")]
+    pub address_street_2: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "144513")]
+    pub address_city: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "144514")]
+    pub address_state: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "144515")]
+    pub address_country: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "144519")]
+    pub address_zip: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "144516")]
+    pub phone_residence: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "144517")]
+    pub phone_work: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "144518")]
+    pub phone_mobile: ::core::option::Option<::prost::alloc::string::String>,
+    /// ticker_plant (market data) max session count
+    #[prost(int32, optional, tag = "140000")]
+    pub tp_max_session_count: ::core::option::Option<i32>,
+    /// order_plant max session count
+    #[prost(int32, optional, tag = "140012")]
+    pub op_max_session_count: ::core::option::Option<i32>,
 }
 /// Nested message and enum types in `ResponseLoginInfo`.
 pub mod response_login_info {
@@ -2773,6 +2710,12 @@ pub struct ResponseAccountList {
     pub account_name: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(string, optional, tag = "154383")]
     pub account_currency: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "154019")]
+    pub loss_limit: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(int32, optional, tag = "153171")]
+    pub account_creation_ssboe: ::core::option::Option<i32>,
+    #[prost(int32, optional, tag = "153172")]
+    pub account_creation_usecs: ::core::option::Option<i32>,
     #[prost(string, optional, tag = "131035")]
     pub account_auto_liquidate: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(string, optional, tag = "131040")]
@@ -4460,6 +4403,9 @@ pub struct RequestBracketOrder {
         tag = "112003"
     )]
     pub transaction_type: ::core::option::Option<i32>,
+    /// AFOCCA, FOCCA, CCA, FCA or OCA
+    #[prost(string, optional, tag = "154482")]
+    pub order_operation_type: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(
         enumeration = "request_bracket_order::Duration",
         optional,
@@ -5091,26 +5037,26 @@ pub struct RequestListExchangePermissions {
     #[prost(string, optional, tag = "154220")]
     pub user: ::core::option::Option<::prost::alloc::string::String>,
 }
-/// PB_OFFSET = 100000, is the offset added for each MNM field id
 #[non_exhaustive]
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ResponseListExchangePermissions {
-    /// PB_OFFSET + MNM_TEMPLATE_ID
     #[prost(int32, required, tag = "154467")]
     pub template_id: i32,
-    /// PB_OFFSET + MNM_USER_MSG
     #[prost(string, repeated, tag = "132760")]
     pub user_msg: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
-    /// PB_OFFSET + MNM_REQUEST_HANDLER_RESPONSE_CODE
     #[prost(string, repeated, tag = "132764")]
     pub rq_handler_rp_code: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
-    /// PB_OFFSET + MNM_RESPONSE_CODE
     #[prost(string, repeated, tag = "132766")]
     pub rp_code: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
-    /// PB_OFFSET + MNM_EXCHANGE
     #[prost(string, optional, tag = "110101")]
     pub exchange: ::core::option::Option<::prost::alloc::string::String>,
-    /// PB_OFFSET + MNM_ENTITLEMENT_FLAG
+    /// level_1 (top of book) entitlement status
+    #[prost(string, optional, tag = "153508")]
+    pub level_1_market_data: ::core::option::Option<::prost::alloc::string::String>,
+    /// level_2 (order book) entitlement status
+    #[prost(string, optional, tag = "153509")]
+    pub level_2_market_data: ::core::option::Option<::prost::alloc::string::String>,
+    /// deprecated. use level_1_market_data, level_2_market_data fields instead.
     #[prost(
         enumeration = "response_list_exchange_permissions::EntitlementFlag",
         optional,
@@ -5394,6 +5340,187 @@ pub struct ResponseReplayExecutions {
     pub user_msg: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
     #[prost(string, repeated, tag = "132766")]
     pub rp_code: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+}
+#[non_exhaustive]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct RequestGetUserInfo {
+    #[prost(int32, required, tag = "154467")]
+    pub template_id: i32,
+    #[prost(string, repeated, tag = "132760")]
+    pub user_msg: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "154013")]
+    pub fcm_id: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "154014")]
+    pub ib_id: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "154220")]
+    pub user: ::core::option::Option<::prost::alloc::string::String>,
+}
+#[non_exhaustive]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ResponseGetUserInfo {
+    #[prost(int32, required, tag = "154467")]
+    pub template_id: i32,
+    #[prost(string, repeated, tag = "132760")]
+    pub user_msg: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(string, repeated, tag = "132764")]
+    pub rq_handler_rp_code: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(string, repeated, tag = "132766")]
+    pub rp_code: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "154013")]
+    pub fcm_id: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "154014")]
+    pub ib_id: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "154247")]
+    pub source_user_id: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "131003")]
+    pub user: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "154216")]
+    pub first_name: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "154217")]
+    pub last_name: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "150110")]
+    pub email_address: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "154712")]
+    pub country_code: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "154713")]
+    pub state_code: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "144511")]
+    pub address_street_1: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "144512")]
+    pub address_street_2: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "144513")]
+    pub address_city: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "144514")]
+    pub address_state: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "144515")]
+    pub address_country: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "144519")]
+    pub address_zip: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "144516")]
+    pub phone_residence: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "144517")]
+    pub phone_work: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "144518")]
+    pub phone_mobile: ::core::option::Option<::prost::alloc::string::String>,
+    /// possbile values - 3 (trader), 2 (ib user), 1 (fcm user)
+    #[prost(string, optional, tag = "154036")]
+    pub r#type: ::core::option::Option<::prost::alloc::string::String>,
+    /// enabled or disabled
+    #[prost(string, optional, tag = "156975")]
+    pub status: ::core::option::Option<::prost::alloc::string::String>,
+    /// enabled or disabled
+    #[prost(string, optional, tag = "158206")]
+    pub order_copy_status: ::core::option::Option<::prost::alloc::string::String>,
+    /// ticker_plant (market data) max session count
+    #[prost(int32, optional, tag = "140000")]
+    pub tp_max_session_count: ::core::option::Option<i32>,
+    /// order_plant max session count
+    #[prost(int32, optional, tag = "140012")]
+    pub op_max_session_count: ::core::option::Option<i32>,
+}
+#[non_exhaustive]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct RequestShowFillHistory {
+    #[prost(int32, required, tag = "154467")]
+    pub template_id: i32,
+    #[prost(string, repeated, tag = "132760")]
+    pub user_msg: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "154013")]
+    pub fcm_id: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "154014")]
+    pub ib_id: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "154008")]
+    pub account_id: ::core::option::Option<::prost::alloc::string::String>,
+    /// ssboe or trade_date
+    #[prost(string, optional, tag = "120001")]
+    pub index_format: ::core::option::Option<::prost::alloc::string::String>,
+    /// seconds since begin of epoch or CCYYMMDD
+    #[prost(int32, optional, tag = "153002")]
+    pub start_index: ::core::option::Option<i32>,
+    /// seconds since begin of epoch or CCYYMMDD
+    #[prost(int32, optional, tag = "153003")]
+    pub finish_index: ::core::option::Option<i32>,
+    /// optional, but if specified the count MUST be <= 10000
+    #[prost(int32, optional, tag = "154020")]
+    pub max_record_count: ::core::option::Option<i32>,
+}
+#[non_exhaustive]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ResponseShowFillHistory {
+    #[prost(int32, required, tag = "154467")]
+    pub template_id: i32,
+    #[prost(string, repeated, tag = "132760")]
+    pub user_msg: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(string, repeated, tag = "132764")]
+    pub rq_handler_rp_code: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(string, repeated, tag = "132766")]
+    pub rp_code: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "110300")]
+    pub basket_id: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "112002")]
+    pub sequence_number: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "149263")]
+    pub orig_sequence_number: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "149264")]
+    pub cor_sequence_number: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "154013")]
+    pub fcm_id: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "154014")]
+    pub ib_id: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "154008")]
+    pub account_id: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "110100")]
+    pub symbol: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "110101")]
+    pub exchange: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "112021")]
+    pub trade_exchange: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "112016")]
+    pub trade_route: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "149238")]
+    pub exchange_order_id: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "110116")]
+    pub instrument_type: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "112003")]
+    pub transaction_type: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "112005")]
+    pub duration: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "112008")]
+    pub price_type: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "154770")]
+    pub orig_price_type: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "154710")]
+    pub manual_or_auto: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "110309")]
+    pub fill_time: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "110310")]
+    pub fill_date: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "110311")]
+    pub fill_id: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(double, optional, tag = "110306")]
+    pub price: ::core::option::Option<f64>,
+    #[prost(double, optional, tag = "149247")]
+    pub trigger_price: ::core::option::Option<f64>,
+    #[prost(double, optional, tag = "110307")]
+    pub fill_price: ::core::option::Option<f64>,
+    #[prost(double, optional, tag = "110322")]
+    pub avg_fill_price: ::core::option::Option<f64>,
+    #[prost(uint64, optional, tag = "110308")]
+    pub fill_size: ::core::option::Option<u64>,
+    #[prost(uint64, optional, tag = "154111")]
+    pub total_fill_size: ::core::option::Option<u64>,
+    #[prost(uint64, optional, tag = "154112")]
+    pub total_unfilled_size: ::core::option::Option<u64>,
+    #[prost(int32, optional, tag = "150100")]
+    pub ssboe: ::core::option::Option<i32>,
+    #[prost(int32, optional, tag = "150101")]
+    pub usecs: ::core::option::Option<i32>,
+    #[prost(int32, optional, tag = "150400")]
+    pub source_ssboe: ::core::option::Option<i32>,
+    #[prost(int32, optional, tag = "150401")]
+    pub source_usecs: ::core::option::Option<i32>,
+    #[prost(int32, optional, tag = "150404")]
+    pub source_nsecs: ::core::option::Option<i32>,
 }
 /// PB_OFFSET = 100000, is the offset added for each MNM field id
 #[non_exhaustive]
@@ -6002,6 +6129,12 @@ pub struct ExchangeOrderNotification {
     pub ssboe: ::core::option::Option<i32>,
     #[prost(int32, optional, tag = "150101")]
     pub usecs: ::core::option::Option<i32>,
+    #[prost(int32, optional, tag = "150400")]
+    pub source_ssboe: ::core::option::Option<i32>,
+    #[prost(int32, optional, tag = "150401")]
+    pub source_usecs: ::core::option::Option<i32>,
+    #[prost(int32, optional, tag = "150404")]
+    pub source_nsecs: ::core::option::Option<i32>,
     #[prost(int32, optional, tag = "150405")]
     pub exch_receipt_ssboe: ::core::option::Option<i32>,
     #[prost(int32, optional, tag = "150406")]
@@ -6223,26 +6356,6 @@ pub mod exchange_order_notification {
 /// PB_OFFSET = 100000, is the offset added for each MNM field id
 #[non_exhaustive]
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct AccountListUpdates {
-    /// PB_OFFSET + MNM_TEMPLATE_ID
-    #[prost(int32, required, tag = "154467")]
-    pub template_id: i32,
-    /// PB_OFFSET + MNM_FCM_ID
-    #[prost(string, optional, tag = "154013")]
-    pub fcm_id: ::core::option::Option<::prost::alloc::string::String>,
-    /// PB_OFFSET + MNM_IB_ID
-    #[prost(string, optional, tag = "154014")]
-    pub ib_id: ::core::option::Option<::prost::alloc::string::String>,
-    /// PB_OFFSET + MNM_ACCOUNT_ID
-    #[prost(string, optional, tag = "154008")]
-    pub account_id: ::core::option::Option<::prost::alloc::string::String>,
-    /// PB_OFFSET + MNM_AUTO_LIQ_THRESHOLD_CURRENT_VALUE
-    #[prost(string, optional, tag = "131040")]
-    pub auto_liq_threshold_current_value: ::core::option::Option<::prost::alloc::string::String>,
-}
-/// PB_OFFSET = 100000, is the offset added for each MNM field id
-#[non_exhaustive]
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct UpdateEasyToBorrowList {
     /// PB_OFFSET + MNM_TEMPLATE_ID
     #[prost(int32, required, tag = "154467")]
@@ -6313,32 +6426,130 @@ pub mod account_rms_updates {
         }
     }
 }
-/// PB_OFFSET = 100000, is the offset added for each MNM field id
+#[non_exhaustive]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct UserInfoUpdate {
+    #[prost(int32, required, tag = "154467")]
+    pub template_id: i32,
+    /// add_user, modify_user, set_exchange_permission, om_process_reset_password, change_password
+    #[prost(string, optional, tag = "154288")]
+    pub update_type: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "154247")]
+    pub source_user_id: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "131003")]
+    pub user: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "154013")]
+    pub fcm_id: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "154014")]
+    pub ib_id: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "154216")]
+    pub first_name: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "154217")]
+    pub last_name: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "150110")]
+    pub email_address: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "154712")]
+    pub country_code: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "154713")]
+    pub state_code: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "144511")]
+    pub address_street_1: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "144512")]
+    pub address_street_2: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "144513")]
+    pub address_city: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "144514")]
+    pub address_state: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "144515")]
+    pub address_country: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "144519")]
+    pub address_zip: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "144516")]
+    pub phone_residence: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "144517")]
+    pub phone_work: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "144518")]
+    pub phone_mobile: ::core::option::Option<::prost::alloc::string::String>,
+    /// possbile values - 3 (trader), 2 (ib user), 1 (fcm user)
+    #[prost(string, optional, tag = "154036")]
+    pub r#type: ::core::option::Option<::prost::alloc::string::String>,
+    /// enabled or disabled
+    #[prost(string, optional, tag = "156975")]
+    pub status: ::core::option::Option<::prost::alloc::string::String>,
+    /// enabled or disabled
+    #[prost(string, optional, tag = "158206")]
+    pub order_copy_status: ::core::option::Option<::prost::alloc::string::String>,
+    /// exchange related to market data entitlements
+    #[prost(string, optional, tag = "110101")]
+    pub exchange: ::core::option::Option<::prost::alloc::string::String>,
+    /// level_1 (top of book) entitlement status
+    #[prost(string, optional, tag = "153400")]
+    pub level_1_market_data: ::core::option::Option<::prost::alloc::string::String>,
+    /// level_2 (order book) entitlement status
+    #[prost(string, optional, tag = "153217")]
+    pub level_2_market_data: ::core::option::Option<::prost::alloc::string::String>,
+    /// ticker_plant (market data) max session count
+    #[prost(int32, optional, tag = "140000")]
+    pub tp_max_session_count: ::core::option::Option<i32>,
+    /// order_plant max session count
+    #[prost(int32, optional, tag = "140012")]
+    pub op_max_session_count: ::core::option::Option<i32>,
+    #[prost(int32, optional, tag = "150100")]
+    pub ssboe: ::core::option::Option<i32>,
+    #[prost(int32, optional, tag = "150101")]
+    pub usecs: ::core::option::Option<i32>,
+}
+#[non_exhaustive]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct UserAccountUpdate {
+    #[prost(int32, required, tag = "154467")]
+    pub template_id: i32,
+    /// add_account, modify_account, assign_account_to_user, remove_account_from_user
+    #[prost(string, optional, tag = "154288")]
+    pub update_type: ::core::option::Option<::prost::alloc::string::String>,
+    /// 0 - read_only, 1 - read_write
+    #[prost(string, optional, tag = "154000")]
+    pub access_type: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "154247")]
+    pub source_user_id: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "131003")]
+    pub user: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "154013")]
+    pub fcm_id: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "154014")]
+    pub ib_id: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "154008")]
+    pub account_id: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "154002")]
+    pub account_name: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "154003")]
+    pub account_status: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(int32, optional, tag = "150100")]
+    pub ssboe: ::core::option::Option<i32>,
+    #[prost(int32, optional, tag = "150101")]
+    pub usecs: ::core::option::Option<i32>,
+}
 #[non_exhaustive]
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct RequestPnLPositionUpdates {
-    /// PB_OFFSET + MNM_TEMPLATE_ID
     #[prost(int32, required, tag = "154467")]
     pub template_id: i32,
-    /// PB_OFFSET + MNM_USER_MSG
     #[prost(string, repeated, tag = "132760")]
     pub user_msg: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
-    /// PB_OFFSET + MNM_REQUEST
     #[prost(
         enumeration = "request_pn_l_position_updates::Request",
         optional,
         tag = "100000"
     )]
     pub request: ::core::option::Option<i32>,
-    /// PB_OFFSET + MNM_FCM_ID
     #[prost(string, optional, tag = "154013")]
     pub fcm_id: ::core::option::Option<::prost::alloc::string::String>,
-    /// PB_OFFSET + MNM_IB_ID
     #[prost(string, optional, tag = "154014")]
     pub ib_id: ::core::option::Option<::prost::alloc::string::String>,
-    /// PB_OFFSET + MNM_ACCOUNT_ID
     #[prost(string, optional, tag = "154008")]
     pub account_id: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(bool, optional, tag = "154968")]
+    pub rms_updates_only: ::core::option::Option<bool>,
 }
 /// Nested message and enum types in `RequestPnLPositionUpdates`.
 pub mod request_pn_l_position_updates {
@@ -6771,6 +6982,8 @@ pub struct ResponseTickBarReplay {
     pub sub_type: ::core::option::Option<i32>,
     #[prost(string, optional, tag = "148162")]
     pub type_specifier: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, repeated, tag = "119225")]
+    pub data_bar_seq_num: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
     #[prost(uint64, optional, tag = "119204")]
     pub num_trades: ::core::option::Option<u64>,
     #[prost(uint64, optional, tag = "119205")]
@@ -7423,59 +7636,43 @@ pub struct ResponseResumeBars {
     #[prost(string, repeated, tag = "132766")]
     pub rp_code: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
 }
-/// PB_OFFSET = 100000, is the offset added for each MNM field id
 #[non_exhaustive]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct TickBar {
-    /// PB_OFFSET + MNM_TEMPLATE_ID
     #[prost(int32, required, tag = "154467")]
     pub template_id: i32,
-    /// PB_OFFSET + MNM_SYMBOL
     #[prost(string, optional, tag = "110100")]
     pub symbol: ::core::option::Option<::prost::alloc::string::String>,
-    /// PB_OFFSET + MNM_EXCHANGE
     #[prost(string, optional, tag = "110101")]
     pub exchange: ::core::option::Option<::prost::alloc::string::String>,
-    /// PB_OFFSET + MNM_DATA_BAR_TYPE
     #[prost(enumeration = "tick_bar::BarType", optional, tag = "119200")]
     pub r#type: ::core::option::Option<i32>,
-    /// PB_OFFSET + MNM_DATA_BAR_SUB_TYPE
     #[prost(enumeration = "tick_bar::BarSubType", optional, tag = "119208")]
     pub sub_type: ::core::option::Option<i32>,
-    /// PB_OFFSET + MNM_CATEGORY_SPECIFIC_INFO
     #[prost(string, optional, tag = "148162")]
     pub type_specifier: ::core::option::Option<::prost::alloc::string::String>,
-    /// PB_OFFSET + MNM_DATA_BAR_NUM_TRADES
+    #[prost(string, repeated, tag = "119225")]
+    pub data_bar_seq_num: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
     #[prost(uint64, optional, tag = "119204")]
     pub num_trades: ::core::option::Option<u64>,
-    /// PB_OFFSET + MNM_DATA_BAR_TRADE_VOLUME
     #[prost(uint64, optional, tag = "119205")]
     pub volume: ::core::option::Option<u64>,
-    /// PB_OFFSET + MNM_DATA_BAR_BID_VOLUME
     #[prost(uint64, optional, tag = "119213")]
     pub bid_volume: ::core::option::Option<u64>,
-    /// PB_OFFSET + MNM_DATA_BAR_ASK_VOLUME
     #[prost(uint64, optional, tag = "119214")]
     pub ask_volume: ::core::option::Option<u64>,
-    /// PB_OFFSET + MNM_OPEN_PRICE
     #[prost(double, optional, tag = "100019")]
     pub open_price: ::core::option::Option<f64>,
-    /// PB_OFFSET + MNM_CLOSE_TRADE_PRICE
     #[prost(double, optional, tag = "100021")]
     pub close_price: ::core::option::Option<f64>,
-    /// PB_OFFSET + MNM_HIGH_PRICE
     #[prost(double, optional, tag = "100012")]
     pub high_price: ::core::option::Option<f64>,
-    /// PB_OFFSET + MNM_LOW_PRICE
     #[prost(double, optional, tag = "100013")]
     pub low_price: ::core::option::Option<f64>,
-    /// PB_OFFSET + MNM_CUSTOM_SESSION_OPEN_SSM
     #[prost(int32, optional, tag = "119209")]
     pub custom_session_open_ssm: ::core::option::Option<i32>,
-    /// PB_OFFSET + MNM_DATA_BAR_SSBOE
     #[prost(int32, repeated, packed = "false", tag = "119202")]
     pub data_bar_ssboe: ::prost::alloc::vec::Vec<i32>,
-    /// PB_OFFSTE + MNM_DATA_BAR_USECS
     #[prost(int32, repeated, packed = "false", tag = "119203")]
     pub data_bar_usecs: ::prost::alloc::vec::Vec<i32>,
 }
@@ -7697,6 +7894,42 @@ pub struct ResponseListAcceptedAgreements {
 }
 #[non_exhaustive]
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct RequestShowAgreement {
+    #[prost(int32, required, tag = "154467")]
+    pub template_id: i32,
+    #[prost(string, repeated, tag = "132760")]
+    pub user_msg: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "153407")]
+    pub agreement_id: ::core::option::Option<::prost::alloc::string::String>,
+}
+#[non_exhaustive]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ResponseShowAgreement {
+    #[prost(int32, required, tag = "154467")]
+    pub template_id: i32,
+    #[prost(string, repeated, tag = "132760")]
+    pub user_msg: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(string, repeated, tag = "132764")]
+    pub rq_handler_rp_code: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(string, repeated, tag = "132766")]
+    pub rp_code: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "153406")]
+    pub agreement_title: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "153407")]
+    pub agreement_id: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(bytes = "vec", optional, tag = "153405")]
+    pub agreement: ::core::option::Option<::prost::alloc::vec::Vec<u8>>,
+    #[prost(bytes = "vec", optional, tag = "153432")]
+    pub agreement_html: ::core::option::Option<::prost::alloc::vec::Vec<u8>>,
+    #[prost(string, optional, tag = "153410")]
+    pub agreement_mandatory_flag: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "153415")]
+    pub agreement_status: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "153430")]
+    pub agreement_acceptance_request: ::core::option::Option<::prost::alloc::string::String>,
+}
+#[non_exhaustive]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct RequestAcceptAgreement {
     #[prost(int32, required, tag = "154467")]
     pub template_id: i32,
@@ -7739,40 +7972,4 @@ pub struct ResponseSetRithmicMrktDataSelfCertStatus {
     pub user_msg: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
     #[prost(string, repeated, tag = "132766")]
     pub rp_code: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
-}
-#[non_exhaustive]
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct RequestShowAgreement {
-    #[prost(int32, required, tag = "154467")]
-    pub template_id: i32,
-    #[prost(string, repeated, tag = "132760")]
-    pub user_msg: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
-    #[prost(string, optional, tag = "153407")]
-    pub agreement_id: ::core::option::Option<::prost::alloc::string::String>,
-}
-#[non_exhaustive]
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct ResponseShowAgreement {
-    #[prost(int32, required, tag = "154467")]
-    pub template_id: i32,
-    #[prost(string, repeated, tag = "132760")]
-    pub user_msg: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
-    #[prost(string, repeated, tag = "132764")]
-    pub rq_handler_rp_code: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
-    #[prost(string, repeated, tag = "132766")]
-    pub rp_code: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
-    #[prost(string, optional, tag = "153406")]
-    pub agreement_title: ::core::option::Option<::prost::alloc::string::String>,
-    #[prost(string, optional, tag = "153407")]
-    pub agreement_id: ::core::option::Option<::prost::alloc::string::String>,
-    #[prost(bytes = "vec", optional, tag = "153405")]
-    pub agreement: ::core::option::Option<::prost::alloc::vec::Vec<u8>>,
-    #[prost(bytes = "vec", optional, tag = "153432")]
-    pub agreement_html: ::core::option::Option<::prost::alloc::vec::Vec<u8>>,
-    #[prost(string, optional, tag = "153410")]
-    pub agreement_mandatory_flag: ::core::option::Option<::prost::alloc::string::String>,
-    #[prost(string, optional, tag = "153415")]
-    pub agreement_status: ::core::option::Option<::prost::alloc::string::String>,
-    #[prost(string, optional, tag = "153430")]
-    pub agreement_acceptance_request: ::core::option::Option<::prost::alloc::string::String>,
 }

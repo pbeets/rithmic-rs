@@ -467,6 +467,93 @@ impl From<BracketType> for request_bracket_order::BracketType {
     }
 }
 
+/// The `order_operation_type` of a bracket order, added in template
+/// version 5.37.
+///
+/// Rithmic documents only the wire spellings — "AFOCCA, FOCCA, CCA, FCA or
+/// OCA" — not what each one does, so the variants carry the spellings and
+/// nothing more.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[non_exhaustive]
+pub enum BracketOperationType {
+    /// Sent as `AFOCCA`.
+    Afocca,
+    /// Sent as `FOCCA`.
+    Focca,
+    /// Sent as `CCA`.
+    Cca,
+    /// Sent as `FCA`.
+    Fca,
+    /// Sent as `OCA`.
+    Oca,
+}
+
+impl BracketOperationType {
+    /// The spelling sent on the wire.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Afocca => "AFOCCA",
+            Self::Focca => "FOCCA",
+            Self::Cca => "CCA",
+            Self::Fca => "FCA",
+            Self::Oca => "OCA",
+        }
+    }
+}
+
+impl fmt::Display for BracketOperationType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str_name())
+    }
+}
+
+/// The window of a fill-history request, in the two index formats
+/// template 3512 accepts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[non_exhaustive]
+pub enum FillHistoryRange {
+    /// Bounds are seconds since the beginning of the epoch.
+    Ssboe {
+        /// Start of the window, in seconds since the beginning of the epoch.
+        start: i32,
+        /// End of the window, in seconds since the beginning of the epoch.
+        finish: i32,
+    },
+    /// Bounds are trade dates written as CCYYMMDD, e.g. `20260804`.
+    TradeDate {
+        /// First trade date of the window, as CCYYMMDD.
+        start: i32,
+        /// Last trade date of the window, as CCYYMMDD.
+        finish: i32,
+    },
+}
+
+impl FillHistoryRange {
+    /// The `index_format` spelling sent on the wire.
+    pub fn index_format(&self) -> &'static str {
+        match self {
+            Self::Ssboe { .. } => "ssboe",
+            Self::TradeDate { .. } => "trade_date",
+        }
+    }
+
+    /// The start of the window, in this range's index format.
+    pub fn start(&self) -> i32 {
+        match self {
+            Self::Ssboe { start, .. } | Self::TradeDate { start, .. } => *start,
+        }
+    }
+
+    /// The end of the window, in this range's index format.
+    pub fn finish(&self) -> i32 {
+        match self {
+            Self::Ssboe { finish, .. } | Self::TradeDate { finish, .. } => *finish,
+        }
+    }
+}
+
 /// Comparison operator for an if-touched trigger.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]

@@ -328,6 +328,7 @@ pub use util::{
 
 // Re-export high-level trading types
 pub use types::{
-    BracketType, ManualOrAutoEntry, OrderCondition, OrderPriceField, OrderSide, OrderType,
-    ParseOrderSideError, ParseOrderTypeError, ParseTimeInForceError, TimeInForce,
+    BracketOperationType, BracketType, FillHistoryRange, ManualOrAutoEntry, OrderCondition,
+    OrderPriceField, OrderSide, OrderType, ParseOrderSideError, ParseOrderTypeError,
+    ParseTimeInForceError, TimeInForce,
 };

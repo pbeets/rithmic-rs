@@ -12,7 +12,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // generated type without this makes every proto refresh a semver-major event here.
     config.type_attribute(".", "#[non_exhaustive]");
     config.out_dir(&src_dir);
-    config.compile_protos(&[proto_dir.join("otps_proto_pool.proto")], &[&proto_dir])?;
+    config.compile_protos(
+        &[
+            proto_dir.join("otps_proto_pool.proto"),
+            // The 0.89.0.0 pool stopped importing these four, but the .proto
+            // files still ship and templates 504/505 and 508/509 still answer,
+            // so compile them alongside the pool.
+            proto_dir.join("request_accept_agreement.proto"),
+            proto_dir.join("response_accept_agreement.proto"),
+            proto_dir.join("request_set_rithmic_mrkt_data_self_cert_status.proto"),
+            proto_dir.join("response_set_rithmic_mrkt_data_self_cert_status.proto"),
+        ],
+        &[&proto_dir],
+    )?;
 
     // MessageType is in a separate proto not referenced by the pool,
     // so we compile it separately and append it to the generated file.

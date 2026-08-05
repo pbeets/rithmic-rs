@@ -3,7 +3,9 @@
 use super::triggers::RithmicIfTouchedTrigger;
 use crate::{
     error::RithmicError,
-    types::{BracketType, ManualOrAutoEntry, OrderSide, OrderType, TimeInForce},
+    types::{
+        BracketOperationType, BracketType, ManualOrAutoEntry, OrderSide, OrderType, TimeInForce,
+    },
 };
 
 /// Entry order with linked profit target and stop loss orders.
@@ -129,6 +131,9 @@ pub struct RithmicBracketOrder {
     pub manual_or_auto: ManualOrAutoEntry,
     /// Originating window name reported to Rithmic.
     pub window_name: Option<String>,
+    /// The `order_operation_type` sent to Rithmic. `None` leaves the choice
+    /// to the server.
+    pub operation_type: Option<BracketOperationType>,
 }
 
 /// The exit-leg setters come in singular and plural. Singular sets one leg
@@ -386,6 +391,12 @@ impl RithmicBracketOrder {
     /// Window name to report this order under.
     pub fn window_name(mut self, window_name: impl Into<String>) -> Self {
         self.window_name = Some(window_name.into());
+        self
+    }
+
+    /// The `order_operation_type` sent to Rithmic.
+    pub fn operation_type(mut self, operation_type: BracketOperationType) -> Self {
+        self.operation_type = Some(operation_type);
         self
     }
 

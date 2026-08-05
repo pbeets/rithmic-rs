@@ -1,6 +1,6 @@
 use super::{
-    AccountListUpdates, AccountPnLPositionUpdate, AccountRmsUpdates, BestBidOffer, BracketUpdates,
-    DepthByOrder, DepthByOrderEndEvent, EndOfDayPrices, ExchangeOrderNotification, ForcedLogout,
+    AccountPnLPositionUpdate, AccountRmsUpdates, BestBidOffer, BracketUpdates, DepthByOrder,
+    DepthByOrderEndEvent, EndOfDayPrices, ExchangeOrderNotification, ForcedLogout,
     FrontMonthContractUpdate, IndicatorPrices, InstrumentPnLPositionUpdate, LastTrade, MarketMode,
     OpenInterest, OrderBook, OrderPriceLimits, QuoteStatistics, Reject, RequestHeartbeat,
     ResponseAcceptAgreement, ResponseAccountList, ResponseAccountRmsInfo,
@@ -8,23 +8,24 @@ use super::{
     ResponseCancelAllOrders, ResponseCancelOrder, ResponseDepthByOrderSnapshot,
     ResponseDepthByOrderUpdates, ResponseEasyToBorrowList, ResponseExitPosition,
     ResponseFrontMonthContract, ResponseGetInstrumentByUnderlying,
-    ResponseGetInstrumentByUnderlyingKeys, ResponseGetVolumeAtPrice, ResponseGiveTickSizeTypeTable,
-    ResponseHeartbeat, ResponseLinkOrders, ResponseListAcceptedAgreements,
-    ResponseListExchangePermissions, ResponseListUnacceptedAgreements, ResponseLogin,
-    ResponseLoginInfo, ResponseLogout, ResponseMarketDataUpdate,
-    ResponseMarketDataUpdateByUnderlying, ResponseModifyOrder, ResponseModifyOrderReferenceData,
-    ResponseNewOrder, ResponseOcoOrder, ResponseOrderSessionConfig, ResponsePnLPositionSnapshot,
-    ResponsePnLPositionUpdates, ResponseProductCodes, ResponseProductRmsInfo,
-    ResponseReferenceData, ResponseReplayExecutions, ResponseResumeBars,
-    ResponseRithmicSystemGatewayInfo, ResponseRithmicSystemInfo, ResponseSearchSymbols,
-    ResponseSetRithmicMrktDataSelfCertStatus, ResponseShowAgreement, ResponseShowBracketStops,
-    ResponseShowBrackets, ResponseShowOrderHistory, ResponseShowOrderHistoryDates,
-    ResponseShowOrderHistoryDetail, ResponseShowOrderHistorySummary, ResponseShowOrders,
-    ResponseSubscribeForOrderUpdates, ResponseSubscribeToBracketUpdates, ResponseTickBarReplay,
-    ResponseTickBarUpdate, ResponseTimeBarReplay, ResponseTimeBarUpdate, ResponseTradeRoutes,
+    ResponseGetInstrumentByUnderlyingKeys, ResponseGetUserInfo, ResponseGetVolumeAtPrice,
+    ResponseGiveTickSizeTypeTable, ResponseHeartbeat, ResponseLinkOrders,
+    ResponseListAcceptedAgreements, ResponseListExchangePermissions,
+    ResponseListUnacceptedAgreements, ResponseLogin, ResponseLoginInfo, ResponseLogout,
+    ResponseMarketDataUpdate, ResponseMarketDataUpdateByUnderlying, ResponseModifyOrder,
+    ResponseModifyOrderReferenceData, ResponseNewOrder, ResponseOcoOrder,
+    ResponseOrderSessionConfig, ResponsePnLPositionSnapshot, ResponsePnLPositionUpdates,
+    ResponseProductCodes, ResponseProductRmsInfo, ResponseReferenceData, ResponseReplayExecutions,
+    ResponseResumeBars, ResponseRithmicSystemGatewayInfo, ResponseRithmicSystemInfo,
+    ResponseSearchSymbols, ResponseSetRithmicMrktDataSelfCertStatus, ResponseShowAgreement,
+    ResponseShowBracketStops, ResponseShowBrackets, ResponseShowFillHistory,
+    ResponseShowOrderHistory, ResponseShowOrderHistoryDates, ResponseShowOrderHistoryDetail,
+    ResponseShowOrderHistorySummary, ResponseShowOrders, ResponseSubscribeForOrderUpdates,
+    ResponseSubscribeToBracketUpdates, ResponseTickBarReplay, ResponseTickBarUpdate,
+    ResponseTimeBarReplay, ResponseTimeBarUpdate, ResponseTradeRoutes,
     ResponseUpdateStopBracketLevel, ResponseUpdateTargetBracketLevel,
     ResponseVolumeProfileMinuteBars, RithmicOrderNotification, SymbolMarginRate, TickBar, TimeBar,
-    TradeRoute, TradeStatistics, UpdateEasyToBorrowList, UserAccountUpdate,
+    TradeRoute, TradeStatistics, UpdateEasyToBorrowList, UserAccountUpdate, UserInfoUpdate,
 };
 use crate::util::unknown_message::UnknownTemplateMessage;
 
@@ -32,7 +33,6 @@ use crate::util::unknown_message::UnknownTemplateMessage;
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum RithmicMessage {
-    AccountListUpdates(AccountListUpdates),
     AccountPnLPositionUpdate(AccountPnLPositionUpdate),
     AccountRmsUpdates(AccountRmsUpdates),
     BestBidOffer(BestBidOffer),
@@ -70,6 +70,7 @@ pub enum RithmicMessage {
     ResponseFrontMonthContract(ResponseFrontMonthContract),
     ResponseGetInstrumentByUnderlying(ResponseGetInstrumentByUnderlying),
     ResponseGetInstrumentByUnderlyingKeys(ResponseGetInstrumentByUnderlyingKeys),
+    ResponseGetUserInfo(ResponseGetUserInfo),
     ResponseGetVolumeAtPrice(ResponseGetVolumeAtPrice),
     ResponseGiveTickSizeTypeTable(ResponseGiveTickSizeTypeTable),
     ResponseHeartbeat(ResponseHeartbeat),
@@ -101,6 +102,7 @@ pub enum RithmicMessage {
     ResponseShowAgreement(ResponseShowAgreement),
     ResponseShowBrackets(ResponseShowBrackets),
     ResponseShowBracketStops(ResponseShowBracketStops),
+    ResponseShowFillHistory(ResponseShowFillHistory),
     ResponseShowOrderHistory(ResponseShowOrderHistory),
     ResponseShowOrderHistoryDates(ResponseShowOrderHistoryDates),
     ResponseShowOrderHistoryDetail(ResponseShowOrderHistoryDetail),
@@ -124,6 +126,7 @@ pub enum RithmicMessage {
     TradeStatistics(TradeStatistics),
     UpdateEasyToBorrowList(UpdateEasyToBorrowList),
     UserAccountUpdate(UserAccountUpdate),
+    UserInfoUpdate(UserInfoUpdate),
 
     /// The WebSocket connection failed unexpectedly.
     ///

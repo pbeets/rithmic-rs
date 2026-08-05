@@ -64,7 +64,6 @@ impl std::fmt::Debug for SubscriptionFilter {
 fn response_account_id(response: &RithmicResponse) -> Option<&str> {
     match &response.message {
         RithmicMessage::UserAccountUpdate(update) => update.account_id.as_deref(),
-        RithmicMessage::AccountListUpdates(update) => update.account_id.as_deref(),
         RithmicMessage::AccountRmsUpdates(update) => update.account_id.as_deref(),
         RithmicMessage::BracketUpdates(update) => update.account_id.as_deref(),
         RithmicMessage::RithmicOrderNotification(update) => update.account_id.as_deref(),

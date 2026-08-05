@@ -2,8 +2,8 @@ use prost::{Message, bytes::Bytes};
 use tracing::{error, warn};
 
 use crate::rti::{
-    AccountListUpdates, AccountPnLPositionUpdate, AccountRmsUpdates, BestBidOffer, BracketUpdates,
-    DepthByOrder, DepthByOrderEndEvent, EndOfDayPrices, ExchangeOrderNotification, ForcedLogout,
+    AccountPnLPositionUpdate, AccountRmsUpdates, BestBidOffer, BracketUpdates, DepthByOrder,
+    DepthByOrderEndEvent, EndOfDayPrices, ExchangeOrderNotification, ForcedLogout,
     FrontMonthContractUpdate, IndicatorPrices, InstrumentPnLPositionUpdate, LastTrade, MarketMode,
     MessageType, OpenInterest, OrderBook, OrderPriceLimits, QuoteStatistics, Reject,
     RequestHeartbeat, ResponseAcceptAgreement, ResponseAccountList, ResponseAccountRmsInfo,
@@ -11,23 +11,24 @@ use crate::rti::{
     ResponseCancelAllOrders, ResponseCancelOrder, ResponseDepthByOrderSnapshot,
     ResponseDepthByOrderUpdates, ResponseEasyToBorrowList, ResponseExitPosition,
     ResponseFrontMonthContract, ResponseGetInstrumentByUnderlying,
-    ResponseGetInstrumentByUnderlyingKeys, ResponseGetVolumeAtPrice, ResponseGiveTickSizeTypeTable,
-    ResponseHeartbeat, ResponseLinkOrders, ResponseListAcceptedAgreements,
-    ResponseListExchangePermissions, ResponseListUnacceptedAgreements, ResponseLogin,
-    ResponseLoginInfo, ResponseLogout, ResponseMarketDataUpdate,
-    ResponseMarketDataUpdateByUnderlying, ResponseModifyOrder, ResponseModifyOrderReferenceData,
-    ResponseNewOrder, ResponseOcoOrder, ResponseOrderSessionConfig, ResponsePnLPositionSnapshot,
-    ResponsePnLPositionUpdates, ResponseProductCodes, ResponseProductRmsInfo,
-    ResponseReferenceData, ResponseReplayExecutions, ResponseResumeBars,
-    ResponseRithmicSystemGatewayInfo, ResponseRithmicSystemInfo, ResponseSearchSymbols,
-    ResponseSetRithmicMrktDataSelfCertStatus, ResponseShowAgreement, ResponseShowBracketStops,
-    ResponseShowBrackets, ResponseShowOrderHistory, ResponseShowOrderHistoryDates,
-    ResponseShowOrderHistoryDetail, ResponseShowOrderHistorySummary, ResponseShowOrders,
-    ResponseSubscribeForOrderUpdates, ResponseSubscribeToBracketUpdates, ResponseTickBarReplay,
-    ResponseTickBarUpdate, ResponseTimeBarReplay, ResponseTimeBarUpdate, ResponseTradeRoutes,
+    ResponseGetInstrumentByUnderlyingKeys, ResponseGetUserInfo, ResponseGetVolumeAtPrice,
+    ResponseGiveTickSizeTypeTable, ResponseHeartbeat, ResponseLinkOrders,
+    ResponseListAcceptedAgreements, ResponseListExchangePermissions,
+    ResponseListUnacceptedAgreements, ResponseLogin, ResponseLoginInfo, ResponseLogout,
+    ResponseMarketDataUpdate, ResponseMarketDataUpdateByUnderlying, ResponseModifyOrder,
+    ResponseModifyOrderReferenceData, ResponseNewOrder, ResponseOcoOrder,
+    ResponseOrderSessionConfig, ResponsePnLPositionSnapshot, ResponsePnLPositionUpdates,
+    ResponseProductCodes, ResponseProductRmsInfo, ResponseReferenceData, ResponseReplayExecutions,
+    ResponseResumeBars, ResponseRithmicSystemGatewayInfo, ResponseRithmicSystemInfo,
+    ResponseSearchSymbols, ResponseSetRithmicMrktDataSelfCertStatus, ResponseShowAgreement,
+    ResponseShowBracketStops, ResponseShowBrackets, ResponseShowFillHistory,
+    ResponseShowOrderHistory, ResponseShowOrderHistoryDates, ResponseShowOrderHistoryDetail,
+    ResponseShowOrderHistorySummary, ResponseShowOrders, ResponseSubscribeForOrderUpdates,
+    ResponseSubscribeToBracketUpdates, ResponseTickBarReplay, ResponseTickBarUpdate,
+    ResponseTimeBarReplay, ResponseTimeBarUpdate, ResponseTradeRoutes,
     ResponseUpdateStopBracketLevel, ResponseUpdateTargetBracketLevel,
     ResponseVolumeProfileMinuteBars, RithmicOrderNotification, SymbolMarginRate, TickBar, TimeBar,
-    TradeRoute, TradeStatistics, UpdateEasyToBorrowList, UserAccountUpdate,
+    TradeRoute, TradeStatistics, UpdateEasyToBorrowList, UserAccountUpdate, UserInfoUpdate,
     messages::RithmicMessage,
 };
 
@@ -1239,20 +1240,6 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
-            354 => {
-                let resp = AccountListUpdates::decode(payload)
-                    .map_err(|e| decode_error(&self.source, e, true))?;
-
-                RithmicResponse {
-                    request_id: "".to_string(),
-                    message: RithmicMessage::AccountListUpdates(resp),
-                    is_update: true,
-                    has_more: false,
-                    multi_response: false,
-                    error: None,
-                    source: self.source.clone(),
-                }
-            }
             355 => {
                 let resp = UpdateEasyToBorrowList::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, true))?;
@@ -1274,6 +1261,20 @@ impl RithmicReceiverApi {
                 RithmicResponse {
                     request_id: "".to_string(),
                     message: RithmicMessage::AccountRmsUpdates(resp),
+                    is_update: true,
+                    has_more: false,
+                    multi_response: false,
+                    error: None,
+                    source: self.source.clone(),
+                }
+            }
+            357 => {
+                let resp = UserInfoUpdate::decode(payload)
+                    .map_err(|e| decode_error(&self.source, e, true))?;
+
+                RithmicResponse {
+                    request_id: "".to_string(),
+                    message: RithmicMessage::UserInfoUpdate(resp),
                     is_update: true,
                     has_more: false,
                     multi_response: false,
@@ -1493,6 +1494,38 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+            3511 => {
+                let resp = ResponseGetUserInfo::decode(payload)
+                    .map_err(|e| decode_error(&self.source, e, false))?;
+                let has_more = has_multiple(&resp.rq_handler_rp_code);
+                let error = classify_rp_code_error(&resp.rp_code);
+
+                RithmicResponse {
+                    request_id: resp.user_msg.first().cloned().unwrap_or_default(),
+                    message: RithmicMessage::ResponseGetUserInfo(resp),
+                    is_update: false,
+                    has_more,
+                    multi_response: true,
+                    error,
+                    source: self.source.clone(),
+                }
+            }
+            3513 => {
+                let resp = ResponseShowFillHistory::decode(payload)
+                    .map_err(|e| decode_error(&self.source, e, false))?;
+                let has_more = has_multiple(&resp.rq_handler_rp_code);
+                let error = classify_rp_code_error(&resp.rp_code);
+
+                RithmicResponse {
+                    request_id: resp.user_msg.first().cloned().unwrap_or_default(),
+                    message: RithmicMessage::ResponseShowFillHistory(resp),
+                    is_update: false,
+                    has_more,
+                    multi_response: true,
+                    error,
+                    source: self.source.clone(),
+                }
+            }
             _ => {
                 // Not a recognized message template.
                 let unknown = UnknownTemplateMessage {
@@ -1591,9 +1624,10 @@ mod tests {
     use super::*;
     use crate::error::{RithmicError, RithmicRequestError};
     use crate::rti::{
-        Reject, ResponseAccountList, ResponseListAcceptedAgreements, ResponseLogin,
-        ResponseOrderSessionConfig, ResponseReplayExecutions, ResponseSearchSymbols,
-        RithmicOrderNotification, TradeRoute, UpdateEasyToBorrowList, messages::RithmicMessage,
+        Reject, ResponseAccountList, ResponseGetUserInfo, ResponseListAcceptedAgreements,
+        ResponseLogin, ResponseOrderSessionConfig, ResponseReplayExecutions, ResponseSearchSymbols,
+        ResponseShowFillHistory, RithmicOrderNotification, TradeRoute, UpdateEasyToBorrowList,
+        UserInfoUpdate, messages::RithmicMessage,
     };
     use prost::{Message, bytes::Bytes};
 
@@ -2134,6 +2168,80 @@ mod tests {
                 ..ResponseSearchSymbols::default()
             }))
             .expect("terminal multi-response frame should decode");
+
+        assert!(!terminal.has_more);
+        assert!(terminal.multi_response);
+        assert!(terminal.error.is_none());
+    }
+
+    #[test]
+    fn user_info_update_decodes_as_update() {
+        let response = decode_with_api(&UserInfoUpdate {
+            template_id: 357,
+            ..UserInfoUpdate::default()
+        });
+
+        assert!(matches!(
+            response.message,
+            RithmicMessage::UserInfoUpdate(_)
+        ));
+        assert!(response.is_update);
+        assert_eq!(response.request_id, "");
+    }
+
+    #[test]
+    fn get_user_info_response_correlates_by_user_msg() {
+        let response = decode_with_api(&ResponseGetUserInfo {
+            template_id: 3511,
+            user_msg: vec!["req-42".to_string()],
+            rp_code: vec!["0".to_string()],
+            ..ResponseGetUserInfo::default()
+        });
+
+        assert!(matches!(
+            response.message,
+            RithmicMessage::ResponseGetUserInfo(_)
+        ));
+        assert!(!response.is_update);
+        assert!(response.multi_response);
+        assert!(!response.has_more);
+        assert_eq!(response.request_id, "req-42");
+        assert!(response.error.is_none());
+    }
+
+    #[test]
+    fn show_fill_history_streams_fills_until_the_terminal_frame() {
+        let api = RithmicReceiverApi {
+            source: "test".to_string(),
+        };
+
+        // One frame per fill, marked intermediate by rq_handler_rp_code.
+        let fill = api
+            .buf_to_message(encode_with_header(&ResponseShowFillHistory {
+                template_id: 3513,
+                user_msg: vec!["req-7".to_string()],
+                rq_handler_rp_code: vec!["0".to_string()],
+                fill_id: Some("F1".to_string()),
+                ..ResponseShowFillHistory::default()
+            }))
+            .expect("fill frame should decode");
+
+        assert!(matches!(
+            fill.message,
+            RithmicMessage::ResponseShowFillHistory(_)
+        ));
+        assert!(fill.has_more);
+        assert!(fill.multi_response);
+        assert_eq!(fill.request_id, "req-7");
+
+        let terminal = api
+            .buf_to_message(encode_with_header(&ResponseShowFillHistory {
+                template_id: 3513,
+                user_msg: vec!["req-7".to_string()],
+                rp_code: vec!["0".to_string()],
+                ..ResponseShowFillHistory::default()
+            }))
+            .expect("terminal frame should decode");
 
         assert!(!terminal.has_more);
         assert!(terminal.multi_response);
