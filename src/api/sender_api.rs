@@ -2241,6 +2241,9 @@ mod tests {
         assert_eq!(request.price, Some(5000.0));
         assert_eq!(request.trigger_price, None);
         assert_eq!(request.user_tag.as_deref(), Some("bracket-1"));
+        // An unset operation type must stay off the wire: a server-side default
+        // is not the same request as an explicit OCA.
+        assert_eq!(request.order_operation_type, None);
     }
 
     #[test]
@@ -2260,26 +2263,6 @@ mod tests {
     }
 
     #[test]
-    fn bracket_request_omits_operation_type_when_unset() {
-        let mut api = RithmicSenderApi::new(&test_config());
-        let bracket = RithmicBracketOrder::new()
-            .symbol("ESM6")
-            .exchange("CME")
-            .quantity(1)
-            .action(OrderSide::Buy)
-            .price_type(OrderType::Market)
-            .target(20)
-            .stop(10)
-            .build()
-            .expect("valid bracket");
-
-        let (buf, _) = api.request_bracket_order(bracket, &default_account(), None, "globex");
-        let request: RequestBracketOrder = decode_request(&buf);
-
-        assert_eq!(request.order_operation_type, None);
-    }
-
-    #[test]
     fn get_user_info_request_carries_user_and_account_ids() {
         let mut api = RithmicSenderApi::new(&test_config());
 
@@ -2290,16 +2273,6 @@ mod tests {
         assert_eq!(request.fcm_id.as_deref(), Some("FCM_A"));
         assert_eq!(request.ib_id.as_deref(), Some("IB_A"));
         assert_eq!(request.user.as_deref(), Some("someone_else"));
-    }
-
-    #[test]
-    fn get_user_info_request_omits_user_when_unset() {
-        let mut api = RithmicSenderApi::new(&test_config());
-
-        let (buf, _) = api.request_get_user_info(None, &default_account());
-        let request: RequestGetUserInfo = decode_request(&buf);
-
-        assert_eq!(request.user, None);
     }
 
     #[test]

@@ -115,6 +115,33 @@ async fn place_oco_order_rejects_fewer_than_two_legs() {
 }
 
 #[tokio::test]
+async fn show_fill_history_rejects_a_record_cap_rithmic_would_refuse() {
+    for count in [10_001, -1] {
+        let (handle, mut command_receiver) = test_handle();
+
+        // No actor is running, so without the guard this parks forever; the
+        // timeout turns that into a failure rather than a hung suite.
+        let err = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            handle.show_fill_history(
+                crate::types::FillHistoryRange::Ssboe {
+                    start: 0,
+                    finish: 1,
+                },
+                Some(count),
+            ),
+        )
+        .await
+        .expect("must be rejected without reaching the actor")
+        .expect_err("an out-of-range record cap must be rejected");
+
+        assert!(matches!(err, RithmicError::InvalidArgument(_)));
+        // Rejected before reaching the actor, so nothing was queued.
+        assert!(command_receiver.try_recv().is_err());
+    }
+}
+
+#[tokio::test]
 async fn place_oco_order_forwards_two_or_more_legs() {
     let (handle, mut command_receiver) = test_handle();
 

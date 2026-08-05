@@ -2221,7 +2221,6 @@ mod tests {
                 template_id: 3513,
                 user_msg: vec!["req-7".to_string()],
                 rq_handler_rp_code: vec!["0".to_string()],
-                fill_id: Some("F1".to_string()),
                 ..ResponseShowFillHistory::default()
             }))
             .expect("fill frame should decode");
