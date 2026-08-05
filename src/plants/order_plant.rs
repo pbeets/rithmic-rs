@@ -2235,8 +2235,8 @@ impl RithmicOrderPlantHandle {
     ///   10,000. `None` leaves the cap to the server.
     ///
     /// # Errors
-    /// [`RithmicError::InvalidArgument`] when `max_record_count` is above
-    /// 10,000, which Rithmic rejects.
+    /// [`RithmicError::InvalidArgument`] when `max_record_count` is outside
+    /// 0..=10,000 — Rithmic rejects a cap above 10,000.
     ///
     /// # Returns
     /// The fill responses or an error message
@@ -2245,9 +2245,7 @@ impl RithmicOrderPlantHandle {
         range: FillHistoryRange,
         max_record_count: Option<i32>,
     ) -> Result<Vec<RithmicResponse>, RithmicError> {
-        if let Some(count) = max_record_count
-            && !(0..=10_000).contains(&count)
-        {
+        if let Some(count) = max_record_count.filter(|count| !(0..=10_000).contains(count)) {
             return Err(RithmicError::InvalidArgument(format!(
                 "max_record_count must be between 0 and 10,000, got {count}"
             )));
