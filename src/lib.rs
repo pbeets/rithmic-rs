@@ -236,7 +236,6 @@
 //! - [`error`]: Typed error enum for plant handle methods
 //! - [`api`]: Low-level API interfaces for sending and receiving messages
 //! - [`rti`]: Protocol message definitions
-//! - [`ws`]: WebSocket connectivity and connection strategies
 //! - [`util`]: Utility types and helpers (timestamps, order status, instrument info)
 
 /// Low-level API types for Rithmic communication.
@@ -287,8 +286,7 @@ pub mod types;
 /// Utility types for working with Rithmic data.
 pub mod util;
 
-/// WebSocket connectivity layer
-pub mod ws;
+mod ws;
 
 /// The `prost` this crate's protobuf types are generated against, re-exported so
 /// downstream code can decode an [`UnknownTemplateMessage`] payload without

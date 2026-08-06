@@ -1,14 +1,14 @@
 //! Scaffolding shared by the plant actor tests. Compiled only under `cfg(test)`.
 
-use std::{sync::Arc, time::Duration};
-
 use futures_util::StreamExt;
+use std::{sync::Arc, time::Duration};
+use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, tungstenite::protocol::Role};
+
 use tokio::{
     io::AsyncReadExt,
     net::{TcpListener, TcpStream},
     sync::{broadcast, mpsc, oneshot},
 };
-use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, tungstenite::protocol::Role};
 
 use crate::{
     api::{
@@ -18,9 +18,9 @@ use crate::{
     config::{RithmicAccount, RithmicConfig, RithmicEnv},
     error::RithmicError,
     ping_manager::PingManager,
-    plants::core::PlantCore,
+    plants::core::{PlantActor, PlantCore},
     request_handler::RithmicRequestHandler,
-    ws::{PING_TIMEOUT_SECS, PlantActor, get_heartbeat_interval, get_ping_interval},
+    ws::{PING_TIMEOUT_SECS, get_heartbeat_interval, get_ping_interval},
 };
 
 const WIRE_WRITE_TIMEOUT: Duration = Duration::from_secs(5);

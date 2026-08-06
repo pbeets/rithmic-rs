@@ -1,5 +1,4 @@
-use crate::error::RithmicError;
-use crate::rti::messages::RithmicMessage;
+use crate::{error::RithmicError, rti::messages::RithmicMessage};
 
 /// Response from a Rithmic plant, either from a request or a subscription update.
 ///

@@ -1,41 +1,42 @@
+pub use super::response::RithmicResponse;
+use super::rp_code::{classify_rp_code_error, reject_error};
 use prost::{Message, bytes::Bytes};
 use tracing::{error, warn};
 
-use crate::rti::{
-    AccountPnLPositionUpdate, AccountRmsUpdates, BestBidOffer, BracketUpdates, DepthByOrder,
-    DepthByOrderEndEvent, EndOfDayPrices, ExchangeOrderNotification, ForcedLogout,
-    FrontMonthContractUpdate, IndicatorPrices, InstrumentPnLPositionUpdate, LastTrade, MarketMode,
-    MessageType, OpenInterest, OrderBook, OrderPriceLimits, QuoteStatistics, Reject,
-    RequestHeartbeat, ResponseAcceptAgreement, ResponseAccountList, ResponseAccountRmsInfo,
-    ResponseAccountRmsUpdates, ResponseAuxilliaryReferenceData, ResponseBracketOrder,
-    ResponseCancelAllOrders, ResponseCancelOrder, ResponseDepthByOrderSnapshot,
-    ResponseDepthByOrderUpdates, ResponseEasyToBorrowList, ResponseExitPosition,
-    ResponseFrontMonthContract, ResponseGetInstrumentByUnderlying,
-    ResponseGetInstrumentByUnderlyingKeys, ResponseGetUserInfo, ResponseGetVolumeAtPrice,
-    ResponseGiveTickSizeTypeTable, ResponseHeartbeat, ResponseLinkOrders,
-    ResponseListAcceptedAgreements, ResponseListExchangePermissions,
-    ResponseListUnacceptedAgreements, ResponseLogin, ResponseLoginInfo, ResponseLogout,
-    ResponseMarketDataUpdate, ResponseMarketDataUpdateByUnderlying, ResponseModifyOrder,
-    ResponseModifyOrderReferenceData, ResponseNewOrder, ResponseOcoOrder,
-    ResponseOrderSessionConfig, ResponsePnLPositionSnapshot, ResponsePnLPositionUpdates,
-    ResponseProductCodes, ResponseProductRmsInfo, ResponseReferenceData, ResponseReplayExecutions,
-    ResponseResumeBars, ResponseRithmicSystemGatewayInfo, ResponseRithmicSystemInfo,
-    ResponseSearchSymbols, ResponseSetRithmicMrktDataSelfCertStatus, ResponseShowAgreement,
-    ResponseShowBracketStops, ResponseShowBrackets, ResponseShowFillHistory,
-    ResponseShowOrderHistory, ResponseShowOrderHistoryDates, ResponseShowOrderHistoryDetail,
-    ResponseShowOrderHistorySummary, ResponseShowOrders, ResponseSubscribeForOrderUpdates,
-    ResponseSubscribeToBracketUpdates, ResponseTickBarReplay, ResponseTickBarUpdate,
-    ResponseTimeBarReplay, ResponseTimeBarUpdate, ResponseTradeRoutes,
-    ResponseUpdateStopBracketLevel, ResponseUpdateTargetBracketLevel,
-    ResponseVolumeProfileMinuteBars, RithmicOrderNotification, SymbolMarginRate, TickBar, TimeBar,
-    TradeRoute, TradeStatistics, UpdateEasyToBorrowList, UserAccountUpdate, UserInfoUpdate,
-    messages::RithmicMessage,
+use crate::{
+    error::RithmicError,
+    rti::{
+        AccountPnLPositionUpdate, AccountRmsUpdates, BestBidOffer, BracketUpdates, DepthByOrder,
+        DepthByOrderEndEvent, EndOfDayPrices, ExchangeOrderNotification, ForcedLogout,
+        FrontMonthContractUpdate, IndicatorPrices, InstrumentPnLPositionUpdate, LastTrade,
+        MarketMode, MessageType, OpenInterest, OrderBook, OrderPriceLimits, QuoteStatistics,
+        Reject, RequestHeartbeat, ResponseAcceptAgreement, ResponseAccountList,
+        ResponseAccountRmsInfo, ResponseAccountRmsUpdates, ResponseAuxilliaryReferenceData,
+        ResponseBracketOrder, ResponseCancelAllOrders, ResponseCancelOrder,
+        ResponseDepthByOrderSnapshot, ResponseDepthByOrderUpdates, ResponseEasyToBorrowList,
+        ResponseExitPosition, ResponseFrontMonthContract, ResponseGetInstrumentByUnderlying,
+        ResponseGetInstrumentByUnderlyingKeys, ResponseGetUserInfo, ResponseGetVolumeAtPrice,
+        ResponseGiveTickSizeTypeTable, ResponseHeartbeat, ResponseLinkOrders,
+        ResponseListAcceptedAgreements, ResponseListExchangePermissions,
+        ResponseListUnacceptedAgreements, ResponseLogin, ResponseLoginInfo, ResponseLogout,
+        ResponseMarketDataUpdate, ResponseMarketDataUpdateByUnderlying, ResponseModifyOrder,
+        ResponseModifyOrderReferenceData, ResponseNewOrder, ResponseOcoOrder,
+        ResponseOrderSessionConfig, ResponsePnLPositionSnapshot, ResponsePnLPositionUpdates,
+        ResponseProductCodes, ResponseProductRmsInfo, ResponseReferenceData,
+        ResponseReplayExecutions, ResponseResumeBars, ResponseRithmicSystemGatewayInfo,
+        ResponseRithmicSystemInfo, ResponseSearchSymbols, ResponseSetRithmicMrktDataSelfCertStatus,
+        ResponseShowAgreement, ResponseShowBracketStops, ResponseShowBrackets,
+        ResponseShowFillHistory, ResponseShowOrderHistory, ResponseShowOrderHistoryDates,
+        ResponseShowOrderHistoryDetail, ResponseShowOrderHistorySummary, ResponseShowOrders,
+        ResponseSubscribeForOrderUpdates, ResponseSubscribeToBracketUpdates, ResponseTickBarReplay,
+        ResponseTickBarUpdate, ResponseTimeBarReplay, ResponseTimeBarUpdate, ResponseTradeRoutes,
+        ResponseUpdateStopBracketLevel, ResponseUpdateTargetBracketLevel,
+        ResponseVolumeProfileMinuteBars, RithmicOrderNotification, SymbolMarginRate, TickBar,
+        TimeBar, TradeRoute, TradeStatistics, UpdateEasyToBorrowList, UserAccountUpdate,
+        UserInfoUpdate, messages::RithmicMessage,
+    },
+    util::unknown_message::UnknownTemplateMessage,
 };
-
-pub use super::response::RithmicResponse;
-use super::rp_code::{classify_rp_code_error, reject_error};
-use crate::error::RithmicError;
-use crate::util::unknown_message::UnknownTemplateMessage;
 
 #[derive(Debug)]
 pub(crate) struct RithmicReceiverApi {

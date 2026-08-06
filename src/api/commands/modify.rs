@@ -1,6 +1,7 @@
 //! Modifying a working order: its terms, and the tag it reports under.
 
 use super::triggers::RithmicIfTouchedTrigger;
+
 use crate::{
     error::RithmicError,
     types::{ManualOrAutoEntry, OrderType},

@@ -6,10 +6,12 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::str::FromStr;
 
-use crate::error::RithmicError;
-use crate::rti::{
-    request_bracket_order, request_cancel_all_orders, request_cancel_order, request_exit_position,
-    request_modify_order, request_new_order, request_oco_order,
+use crate::{
+    error::RithmicError,
+    rti::{
+        request_bracket_order, request_cancel_all_orders, request_cancel_order,
+        request_exit_position, request_modify_order, request_new_order, request_oco_order,
+    },
 };
 
 /// Buy or sell.

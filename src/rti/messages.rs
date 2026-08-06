@@ -1,3 +1,5 @@
+use crate::util::unknown_message::UnknownTemplateMessage;
+
 use super::{
     AccountPnLPositionUpdate, AccountRmsUpdates, BestBidOffer, BracketUpdates, DepthByOrder,
     DepthByOrderEndEvent, EndOfDayPrices, ExchangeOrderNotification, ForcedLogout,
@@ -27,7 +29,6 @@ use super::{
     ResponseVolumeProfileMinuteBars, RithmicOrderNotification, SymbolMarginRate, TickBar, TimeBar,
     TradeRoute, TradeStatistics, UpdateEasyToBorrowList, UserAccountUpdate, UserInfoUpdate,
 };
-use crate::util::unknown_message::UnknownTemplateMessage;
 
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone)]

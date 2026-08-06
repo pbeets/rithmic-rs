@@ -1,9 +1,10 @@
 use std::{collections::HashMap, convert::Infallible, time::Duration};
+use tracing::{error, warn};
+
 use tokio::{
     sync::oneshot,
     time::{Instant, sleep_until},
 };
-use tracing::{error, warn};
 
 use crate::{
     api::receiver_api::RithmicResponse, error::RithmicError, rti::messages::RithmicMessage,

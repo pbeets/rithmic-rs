@@ -7,7 +7,7 @@
 
 [Official Rithmic API](https://www.rithmic.com/apis)
 
-Unofficial rust client for connecting to Rithmic's R | Protocol API.
+Unofficial rust client for connecting to Rithmic's R | Protocol API version 0.89.0.0
 
 ## Quick Start
 
@@ -109,6 +109,7 @@ let config = RithmicConfig::from_env(RithmicEnv::Demo)?;
 let account = RithmicAccount::from_env(RithmicEnv::Demo)?;
 let plant = RithmicOrderPlant::connect(&config, ConnectStrategy::Retry).await?;
 let handle = plant.get_handle(&account);
+
 handle.login().await?;
 handle.subscribe_order_updates().await?;
 
@@ -140,6 +141,10 @@ handle.exit_position(RithmicExitPosition::new().symbol("ESM6").exchange("CME").b
 
 Order state arrives on the subscription stream as `RithmicOrderNotification`
 updates, not in the response to the call.
+
+The handle also covers account queries: `show_fill_history` returns the
+account's fills over a time or trade-date window, and `get_user_info` returns
+the login's profile, entitlements, and session limits (both new in 0.89).
 
 For multi-account workflows, create one `RithmicAccount` per account and call
 `get_handle(&account)` for each handle you need.

@@ -1,9 +1,10 @@
+use prost::Message;
+
 use super::commands::{
     RithmicBracketLevelAdjustment, RithmicBracketOrder, RithmicCancelAllOrders, RithmicCancelOrder,
     RithmicExitPosition, RithmicLinkOrders, RithmicModifyOrder, RithmicModifyOrderReferenceData,
     RithmicOcoOrderLeg, RithmicOrder, oco::OcoCancelTiming,
 };
-use prost::Message;
 
 use crate::{
     config::{LoginConfig, RithmicAccount, RithmicConfig},

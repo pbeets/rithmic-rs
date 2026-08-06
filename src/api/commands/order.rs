@@ -1,6 +1,7 @@
 //! A standalone order.
 
 use super::triggers::{RithmicIfTouchedTrigger, TrailingStop};
+
 use crate::{
     error::RithmicError,
     types::{ManualOrAutoEntry, OrderSide, OrderType, TimeInForce},

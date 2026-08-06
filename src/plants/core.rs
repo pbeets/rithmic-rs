@@ -1,5 +1,4 @@
 use std::time::Duration;
-
 use tracing::{error, info, warn};
 
 use futures_util::{
@@ -38,6 +37,14 @@ use crate::{
 pub(crate) type WsStream = WebSocketStream<MaybeTlsStream<TcpStream>>;
 pub(crate) type WsSink = SplitSink<WsStream, Message>;
 pub(crate) type WsReader = SplitStream<WsStream>;
+
+/// The command loop every plant actor implements.
+pub(crate) trait PlantActor {
+    type Command;
+
+    async fn run(&mut self);
+    async fn handle_command(&mut self, command: Self::Command);
+}
 
 /// Result of a single iteration of the plant's `select!` loop.
 pub(crate) enum SelectResult<C> {
@@ -324,17 +331,16 @@ where
         }
     }
 
-    /// Route a decoded or decode-failed response into the subscription
-    /// broadcast vs the per-request responder, with the heartbeat special case
-    /// that synthesizes a `HeartbeatTimeout` subscription update for errors
-    /// while still resolving any registered oneshot with the original frame.
+    /// Send a response where it belongs: updates go out on the subscription
+    /// broadcast, replies go to the per-request responder. Responses that
+    /// failed to decode take the same paths. Heartbeats are the one special
+    /// case: a failed heartbeat is also broadcast as `HeartbeatTimeout`, while
+    /// the original frame still resolves any request waiting on it.
     fn forward_response(&mut self, source: &str, response: RithmicResponse) {
-        // Heartbeat: synthesize HeartbeatTimeout for errors (broadcast on
-        // subscription channel), but ALWAYS call handle_response with the
-        // original ResponseHeartbeat message so any registered oneshot
-        // responder is still resolved. Passing the synthetic HeartbeatTimeout
-        // to handle_response would mis-route it (handle_response dispatches on
-        // message type).
+        // A failed heartbeat is broadcast as a synthetic HeartbeatTimeout, but
+        // handle_response must get the original ResponseHeartbeat, not the
+        // synthetic: it dispatches on message type, and a caller awaiting the
+        // heartbeat still needs its oneshot resolved.
         if matches!(response.message, RithmicMessage::ResponseHeartbeat(_)) {
             if response.error.is_some() {
                 let synthetic = RithmicResponse {

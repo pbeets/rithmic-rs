@@ -1,8 +1,6 @@
-use std::sync::Arc;
-
-use tokio::sync::broadcast;
-
 use crate::{api::RithmicResponse, config::RithmicAccount, rti::messages::RithmicMessage};
+use std::sync::Arc;
+use tokio::sync::broadcast;
 
 /// Filters a shared plant subscription stream down to a single account.
 ///

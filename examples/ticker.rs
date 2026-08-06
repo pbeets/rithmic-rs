@@ -34,9 +34,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
     info!("Front month: {:?}", front_month);
 
-    // Subscribe to market data
+    // Subscribe to market data. A server rejection comes back as `Ok` with
+    // `error` set, so check it — `?` alone only catches transport failures.
     let symbol = env::var("SYMBOL").unwrap_or_else(|_| format!("{}M6", product));
-    handle.subscribe(&symbol, &exchange).await?;
+    let resp = handle.subscribe(&symbol, &exchange).await?;
+    if let Some(err) = &resp.error {
+        return Err(format!("subscribe rejected: {err}").into());
+    }
 
     let mut count = 0;
     while count < 10 {

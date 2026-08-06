@@ -1,6 +1,7 @@
 //! OCO (One-Cancels-Other) groups and the legs they hold.
 
 use super::triggers::TrailingStop;
+
 use crate::{
     error::RithmicError,
     types::{ManualOrAutoEntry, OrderSide, OrderType, TimeInForce},

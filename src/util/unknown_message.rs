@@ -1,8 +1,7 @@
 //! Frames whose `template_id` this crate doesn't map.
 
-use std::fmt;
-
 use prost::bytes::Bytes;
+use std::fmt;
 
 /// Payload bytes rendered by the [`fmt::Display`] and [`fmt::Debug`] impls
 /// before eliding. [`UnknownTemplateMessage::payload_hex`] is the full form.

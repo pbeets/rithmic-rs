@@ -1,7 +1,6 @@
+use futures_util::{Sink, SinkExt};
 use std::time::Duration;
 use tracing::{info, warn};
-
-use futures_util::{Sink, SinkExt};
 
 use tokio::{
     net::TcpStream,
@@ -45,13 +44,6 @@ pub enum ConnectStrategy {
     Retry,
     /// Alternates between primary and beta URLs indefinitely. Useful when main server has issues.
     AlternateWithRetry,
-}
-
-pub(crate) trait PlantActor {
-    type Command;
-
-    async fn run(&mut self);
-    async fn handle_command(&mut self, command: Self::Command);
 }
 
 /// Error returned when a bounded WebSocket send does not complete.

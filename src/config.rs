@@ -24,9 +24,8 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
-use std::{env, fmt, str::FromStr, time::Duration};
-
 use crate::request_handler::DEFAULT_REQUEST_TIMEOUT;
+use std::{env, fmt, str::FromStr, time::Duration};
 
 /// Trading environment selector.
 ///
