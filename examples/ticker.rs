@@ -28,15 +28,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
     info!("Found {} symbols for {}", symbols.len(), product);
 
-    // Get the front month contract
+    // Get the front month contract and subscribe to it, so the example stays
+    // valid as contracts roll. SYMBOL overrides the discovery when set.
     let front_month = handle
         .get_front_month_contract(&product, &exchange, false)
         .await?;
     info!("Front month: {:?}", front_month);
 
+    let discovered = match &front_month.message {
+        RithmicMessage::ResponseFrontMonthContract(fm) => fm.trading_symbol.clone(),
+        _ => None,
+    };
+
     // Subscribe to market data. A server rejection comes back as `Ok` with
     // `error` set, so check it — `?` alone only catches transport failures.
-    let symbol = env::var("SYMBOL").unwrap_or_else(|_| format!("{}M6", product));
+    let symbol = env::var("SYMBOL")
+        .ok()
+        .or(discovered)
+        .ok_or("no front month contract found — set SYMBOL")?;
+
     let resp = handle.subscribe(&symbol, &exchange).await?;
     if let Some(err) = &resp.error {
         return Err(format!("subscribe rejected: {err}").into());

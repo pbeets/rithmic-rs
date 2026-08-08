@@ -173,7 +173,8 @@
 //! so look there if you need to tell a heartbeat timeout from a dead socket.
 //!
 //! Requests time out after 30 seconds by default; set
-//! [`RithmicConfigBuilder::request_timeout`] to change it.
+//! [`RithmicConfigBuilder::request_timeout`] or the
+//! `RITHMIC_REQUEST_TIMEOUT_SECS` environment variable to change it.
 //!
 //! ([`ConnectionFailed`](RithmicError::ConnectionFailed) comes from `connect()`
 //! rather than a handle method, and only under [`ConnectStrategy::Simple`] —
@@ -224,7 +225,7 @@
 //!
 //! | Flag | Default | Description |
 //! |------|---------|-------------|
-//! | `serde` | off | Adds `Serialize`/`Deserialize` derives on trading types (`RithmicEnv`, `OrderSide`, `OrderType`, `TimeInForce`, `OrderStatus`, `RithmicOrder`, `TrailingStop`) |
+//! | `serde` | off | Adds `Serialize`/`Deserialize` derives on trading enums and config types (`RithmicEnv`, `RithmicAccount`, `OrderSide`, `OrderType`, `TimeInForce`, `OrderStatus`, `ManualOrAutoEntry`, `BracketType`, `BracketOperationType`, `FillHistoryRange`, `OrderCondition`, `OrderPriceField`) |
 //!
 //! **TLS backend:** The crate uses `native-tls` (via `tokio-tungstenite`) for all
 //! WebSocket connections. There is currently no `rustls` option.
@@ -235,16 +236,10 @@
 //! - [`config`]: Configuration API for connecting to Rithmic
 //! - [`error`]: Typed error enum for plant handle methods
 //! - [`api`]: Low-level API interfaces for sending and receiving messages
+//! - [`types`]: High-level trading enums (order side, type, time-in-force, …)
 //! - [`rti`]: Protocol message definitions
 //! - [`util`]: Utility types and helpers (timestamps, order status, instrument info)
 
-/// Low-level API types for Rithmic communication.
-///
-/// This module provides the command types and response structures used internally
-/// by the plant modules. Most users should use the high-level plant APIs instead.
-///
-/// Re-exports include order types ([`RithmicBracketOrder`], [`RithmicModifyOrder`], etc.)
-/// and their associated enums for transaction types, durations, and price types.
 pub mod api;
 
 /// Configuration API for connecting to Rithmic

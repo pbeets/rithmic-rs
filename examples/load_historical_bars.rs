@@ -14,7 +14,8 @@ use rithmic_rs::{
 
 fn default_start_time() -> i32 {
     // Note: Rithmic API uses i32 timestamps. This will overflow in 2038.
-    // We use try_into() to safely convert and fall back to a recent timestamp if needed.
+    // Falls back to 0 (the epoch) if the clock is unavailable or the seconds
+    // no longer fit in i32.
     SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .ok()

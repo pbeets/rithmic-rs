@@ -1,7 +1,6 @@
 use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc, oneshot};
-use tokio_tungstenite::tungstenite::Message;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
 use crate::{
     ConnectStrategy,
@@ -9,10 +8,10 @@ use crate::{
     config::{LoginConfig, RithmicAccount, RithmicConfig},
     error::RithmicError,
     plants::{
+        await_first_response,
         core::{PlantActor, PlantCore, SelectResult},
         subscription::SubscriptionFilter,
     },
-    request_handler::RithmicRequest,
     rti::{messages::RithmicMessage, request_login::SysInfraType, request_pn_l_position_updates},
 };
 
@@ -30,12 +29,12 @@ pub(crate) enum PnlPlantCommand {
     Logout {
         response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
     },
+    UpdateHeartbeat {
+        seconds: u64,
+    },
     GetPnlPositionSnapshot {
         account: Arc<RithmicAccount>,
         response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
-    },
-    UpdateHeartbeat {
-        seconds: u64,
     },
     SubscribePnlUpdates {
         account: Arc<RithmicAccount>,
@@ -200,28 +199,10 @@ impl PlantActor for PnlPlant {
             let stop = match result {
                 SelectResult::HeartbeatFired => self.core.send_heartbeat().await,
                 SelectResult::PingFired => self.core.send_ping().await,
-                SelectResult::PingTimeout => {
-                    if self.core.close_requested {
-                        warn!(
-                            "pnl_plant: ping timed out while waiting for server close echo — terminating"
-                        );
-
-                        self.core.request_handler.drain_and_drop();
-                    } else {
-                        self.core.fail_connection_and_drain(
-                            "websocket_ping_timeout",
-                            RithmicError::HeartbeatTimeout,
-                        );
-                    }
-                    true
-                }
+                SelectResult::PingTimeout => self.core.handle_ping_timeout(),
                 SelectResult::Command(cmd) => {
                     if matches!(cmd, PnlPlantCommand::Abort) {
-                        info!("pnl_plant: abort requested, shutting down immediately");
-
-                        self.core
-                            .fail_connection_and_drain("", RithmicError::ConnectionClosed);
-                        true
+                        self.core.handle_abort()
                     } else {
                         self.handle_command(cmd).await;
                         false
@@ -287,13 +268,8 @@ impl PlantActor for PnlPlant {
                         &account,
                     );
 
-                self.core.request_handler.register_request(RithmicRequest {
-                    request_id: id.clone(),
-                    responder: response_sender,
-                });
-
                 self.core
-                    .send_or_fail(Message::Binary(subscribe_buf.into()), &id)
+                    .register_and_send(subscribe_buf, id, response_sender)
                     .await;
             }
             PnlPlantCommand::GetPnlPositionSnapshot {
@@ -305,13 +281,8 @@ impl PlantActor for PnlPlant {
                     .rithmic_sender_api
                     .request_pnl_position_snapshot(&account);
 
-                self.core.request_handler.register_request(RithmicRequest {
-                    request_id: id.clone(),
-                    responder: response_sender,
-                });
-
                 self.core
-                    .send_or_fail(Message::Binary(snapshot_buf.into()), &id)
+                    .register_and_send(snapshot_buf, id, response_sender)
                     .await;
             }
             PnlPlantCommand::UnsubscribePnlUpdates {
@@ -324,13 +295,8 @@ impl PlantActor for PnlPlant {
                         &account,
                     );
 
-                self.core.request_handler.register_request(RithmicRequest {
-                    request_id: id.clone(),
-                    responder: response_sender,
-                });
-
                 self.core
-                    .send_or_fail(Message::Binary(unsubscribe_buf.into()), &id)
+                    .register_and_send(unsubscribe_buf, id, response_sender)
                     .await;
             }
             PnlPlantCommand::Abort => {
@@ -375,11 +341,7 @@ impl RithmicPnlPlantHandle {
 
         let _ = self.sender.send(command).await;
 
-        rx.await
-            .map_err(|_| RithmicError::ConnectionClosed)??
-            .into_iter()
-            .next()
-            .ok_or(RithmicError::EmptyResponse)
+        await_first_response(rx).await
     }
 
     /// Log in to the Rithmic PnL plant
@@ -418,12 +380,7 @@ impl RithmicPnlPlantHandle {
         };
 
         let _ = self.sender.send(command).await;
-        let response = rx
-            .await
-            .map_err(|_| RithmicError::ConnectionClosed)??
-            .into_iter()
-            .next()
-            .ok_or(RithmicError::EmptyResponse)?;
+        let response = await_first_response(rx).await?;
 
         if let Some(err) = response.error.clone() {
             error!("pnl_plant: login failed {:?}", err);
@@ -502,11 +459,7 @@ impl RithmicPnlPlantHandle {
 
         let _ = self.sender.send(command).await;
 
-        rx.await
-            .map_err(|_| RithmicError::ConnectionClosed)??
-            .into_iter()
-            .next()
-            .ok_or(RithmicError::EmptyResponse)
+        await_first_response(rx).await
     }
 
     /// Request a snapshot of all current position PnL data
@@ -523,11 +476,7 @@ impl RithmicPnlPlantHandle {
 
         let _ = self.sender.send(command).await;
 
-        rx.await
-            .map_err(|_| RithmicError::ConnectionClosed)??
-            .into_iter()
-            .next()
-            .ok_or(RithmicError::EmptyResponse)
+        await_first_response(rx).await
     }
 
     /// Unsubscribe from PnL updates
@@ -544,11 +493,7 @@ impl RithmicPnlPlantHandle {
 
         let _ = self.sender.send(command).await;
 
-        rx.await
-            .map_err(|_| RithmicError::ConnectionClosed)??
-            .into_iter()
-            .next()
-            .ok_or(RithmicError::EmptyResponse)
+        await_first_response(rx).await
     }
 }
 

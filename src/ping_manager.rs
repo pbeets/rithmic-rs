@@ -15,9 +15,8 @@ use tracing::warn;
 /// - Any pong clears pending state (WebSocket protocol guarantees correlation)
 /// - Timeout indicates dead connection
 ///
-/// # Configuration
-///
-/// Default: 60s ping interval, 50s pong timeout
+/// The timeout is supplied by the caller; see [`crate::ws::PING_INTERVAL_SECS`]
+/// and [`crate::ws::PING_TIMEOUT_SECS`] for the values the plants use.
 #[derive(Debug)]
 pub struct PingManager {
     /// Pending ping waiting for pong response

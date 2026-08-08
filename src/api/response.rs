@@ -5,16 +5,6 @@ use crate::{error::RithmicError, rti::messages::RithmicMessage};
 /// This structure wraps all messages received from Rithmic plants, including both
 /// request-response messages and subscription updates (like market data, order updates, etc.).
 ///
-/// ## Fields
-///
-/// - `request_id`: Unique identifier for matching responses to requests. Empty for updates.
-/// - `message`: The actual Rithmic message data (see [`RithmicMessage`])
-/// - `is_update`: `true` if this is a subscription update, `false` if it's a request response
-/// - `has_more`: `true` if more responses are coming for this request
-/// - `multi_response`: `true` if this request type can return multiple responses
-/// - `error`: Typed error if the operation failed or a connection error occurred
-/// - `source`: Name of the plant that sent this response (e.g., "ticker_plant", "order_plant")
-///
 /// ## Error Handling
 ///
 /// The `error` field is `Option<RithmicError>`. Use
@@ -37,12 +27,16 @@ use crate::{error::RithmicError, rti::messages::RithmicMessage};
 /// ```
 #[derive(Debug, Clone)]
 #[non_exhaustive]
-#[allow(missing_docs)]
 pub struct RithmicResponse {
+    /// Unique identifier for matching responses to requests. Empty for updates.
     pub request_id: String,
+    /// The actual Rithmic message data (see [`RithmicMessage`]).
     pub message: RithmicMessage,
+    /// `true` if this is a subscription update, `false` if it's a request response.
     pub is_update: bool,
+    /// `true` if more responses are coming for this request.
     pub has_more: bool,
+    /// `true` if this request type can return multiple responses.
     pub multi_response: bool,
 
     /// Typed error when the operation failed or a connection-level event
@@ -50,6 +44,7 @@ pub struct RithmicResponse {
     /// transport failures (reconnect signal) from protocol-level request
     /// rejections.
     pub error: Option<RithmicError>,
+    /// Name of the plant that sent this response (e.g., "ticker_plant").
     pub source: String,
 }
 

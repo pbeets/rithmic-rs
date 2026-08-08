@@ -142,12 +142,7 @@ impl RithmicModifyOrder {
     /// trigger, which is [`Self::trigger_price`] or the [`Self::price`] that
     /// stands in for it. `Market` needs neither.
     pub fn validate(&self) -> Result<(), RithmicError> {
-        let (needs_price, needs_trigger) = match self.price_type {
-            OrderType::Market => (false, false),
-            OrderType::Limit => (true, false),
-            OrderType::StopMarket | OrderType::MarketIfTouched => (false, true),
-            OrderType::StopLimit | OrderType::LimitIfTouched => (true, true),
-        };
+        let (needs_price, needs_trigger) = super::price_requirements(self.price_type);
 
         let order_type = self.price_type.as_str_name();
 

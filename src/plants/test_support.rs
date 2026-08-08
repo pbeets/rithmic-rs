@@ -67,7 +67,7 @@ pub(crate) async fn core_with_wire(source: &str) -> (PlantCore, TcpStream) {
         close_requested: false,
         interval: get_heartbeat_interval(None),
         logged_in: true,
-        ping_interval: get_ping_interval(None),
+        ping_interval: get_ping_interval(),
         ping_manager: PingManager::new(PING_TIMEOUT_SECS),
         request_handler,
         rithmic_reader,

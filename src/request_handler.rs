@@ -109,9 +109,14 @@ impl RithmicRequestHandler {
         &self,
         responder: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
         responses: Vec<RithmicResponse>,
-        request_id: &str,
     ) {
         if let Err(e) = responder.send(Ok(responses)) {
+            let request_id = e
+                .as_ref()
+                .ok()
+                .and_then(|r| r.first())
+                .map(|r| r.request_id.as_str())
+                .unwrap_or("");
             error!(
                 "Failed to send response: receiver dropped for request_id {}: {:#?}",
                 request_id, e
@@ -140,8 +145,7 @@ impl RithmicRequestHandler {
             RithmicMessage::ResponseHeartbeat(_) => {
                 // Handle heartbeat response if a callback is registered
                 if let Some(pending) = self.handle_map.remove(&response.request_id) {
-                    let request_id = response.request_id.clone();
-                    self.send_to_responder(pending.responder, vec![response], &request_id);
+                    self.send_to_responder(pending.responder, vec![response]);
                 }
             }
             _ => {
@@ -152,8 +156,7 @@ impl RithmicRequestHandler {
                     self.response_vec_map.remove(&response.request_id);
 
                     if let Some(pending) = self.handle_map.remove(&response.request_id) {
-                        let request_id = response.request_id.clone();
-                        self.send_to_responder(pending.responder, vec![response], &request_id);
+                        self.send_to_responder(pending.responder, vec![response]);
                     } else {
                         error!("No responder found for response: {:#?}", response);
                     }
@@ -172,8 +175,8 @@ impl RithmicRequestHandler {
                                 .push(response);
                         }
                     } else if let Some(pending) = self.handle_map.remove(&response.request_id) {
-                        let request_id = response.request_id.clone();
-                        let response_vec = match self.response_vec_map.remove(&request_id) {
+                        let response_vec = match self.response_vec_map.remove(&response.request_id)
+                        {
                             Some(mut vec) => {
                                 vec.push(response);
                                 vec
@@ -182,7 +185,7 @@ impl RithmicRequestHandler {
                                 vec![response]
                             }
                         };
-                        self.send_to_responder(pending.responder, response_vec, &request_id);
+                        self.send_to_responder(pending.responder, response_vec);
                     } else {
                         error!("No responder found for response: {:#?}", response);
                     }

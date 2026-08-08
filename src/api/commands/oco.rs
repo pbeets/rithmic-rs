@@ -154,33 +154,17 @@ impl RithmicOcoOrderLeg {
     /// `Limit` and `StopLimit` need [`Self::price`]; `StopMarket` and
     /// `StopLimit` need [`Self::trigger_price`]. `Market` needs neither.
     pub fn validate(&self) -> Result<(), RithmicError> {
-        let order_type = self.price_type.as_str_name();
-
-        let (needs_price, needs_trigger) = match self.price_type {
-            OrderType::Market => (false, false),
-            OrderType::Limit => (true, false),
-            OrderType::StopMarket => (false, true),
-            OrderType::StopLimit => (true, true),
-            OrderType::MarketIfTouched | OrderType::LimitIfTouched => {
-                return Err(RithmicError::InvalidArgument(format!(
-                    "price_type {order_type} is not available on an OCO leg"
-                )));
-            }
-        };
-
-        if needs_price && self.price.is_none() {
+        if matches!(
+            self.price_type,
+            OrderType::MarketIfTouched | OrderType::LimitIfTouched
+        ) {
             return Err(RithmicError::InvalidArgument(format!(
-                "price is required for a {order_type} order"
+                "price_type {} is not available on an OCO leg",
+                self.price_type.as_str_name()
             )));
         }
 
-        if needs_trigger && self.trigger_price.is_none() {
-            return Err(RithmicError::InvalidArgument(format!(
-                "trigger_price is required for a {order_type} order"
-            )));
-        }
-
-        Ok(())
+        super::require_prices(self.price_type, self.price, self.trigger_price)
     }
 
     /// Validate and return the leg.

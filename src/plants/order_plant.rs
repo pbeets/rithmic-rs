@@ -1,5 +1,4 @@
 use std::sync::{Arc, OnceLock};
-use tokio_tungstenite::tungstenite::Message;
 use tracing::{debug, error, info, warn};
 
 use tokio::{
@@ -21,11 +20,11 @@ use crate::{
     config::{LoginConfig, RithmicAccount, RithmicConfig},
     error::RithmicError,
     plants::{
+        await_all_responses, await_first_response,
         core::{PlantActor, PlantCore, SelectResult},
         subscription::SubscriptionFilter,
         trade_routes::TradeRouteCache,
     },
-    request_handler::RithmicRequest,
     rti::{
         TradeRoute, messages::RithmicMessage, request_account_rms_updates,
         request_easy_to_borrow_list, request_login::SysInfraType,
@@ -236,11 +235,11 @@ pub(crate) enum OrderPlantCommand {
 ///
 /// # Connection Health Monitoring
 ///
-/// The subscription receiver provides connection health events:
+/// The subscription receiver carries real-time order notifications (fills,
+/// cancellations, and status changes) as well as connection health events:
 /// - **WebSocket ping/pong timeouts**: primary dead-connection signal (auto-detected)
 /// - **Heartbeat errors**: forwarded as `HeartbeatTimeout`
 /// - **Forced logout events**: session terminated by the server
-/// - **Order notifications**: real-time order fills, cancellations, and status changes
 ///
 /// **Note:** Heartbeat requests are sent automatically for protocol compliance,
 /// but successful responses are silently dropped. Only heartbeat errors from the server
@@ -332,8 +331,6 @@ pub struct RithmicOrderPlant {
 }
 
 impl RithmicOrderPlant {
-    /// Create a new Order Plant connection
-    ///
     /// Create a new Order Plant connection to manage trading orders.
     ///
     /// # Arguments
@@ -437,28 +434,10 @@ impl PlantActor for OrderPlant {
             let stop = match result {
                 SelectResult::HeartbeatFired => self.core.send_heartbeat().await,
                 SelectResult::PingFired => self.core.send_ping().await,
-                SelectResult::PingTimeout => {
-                    if self.core.close_requested {
-                        warn!(
-                            "order_plant: ping timed out while waiting for server close echo — terminating"
-                        );
-
-                        self.core.request_handler.drain_and_drop();
-                    } else {
-                        self.core.fail_connection_and_drain(
-                            "websocket_ping_timeout",
-                            RithmicError::HeartbeatTimeout,
-                        );
-                    }
-                    true
-                }
+                SelectResult::PingTimeout => self.core.handle_ping_timeout(),
                 SelectResult::Command(cmd) => {
                     if matches!(cmd, OrderPlantCommand::Abort) {
-                        info!("order_plant: abort requested, shutting down immediately");
-
-                        self.core
-                            .fail_connection_and_drain("", RithmicError::ConnectionClosed);
-                        true
+                        self.core.handle_abort()
                     } else {
                         self.handle_command(cmd).await;
                         false
@@ -520,13 +499,8 @@ impl PlantActor for OrderPlant {
                     .rithmic_sender_api
                     .request_account_list(self.login_scope.get());
 
-                self.core.request_handler.register_request(RithmicRequest {
-                    request_id: id.clone(),
-                    responder: response_sender,
-                });
-
                 self.core
-                    .send_or_fail(Message::Binary(req_buf.into()), &id)
+                    .register_and_send(req_buf, id, response_sender)
                     .await;
             }
             OrderPlantCommand::SubscribeOrderUpdates {
@@ -538,13 +512,8 @@ impl PlantActor for OrderPlant {
                     .rithmic_sender_api
                     .request_subscribe_for_order_updates(&account);
 
-                self.core.request_handler.register_request(RithmicRequest {
-                    request_id: id.clone(),
-                    responder: response_sender,
-                });
-
                 self.core
-                    .send_or_fail(Message::Binary(req_buf.into()), &id)
+                    .register_and_send(req_buf, id, response_sender)
                     .await;
             }
             OrderPlantCommand::SubscribeBracketUpdates {
@@ -556,13 +525,8 @@ impl PlantActor for OrderPlant {
                     .rithmic_sender_api
                     .request_subscribe_to_bracket_updates(&account);
 
-                self.core.request_handler.register_request(RithmicRequest {
-                    request_id: id.clone(),
-                    responder: response_sender,
-                });
-
                 self.core
-                    .send_or_fail(Message::Binary(req_buf.into()), &id)
+                    .register_and_send(req_buf, id, response_sender)
                     .await;
             }
             OrderPlantCommand::PlaceBracketOrder {
@@ -588,13 +552,8 @@ impl PlantActor for OrderPlant {
                     &trade_route,
                 );
 
-                self.core.request_handler.register_request(RithmicRequest {
-                    request_id: id.clone(),
-                    responder: response_sender,
-                });
-
                 self.core
-                    .send_or_fail(Message::Binary(req_buf.into()), &id)
+                    .register_and_send(req_buf, id, response_sender)
                     .await;
             }
             OrderPlantCommand::ModifyOrder {
@@ -607,13 +566,8 @@ impl PlantActor for OrderPlant {
                     .rithmic_sender_api
                     .request_modify_order(&order, &account);
 
-                self.core.request_handler.register_request(RithmicRequest {
-                    request_id: id.clone(),
-                    responder: response_sender,
-                });
-
                 self.core
-                    .send_or_fail(Message::Binary(req_buf.into()), &id)
+                    .register_and_send(req_buf, id, response_sender)
                     .await;
             }
             OrderPlantCommand::CancelOrder {
@@ -626,13 +580,8 @@ impl PlantActor for OrderPlant {
                     .rithmic_sender_api
                     .request_cancel_order(&order, &account);
 
-                self.core.request_handler.register_request(RithmicRequest {
-                    request_id: id.clone(),
-                    responder: response_sender,
-                });
-
                 self.core
-                    .send_or_fail(Message::Binary(req_buf.into()), &id)
+                    .register_and_send(req_buf, id, response_sender)
                     .await;
             }
             OrderPlantCommand::ModifyStop {
@@ -645,13 +594,8 @@ impl PlantActor for OrderPlant {
                     .rithmic_sender_api
                     .request_update_stop_bracket_level(&adjustment, &account);
 
-                self.core.request_handler.register_request(RithmicRequest {
-                    request_id: id.clone(),
-                    responder: response_sender,
-                });
-
                 self.core
-                    .send_or_fail(Message::Binary(req_buf.into()), &id)
+                    .register_and_send(req_buf, id, response_sender)
                     .await;
             }
             OrderPlantCommand::ModifyTarget {
@@ -664,13 +608,8 @@ impl PlantActor for OrderPlant {
                     .rithmic_sender_api
                     .request_update_target_bracket_level(&adjustment, &account);
 
-                self.core.request_handler.register_request(RithmicRequest {
-                    request_id: id.clone(),
-                    responder: response_sender,
-                });
-
                 self.core
-                    .send_or_fail(Message::Binary(req_buf.into()), &id)
+                    .register_and_send(req_buf, id, response_sender)
                     .await;
             }
             OrderPlantCommand::ShowOrders {
@@ -679,13 +618,8 @@ impl PlantActor for OrderPlant {
             } => {
                 let (req_buf, id) = self.core.rithmic_sender_api.request_show_orders(&account);
 
-                self.core.request_handler.register_request(RithmicRequest {
-                    request_id: id.clone(),
-                    responder: response_sender,
-                });
-
                 self.core
-                    .send_or_fail(Message::Binary(req_buf.into()), &id)
+                    .register_and_send(req_buf, id, response_sender)
                     .await;
             }
             OrderPlantCommand::CancelAllOrders {
@@ -699,13 +633,8 @@ impl PlantActor for OrderPlant {
                     self.login_scope.get(),
                 );
 
-                self.core.request_handler.register_request(RithmicRequest {
-                    request_id: id.clone(),
-                    responder: response_sender,
-                });
-
                 self.core
-                    .send_or_fail(Message::Binary(req_buf.into()), &id)
+                    .register_and_send(req_buf, id, response_sender)
                     .await;
             }
             OrderPlantCommand::GetAccountRmsInfo {
@@ -717,13 +646,8 @@ impl PlantActor for OrderPlant {
                     .rithmic_sender_api
                     .request_account_rms_info(&account, self.login_scope.get());
 
-                self.core.request_handler.register_request(RithmicRequest {
-                    request_id: id.clone(),
-                    responder: response_sender,
-                });
-
                 self.core
-                    .send_or_fail(Message::Binary(req_buf.into()), &id)
+                    .register_and_send(req_buf, id, response_sender)
                     .await;
             }
             OrderPlantCommand::GetProductRmsInfo {
@@ -735,13 +659,8 @@ impl PlantActor for OrderPlant {
                     .rithmic_sender_api
                     .request_product_rms_info(&account);
 
-                self.core.request_handler.register_request(RithmicRequest {
-                    request_id: id.clone(),
-                    responder: response_sender,
-                });
-
                 self.core
-                    .send_or_fail(Message::Binary(req_buf.into()), &id)
+                    .register_and_send(req_buf, id, response_sender)
                     .await;
             }
             OrderPlantCommand::GetTradeRoutes {
@@ -753,13 +672,8 @@ impl PlantActor for OrderPlant {
                     .rithmic_sender_api
                     .request_trade_routes(subscribe_for_updates);
 
-                self.core.request_handler.register_request(RithmicRequest {
-                    request_id: id.clone(),
-                    responder: response_sender,
-                });
-
                 self.core
-                    .send_or_fail(Message::Binary(req_buf.into()), &id)
+                    .register_and_send(req_buf, id, response_sender)
                     .await;
             }
             OrderPlantCommand::RecordTradeRoutes(responses) => {
@@ -790,13 +704,8 @@ impl PlantActor for OrderPlant {
                     .rithmic_sender_api
                     .request_show_order_history_dates();
 
-                self.core.request_handler.register_request(RithmicRequest {
-                    request_id: id.clone(),
-                    responder: response_sender,
-                });
-
                 self.core
-                    .send_or_fail(Message::Binary(req_buf.into()), &id)
+                    .register_and_send(req_buf, id, response_sender)
                     .await;
             }
             OrderPlantCommand::ShowOrderHistorySummary {
@@ -809,13 +718,8 @@ impl PlantActor for OrderPlant {
                     .rithmic_sender_api
                     .request_show_order_history_summary(&date, &account);
 
-                self.core.request_handler.register_request(RithmicRequest {
-                    request_id: id.clone(),
-                    responder: response_sender,
-                });
-
                 self.core
-                    .send_or_fail(Message::Binary(req_buf.into()), &id)
+                    .register_and_send(req_buf, id, response_sender)
                     .await;
             }
             OrderPlantCommand::ShowOrderHistoryDetail {
@@ -829,13 +733,8 @@ impl PlantActor for OrderPlant {
                     .rithmic_sender_api
                     .request_show_order_history_detail(&basket_id, &date, &account);
 
-                self.core.request_handler.register_request(RithmicRequest {
-                    request_id: id.clone(),
-                    responder: response_sender,
-                });
-
                 self.core
-                    .send_or_fail(Message::Binary(req_buf.into()), &id)
+                    .register_and_send(req_buf, id, response_sender)
                     .await;
             }
             OrderPlantCommand::ShowOrderHistory {
@@ -848,13 +747,8 @@ impl PlantActor for OrderPlant {
                     .rithmic_sender_api
                     .request_show_order_history(basket_id.as_deref(), &account);
 
-                self.core.request_handler.register_request(RithmicRequest {
-                    request_id: id.clone(),
-                    responder: response_sender,
-                });
-
                 self.core
-                    .send_or_fail(Message::Binary(req_buf.into()), &id)
+                    .register_and_send(req_buf, id, response_sender)
                     .await;
             }
             OrderPlantCommand::PlaceOrder {
@@ -878,13 +772,8 @@ impl PlantActor for OrderPlant {
                         .rithmic_sender_api
                         .request_order(&order, &account, &trade_route);
 
-                self.core.request_handler.register_request(RithmicRequest {
-                    request_id: id.clone(),
-                    responder: response_sender,
-                });
-
                 self.core
-                    .send_or_fail(Message::Binary(req_buf.into()), &id)
+                    .register_and_send(req_buf, id, response_sender)
                     .await;
             }
             OrderPlantCommand::PlaceOcoOrder {
@@ -914,13 +803,8 @@ impl PlantActor for OrderPlant {
                     }
                 };
 
-                self.core.request_handler.register_request(RithmicRequest {
-                    request_id: id.clone(),
-                    responder: response_sender,
-                });
-
                 self.core
-                    .send_or_fail(Message::Binary(req_buf.into()), &id)
+                    .register_and_send(req_buf, id, response_sender)
                     .await;
             }
             OrderPlantCommand::ShowBrackets {
@@ -929,13 +813,8 @@ impl PlantActor for OrderPlant {
             } => {
                 let (req_buf, id) = self.core.rithmic_sender_api.request_show_brackets(&account);
 
-                self.core.request_handler.register_request(RithmicRequest {
-                    request_id: id.clone(),
-                    responder: response_sender,
-                });
-
                 self.core
-                    .send_or_fail(Message::Binary(req_buf.into()), &id)
+                    .register_and_send(req_buf, id, response_sender)
                     .await;
             }
             OrderPlantCommand::ShowBracketStops {
@@ -947,13 +826,8 @@ impl PlantActor for OrderPlant {
                     .rithmic_sender_api
                     .request_show_bracket_stops(&account);
 
-                self.core.request_handler.register_request(RithmicRequest {
-                    request_id: id.clone(),
-                    responder: response_sender,
-                });
-
                 self.core
-                    .send_or_fail(Message::Binary(req_buf.into()), &id)
+                    .register_and_send(req_buf, id, response_sender)
                     .await;
             }
             OrderPlantCommand::ExitPosition {
@@ -966,13 +840,8 @@ impl PlantActor for OrderPlant {
                     .rithmic_sender_api
                     .request_exit_position(&command, &account);
 
-                self.core.request_handler.register_request(RithmicRequest {
-                    request_id: id.clone(),
-                    responder: response_sender,
-                });
-
                 self.core
-                    .send_or_fail(Message::Binary(req_buf.into()), &id)
+                    .register_and_send(req_buf, id, response_sender)
                     .await;
             }
             OrderPlantCommand::LinkOrders {
@@ -985,13 +854,8 @@ impl PlantActor for OrderPlant {
                     .rithmic_sender_api
                     .request_link_orders(command, &account);
 
-                self.core.request_handler.register_request(RithmicRequest {
-                    request_id: id.clone(),
-                    responder: response_sender,
-                });
-
                 self.core
-                    .send_or_fail(Message::Binary(req_buf.into()), &id)
+                    .register_and_send(req_buf, id, response_sender)
                     .await;
             }
             OrderPlantCommand::GetEasyToBorrowList {
@@ -1003,13 +867,8 @@ impl PlantActor for OrderPlant {
                     .rithmic_sender_api
                     .request_easy_to_borrow_list(request_type);
 
-                self.core.request_handler.register_request(RithmicRequest {
-                    request_id: id.clone(),
-                    responder: response_sender,
-                });
-
                 self.core
-                    .send_or_fail(Message::Binary(req_buf.into()), &id)
+                    .register_and_send(req_buf, id, response_sender)
                     .await;
             }
             OrderPlantCommand::ModifyOrderReferenceData {
@@ -1022,13 +881,8 @@ impl PlantActor for OrderPlant {
                     .rithmic_sender_api
                     .request_modify_order_reference_data(&command, &account);
 
-                self.core.request_handler.register_request(RithmicRequest {
-                    request_id: id.clone(),
-                    responder: response_sender,
-                });
-
                 self.core
-                    .send_or_fail(Message::Binary(req_buf.into()), &id)
+                    .register_and_send(req_buf, id, response_sender)
                     .await;
             }
             OrderPlantCommand::GetOrderSessionConfig {
@@ -1040,13 +894,8 @@ impl PlantActor for OrderPlant {
                     .rithmic_sender_api
                     .request_order_session_config(should_defer_request);
 
-                self.core.request_handler.register_request(RithmicRequest {
-                    request_id: id.clone(),
-                    responder: response_sender,
-                });
-
                 self.core
-                    .send_or_fail(Message::Binary(req_buf.into()), &id)
+                    .register_and_send(req_buf, id, response_sender)
                     .await;
             }
             OrderPlantCommand::ReplayExecutions {
@@ -1061,13 +910,8 @@ impl PlantActor for OrderPlant {
                     &account,
                 );
 
-                self.core.request_handler.register_request(RithmicRequest {
-                    request_id: id.clone(),
-                    responder: response_sender,
-                });
-
                 self.core
-                    .send_or_fail(Message::Binary(req_buf.into()), &id)
+                    .register_and_send(req_buf, id, response_sender)
                     .await;
             }
             OrderPlantCommand::GetUserInfo {
@@ -1080,13 +924,8 @@ impl PlantActor for OrderPlant {
                     .rithmic_sender_api
                     .request_get_user_info(user.as_deref(), &account);
 
-                self.core.request_handler.register_request(RithmicRequest {
-                    request_id: id.clone(),
-                    responder: response_sender,
-                });
-
                 self.core
-                    .send_or_fail(Message::Binary(req_buf.into()), &id)
+                    .register_and_send(req_buf, id, response_sender)
                     .await;
             }
             OrderPlantCommand::ShowFillHistory {
@@ -1101,13 +940,8 @@ impl PlantActor for OrderPlant {
                     &account,
                 );
 
-                self.core.request_handler.register_request(RithmicRequest {
-                    request_id: id.clone(),
-                    responder: response_sender,
-                });
-
                 self.core
-                    .send_or_fail(Message::Binary(req_buf.into()), &id)
+                    .register_and_send(req_buf, id, response_sender)
                     .await;
             }
             OrderPlantCommand::SubscribeAccountRmsUpdates {
@@ -1122,25 +956,15 @@ impl PlantActor for OrderPlant {
                     &account,
                 );
 
-                self.core.request_handler.register_request(RithmicRequest {
-                    request_id: id.clone(),
-                    responder: response_sender,
-                });
-
                 self.core
-                    .send_or_fail(Message::Binary(req_buf.into()), &id)
+                    .register_and_send(req_buf, id, response_sender)
                     .await;
             }
             OrderPlantCommand::GetLoginInfo { response_sender } => {
                 let (req_buf, id) = self.core.rithmic_sender_api.request_login_info();
 
-                self.core.request_handler.register_request(RithmicRequest {
-                    request_id: id.clone(),
-                    responder: response_sender,
-                });
-
                 self.core
-                    .send_or_fail(Message::Binary(req_buf.into()), &id)
+                    .register_and_send(req_buf, id, response_sender)
                     .await;
             }
             OrderPlantCommand::ListUnacceptedAgreements { response_sender } => {
@@ -1149,13 +973,8 @@ impl PlantActor for OrderPlant {
                     .rithmic_sender_api
                     .request_list_unaccepted_agreements();
 
-                self.core.request_handler.register_request(RithmicRequest {
-                    request_id: id.clone(),
-                    responder: response_sender,
-                });
-
                 self.core
-                    .send_or_fail(Message::Binary(req_buf.into()), &id)
+                    .register_and_send(req_buf, id, response_sender)
                     .await;
             }
             OrderPlantCommand::ListAcceptedAgreements { response_sender } => {
@@ -1164,13 +983,8 @@ impl PlantActor for OrderPlant {
                     .rithmic_sender_api
                     .request_list_accepted_agreements();
 
-                self.core.request_handler.register_request(RithmicRequest {
-                    request_id: id.clone(),
-                    responder: response_sender,
-                });
-
                 self.core
-                    .send_or_fail(Message::Binary(req_buf.into()), &id)
+                    .register_and_send(req_buf, id, response_sender)
                     .await;
             }
             OrderPlantCommand::AcceptAgreement {
@@ -1183,13 +997,8 @@ impl PlantActor for OrderPlant {
                     .rithmic_sender_api
                     .request_accept_agreement(&agreement_id, market_data_usage_capacity.as_deref());
 
-                self.core.request_handler.register_request(RithmicRequest {
-                    request_id: id.clone(),
-                    responder: response_sender,
-                });
-
                 self.core
-                    .send_or_fail(Message::Binary(req_buf.into()), &id)
+                    .register_and_send(req_buf, id, response_sender)
                     .await;
             }
             OrderPlantCommand::ShowAgreement {
@@ -1201,13 +1010,8 @@ impl PlantActor for OrderPlant {
                     .rithmic_sender_api
                     .request_show_agreement(&agreement_id);
 
-                self.core.request_handler.register_request(RithmicRequest {
-                    request_id: id.clone(),
-                    responder: response_sender,
-                });
-
                 self.core
-                    .send_or_fail(Message::Binary(req_buf.into()), &id)
+                    .register_and_send(req_buf, id, response_sender)
                     .await;
             }
             OrderPlantCommand::SetRithmicMrktDataSelfCertStatus {
@@ -1223,28 +1027,21 @@ impl PlantActor for OrderPlant {
                         &market_data_usage_capacity,
                     );
 
-                self.core.request_handler.register_request(RithmicRequest {
-                    request_id: id.clone(),
-                    responder: response_sender,
-                });
-
                 self.core
-                    .send_or_fail(Message::Binary(req_buf.into()), &id)
+                    .register_and_send(req_buf, id, response_sender)
                     .await;
             }
             OrderPlantCommand::ListExchangePermissions {
                 user,
                 response_sender,
             } => {
-                let (req_buf, id) = self.core.rithmic_sender_api.request_list_exchanges(&user);
-
-                self.core.request_handler.register_request(RithmicRequest {
-                    request_id: id.clone(),
-                    responder: response_sender,
-                });
+                let (req_buf, id) = self
+                    .core
+                    .rithmic_sender_api
+                    .request_list_exchange_permissions(&user);
 
                 self.core
-                    .send_or_fail(Message::Binary(req_buf.into()), &id)
+                    .register_and_send(req_buf, id, response_sender)
                     .await;
             }
             OrderPlantCommand::Abort => {
@@ -1291,11 +1088,7 @@ impl RithmicOrderPlantHandle {
 
         let _ = self.sender.send(command).await;
 
-        rx.await
-            .map_err(|_| RithmicError::ConnectionClosed)??
-            .into_iter()
-            .next()
-            .ok_or(RithmicError::EmptyResponse)
+        await_first_response(rx).await
     }
 
     /// Log in to the Rithmic Order plant
@@ -1339,12 +1132,7 @@ impl RithmicOrderPlantHandle {
         };
 
         let _ = self.sender.send(command).await;
-        let response = rx
-            .await
-            .map_err(|_| RithmicError::ConnectionClosed)??
-            .into_iter()
-            .next()
-            .ok_or(RithmicError::EmptyResponse)?;
+        let response = await_first_response(rx).await?;
 
         if let Some(err) = response.error.clone() {
             error!("order_plant: login failed {:?}", err);
@@ -1477,7 +1265,7 @@ impl RithmicOrderPlantHandle {
 
         let _ = self.sender.send(command).await;
 
-        rx.await.map_err(|_| RithmicError::ConnectionClosed)?
+        await_all_responses(rx).await
     }
 
     /// Subscribe to order status updates
@@ -1494,11 +1282,7 @@ impl RithmicOrderPlantHandle {
 
         let _ = self.sender.send(command).await;
 
-        rx.await
-            .map_err(|_| RithmicError::ConnectionClosed)??
-            .into_iter()
-            .next()
-            .ok_or(RithmicError::EmptyResponse)
+        await_first_response(rx).await
     }
 
     /// Subscribe to bracket order status updates
@@ -1515,11 +1299,7 @@ impl RithmicOrderPlantHandle {
 
         let _ = self.sender.send(command).await;
 
-        rx.await
-            .map_err(|_| RithmicError::ConnectionClosed)??
-            .into_iter()
-            .next()
-            .ok_or(RithmicError::EmptyResponse)
+        await_first_response(rx).await
     }
 
     /// Place a bracket order (entry order with profit target and stop loss)
@@ -1543,7 +1323,7 @@ impl RithmicOrderPlantHandle {
 
         let _ = self.sender.send(command).await;
 
-        rx.await.map_err(|_| RithmicError::ConnectionClosed)?
+        await_all_responses(rx).await
     }
 
     /// Modify an existing order
@@ -1567,7 +1347,7 @@ impl RithmicOrderPlantHandle {
 
         let _ = self.sender.send(command).await;
 
-        rx.await.map_err(|_| RithmicError::ConnectionClosed)?
+        await_all_responses(rx).await
     }
 
     /// Cancel an order
@@ -1599,7 +1379,7 @@ impl RithmicOrderPlantHandle {
 
         let _ = self.sender.send(command).await;
 
-        rx.await.map_err(|_| RithmicError::ConnectionClosed)?
+        await_all_responses(rx).await
     }
 
     /// Adjust the target level of a bracket order
@@ -1623,11 +1403,7 @@ impl RithmicOrderPlantHandle {
 
         let _ = self.sender.send(command).await;
 
-        rx.await
-            .map_err(|_| RithmicError::ConnectionClosed)??
-            .into_iter()
-            .next()
-            .ok_or(RithmicError::EmptyResponse)
+        await_first_response(rx).await
     }
 
     /// Adjust the stop loss level of a bracket order
@@ -1651,11 +1427,7 @@ impl RithmicOrderPlantHandle {
 
         let _ = self.sender.send(command).await;
 
-        rx.await
-            .map_err(|_| RithmicError::ConnectionClosed)??
-            .into_iter()
-            .next()
-            .ok_or(RithmicError::EmptyResponse)
+        await_first_response(rx).await
     }
 
     /// Request a list of all open orders
@@ -1675,11 +1447,7 @@ impl RithmicOrderPlantHandle {
 
         let _ = self.sender.send(command).await;
 
-        rx.await
-            .map_err(|_| RithmicError::ConnectionClosed)??
-            .into_iter()
-            .next()
-            .ok_or(RithmicError::EmptyResponse)
+        await_first_response(rx).await
     }
 
     async fn update_heartbeat(&self, seconds: u64) {
@@ -1706,11 +1474,7 @@ impl RithmicOrderPlantHandle {
 
         let _ = self.sender.send(command).await;
 
-        rx.await
-            .map_err(|_| RithmicError::ConnectionClosed)??
-            .into_iter()
-            .next()
-            .ok_or(RithmicError::EmptyResponse)
+        await_first_response(rx).await
     }
 
     /// Get account RMS (Risk Management System) information
@@ -1730,7 +1494,7 @@ impl RithmicOrderPlantHandle {
 
         let _ = self.sender.send(command).await;
 
-        rx.await.map_err(|_| RithmicError::ConnectionClosed)?
+        await_all_responses(rx).await
     }
 
     /// Get product RMS (Risk Management System) information
@@ -1747,7 +1511,7 @@ impl RithmicOrderPlantHandle {
 
         let _ = self.sender.send(command).await;
 
-        rx.await.map_err(|_| RithmicError::ConnectionClosed)?
+        await_all_responses(rx).await
     }
 
     /// Get available trade routes
@@ -1770,7 +1534,7 @@ impl RithmicOrderPlantHandle {
 
         let _ = self.sender.send(command).await;
 
-        rx.await.map_err(|_| RithmicError::ConnectionClosed)?
+        await_all_responses(rx).await
     }
 
     /// Apply a `TradeRoute` update to the routes orders go out on.
@@ -1835,7 +1599,7 @@ impl RithmicOrderPlantHandle {
 
         let _ = self.sender.send(command).await;
 
-        rx.await.map_err(|_| RithmicError::ConnectionClosed)?
+        await_all_responses(rx).await
     }
 
     /// Get order history summary for a specific date
@@ -1859,7 +1623,7 @@ impl RithmicOrderPlantHandle {
 
         let _ = self.sender.send(command).await;
 
-        rx.await.map_err(|_| RithmicError::ConnectionClosed)?
+        await_all_responses(rx).await
     }
 
     /// Get detailed order history for a specific order
@@ -1886,11 +1650,7 @@ impl RithmicOrderPlantHandle {
 
         let _ = self.sender.send(command).await;
 
-        rx.await
-            .map_err(|_| RithmicError::ConnectionClosed)??
-            .into_iter()
-            .next()
-            .ok_or(RithmicError::EmptyResponse)
+        await_first_response(rx).await
     }
 
     /// Get general order history
@@ -1914,7 +1674,7 @@ impl RithmicOrderPlantHandle {
 
         let _ = self.sender.send(command).await;
 
-        rx.await.map_err(|_| RithmicError::ConnectionClosed)?
+        await_all_responses(rx).await
     }
 
     /// Place a new order using [`RithmicOrder`]
@@ -1966,7 +1726,7 @@ impl RithmicOrderPlantHandle {
 
         let _ = self.sender.send(command).await;
 
-        rx.await.map_err(|_| RithmicError::ConnectionClosed)?
+        await_all_responses(rx).await
     }
 
     /// Place an OCO (One Cancels Other) order
@@ -2001,7 +1761,7 @@ impl RithmicOrderPlantHandle {
 
         let _ = self.sender.send(command).await;
 
-        rx.await.map_err(|_| RithmicError::ConnectionClosed)?
+        await_all_responses(rx).await
     }
 
     /// Show all active bracket orders
@@ -2018,7 +1778,7 @@ impl RithmicOrderPlantHandle {
 
         let _ = self.sender.send(command).await;
 
-        rx.await.map_err(|_| RithmicError::ConnectionClosed)?
+        await_all_responses(rx).await
     }
 
     /// Show all active bracket stop orders
@@ -2035,7 +1795,7 @@ impl RithmicOrderPlantHandle {
 
         let _ = self.sender.send(command).await;
 
-        rx.await.map_err(|_| RithmicError::ConnectionClosed)?
+        await_all_responses(rx).await
     }
 
     /// Exit an entire position for a given symbol
@@ -2064,7 +1824,7 @@ impl RithmicOrderPlantHandle {
 
         let _ = self.sender.send(command).await;
 
-        rx.await.map_err(|_| RithmicError::ConnectionClosed)?
+        await_all_responses(rx).await
     }
 
     /// Link multiple orders together
@@ -2088,11 +1848,7 @@ impl RithmicOrderPlantHandle {
 
         let _ = self.sender.send(command).await;
 
-        rx.await
-            .map_err(|_| RithmicError::ConnectionClosed)??
-            .into_iter()
-            .next()
-            .ok_or(RithmicError::EmptyResponse)
+        await_first_response(rx).await
     }
 
     /// Get the easy-to-borrow list for short selling
@@ -2115,7 +1871,7 @@ impl RithmicOrderPlantHandle {
 
         let _ = self.sender.send(command).await;
 
-        rx.await.map_err(|_| RithmicError::ConnectionClosed)?
+        await_all_responses(rx).await
     }
 
     /// Modify order reference data (user tag)
@@ -2139,11 +1895,7 @@ impl RithmicOrderPlantHandle {
 
         let _ = self.sender.send(command).await;
 
-        rx.await
-            .map_err(|_| RithmicError::ConnectionClosed)??
-            .into_iter()
-            .next()
-            .ok_or(RithmicError::EmptyResponse)
+        await_first_response(rx).await
     }
 
     /// Get or set order session configuration
@@ -2166,11 +1918,7 @@ impl RithmicOrderPlantHandle {
 
         let _ = self.sender.send(command).await;
 
-        rx.await
-            .map_err(|_| RithmicError::ConnectionClosed)??
-            .into_iter()
-            .next()
-            .ok_or(RithmicError::EmptyResponse)
+        await_first_response(rx).await
     }
 
     /// Replay historical executions
@@ -2197,7 +1945,7 @@ impl RithmicOrderPlantHandle {
 
         let _ = self.sender.send(command).await;
 
-        rx.await.map_err(|_| RithmicError::ConnectionClosed)?
+        await_all_responses(rx).await
     }
 
     /// Look up a user's profile: name, contact details, entitlement status,
@@ -2222,7 +1970,7 @@ impl RithmicOrderPlantHandle {
 
         let _ = self.sender.send(command).await;
 
-        rx.await.map_err(|_| RithmicError::ConnectionClosed)?
+        await_all_responses(rx).await
     }
 
     /// Request the account's fill history, one response per fill.
@@ -2260,7 +2008,7 @@ impl RithmicOrderPlantHandle {
 
         let _ = self.sender.send(command).await;
 
-        rx.await.map_err(|_| RithmicError::ConnectionClosed)?
+        await_all_responses(rx).await
     }
 
     /// Subscribe to account RMS updates
@@ -2290,11 +2038,7 @@ impl RithmicOrderPlantHandle {
 
         let _ = self.sender.send(command).await;
 
-        rx.await
-            .map_err(|_| RithmicError::ConnectionClosed)??
-            .into_iter()
-            .next()
-            .ok_or(RithmicError::EmptyResponse)
+        await_first_response(rx).await
     }
 
     /// Get login information for the current session
@@ -2313,12 +2057,7 @@ impl RithmicOrderPlantHandle {
 
         let _ = self.sender.send(command).await;
 
-        let response = rx
-            .await
-            .map_err(|_| RithmicError::ConnectionClosed)??
-            .into_iter()
-            .next()
-            .ok_or(RithmicError::EmptyResponse)?;
+        let response = await_first_response(rx).await?;
 
         // A rejected response has no usable identity in it. (A `match` rather than a
         // let-chain: those need Rust 1.88 and the MSRV is 1.85.)
@@ -2351,7 +2090,7 @@ impl RithmicOrderPlantHandle {
 
         let _ = self.sender.send(command).await;
 
-        rx.await.map_err(|_| RithmicError::ConnectionClosed)?
+        await_all_responses(rx).await
     }
 
     /// List accepted agreements
@@ -2369,7 +2108,7 @@ impl RithmicOrderPlantHandle {
 
         let _ = self.sender.send(command).await;
 
-        rx.await.map_err(|_| RithmicError::ConnectionClosed)?
+        await_all_responses(rx).await
     }
 
     /// Accept a market data agreement
@@ -2395,11 +2134,7 @@ impl RithmicOrderPlantHandle {
 
         let _ = self.sender.send(command).await;
 
-        rx.await
-            .map_err(|_| RithmicError::ConnectionClosed)??
-            .into_iter()
-            .next()
-            .ok_or(RithmicError::EmptyResponse)
+        await_first_response(rx).await
     }
 
     /// Show details of an agreement
@@ -2422,7 +2157,7 @@ impl RithmicOrderPlantHandle {
 
         let _ = self.sender.send(command).await;
 
-        rx.await.map_err(|_| RithmicError::ConnectionClosed)?
+        await_all_responses(rx).await
     }
 
     /// Set Rithmic market data self-certification status
@@ -2448,11 +2183,7 @@ impl RithmicOrderPlantHandle {
 
         let _ = self.sender.send(command).await;
 
-        rx.await
-            .map_err(|_| RithmicError::ConnectionClosed)??
-            .into_iter()
-            .next()
-            .ok_or(RithmicError::EmptyResponse)
+        await_first_response(rx).await
     }
 
     /// List exchange permissions for a user
@@ -2478,7 +2209,7 @@ impl RithmicOrderPlantHandle {
 
         let _ = self.sender.send(command).await;
 
-        rx.await.map_err(|_| RithmicError::ConnectionClosed)?
+        await_all_responses(rx).await
     }
 }
 

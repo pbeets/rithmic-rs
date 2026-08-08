@@ -412,26 +412,7 @@ impl RithmicBracketOrder {
     /// form. Tick distances themselves are not judged — Rithmic is the
     /// authority on what it accepts.
     pub fn validate(&self) -> Result<(), RithmicError> {
-        let (needs_price, needs_trigger) = match self.price_type {
-            OrderType::Market => (false, false),
-            OrderType::Limit => (true, false),
-            OrderType::StopMarket | OrderType::MarketIfTouched => (false, true),
-            OrderType::StopLimit | OrderType::LimitIfTouched => (true, true),
-        };
-
-        let order_type = self.price_type.as_str_name();
-
-        if needs_price && self.price.is_none() {
-            return Err(RithmicError::InvalidArgument(format!(
-                "price is required for a {order_type} order"
-            )));
-        }
-
-        if needs_trigger && self.trigger_price.is_none() {
-            return Err(RithmicError::InvalidArgument(format!(
-                "trigger_price is required for a {order_type} order"
-            )));
-        }
+        super::require_prices(self.price_type, self.price, self.trigger_price)?;
 
         for (side, quantities, ticks) in [
             ("target", &self.target_quantity, &self.target_ticks),

@@ -16,7 +16,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ticker_plant = RithmicTickerPlant::connect(&config, ConnectStrategy::Retry).await?;
     let ticker_plant_handle = ticker_plant.get_handle();
 
-    let resp = ticker_plant_handle.login().await;
+    let resp = ticker_plant_handle.login().await?;
 
     info!("Login response: {:#?}", resp);
 

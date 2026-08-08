@@ -112,7 +112,7 @@ impl RithmicReceiverApi {
             });
         }
 
-        self.decode_body(&data, parsed_message.template_id)
+        self.decode_body(data.slice(4..), parsed_message.template_id)
             .map_err(|response| route_decode_failure(payload, response))
     }
 
@@ -123,11 +123,9 @@ impl RithmicReceiverApi {
     #[allow(clippy::result_large_err)]
     fn decode_body(
         &self,
-        data: &Bytes,
+        payload: Bytes,
         template_id: i32,
     ) -> Result<RithmicResponse, RithmicResponse> {
-        let payload = &data[4..];
-
         let response = match template_id {
             11 => {
                 let resp = ResponseLogin::decode(payload)
@@ -1531,7 +1529,7 @@ impl RithmicReceiverApi {
                 // Not a recognized message template.
                 let unknown = UnknownTemplateMessage {
                     template_id,
-                    payload: data.slice(4..),
+                    payload,
                 };
 
                 // Payload stays out of the log: it may carry account and order

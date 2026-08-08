@@ -147,6 +147,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             match handle.subscription_receiver.recv().await {
                 Ok(update) => match &update.message {
                     RithmicMessage::HeartbeatTimeout
+                        if matches!(update.error, Some(RithmicError::RequestRejected(_))) =>
+                    {
+                        warn!("Heartbeat rejected (connection fine): {:?}", update.error);
+                    }
+                    RithmicMessage::HeartbeatTimeout
                     | RithmicMessage::ForcedLogout(_)
                     | RithmicMessage::ConnectionError => {
                         warn!("Session lost ({:?}), reconnecting…", update.message);

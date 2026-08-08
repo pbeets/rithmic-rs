@@ -44,6 +44,27 @@ pub enum RithmicEnv {
     Test,
 }
 
+impl RithmicEnv {
+    /// Environment-variable prefix for this environment's settings
+    /// (e.g. `RITHMIC_DEMO` → `RITHMIC_DEMO_USER`).
+    fn var_prefix(self) -> &'static str {
+        match self {
+            RithmicEnv::Demo => "RITHMIC_DEMO",
+            RithmicEnv::Live => "RITHMIC_LIVE",
+            RithmicEnv::Test => "RITHMIC_TEST",
+        }
+    }
+
+    /// The Rithmic system name this environment logs in to by default.
+    fn default_system_name(self) -> &'static str {
+        match self {
+            RithmicEnv::Demo => "Rithmic Paper Trading",
+            RithmicEnv::Live => "Rithmic 01",
+            RithmicEnv::Test => "Rithmic Test",
+        }
+    }
+}
+
 impl fmt::Display for RithmicEnv {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
@@ -52,6 +73,12 @@ impl fmt::Display for RithmicEnv {
             RithmicEnv::Test => write!(f, "test"),
         }
     }
+}
+
+/// Read a required environment variable, mapping absence to
+/// [`ConfigError::MissingEnvVar`].
+fn require_env(var: &str) -> Result<String, ConfigError> {
+    env::var(var).map_err(|_| ConfigError::MissingEnvVar(var.to_string()))
 }
 
 impl FromStr for RithmicEnv {
@@ -150,40 +177,12 @@ impl RithmicAccount {
     /// See [`examples/.env.blank`](https://github.com/pbeets/rithmic-rs/blob/main/examples/.env.blank)
     /// for a template of all required environment variables.
     pub fn from_env(env: RithmicEnv) -> Result<Self, ConfigError> {
-        let (account_id, fcm_id, ib_id) = match &env {
-            RithmicEnv::Demo => (
-                env::var("RITHMIC_DEMO_ACCOUNT_ID").map_err(|_| {
-                    ConfigError::MissingEnvVar("RITHMIC_DEMO_ACCOUNT_ID".to_string())
-                })?,
-                env::var("RITHMIC_DEMO_FCM_ID")
-                    .map_err(|_| ConfigError::MissingEnvVar("RITHMIC_DEMO_FCM_ID".to_string()))?,
-                env::var("RITHMIC_DEMO_IB_ID")
-                    .map_err(|_| ConfigError::MissingEnvVar("RITHMIC_DEMO_IB_ID".to_string()))?,
-            ),
-            RithmicEnv::Live => (
-                env::var("RITHMIC_LIVE_ACCOUNT_ID").map_err(|_| {
-                    ConfigError::MissingEnvVar("RITHMIC_LIVE_ACCOUNT_ID".to_string())
-                })?,
-                env::var("RITHMIC_LIVE_FCM_ID")
-                    .map_err(|_| ConfigError::MissingEnvVar("RITHMIC_LIVE_FCM_ID".to_string()))?,
-                env::var("RITHMIC_LIVE_IB_ID")
-                    .map_err(|_| ConfigError::MissingEnvVar("RITHMIC_LIVE_IB_ID".to_string()))?,
-            ),
-            RithmicEnv::Test => (
-                env::var("RITHMIC_TEST_ACCOUNT_ID").map_err(|_| {
-                    ConfigError::MissingEnvVar("RITHMIC_TEST_ACCOUNT_ID".to_string())
-                })?,
-                env::var("RITHMIC_TEST_FCM_ID")
-                    .map_err(|_| ConfigError::MissingEnvVar("RITHMIC_TEST_FCM_ID".to_string()))?,
-                env::var("RITHMIC_TEST_IB_ID")
-                    .map_err(|_| ConfigError::MissingEnvVar("RITHMIC_TEST_IB_ID".to_string()))?,
-            ),
-        };
+        let prefix = env.var_prefix();
 
         Ok(Self {
-            account_id,
-            fcm_id,
-            ib_id,
+            account_id: require_env(&format!("{prefix}_ACCOUNT_ID"))?,
+            fcm_id: require_env(&format!("{prefix}_FCM_ID"))?,
+            ib_id: require_env(&format!("{prefix}_IB_ID"))?,
         })
     }
 }
@@ -325,6 +324,15 @@ impl RithmicConfig {
     /// - `RITHMIC_APP_NAME` (required): Application name registered with Rithmic
     /// - `RITHMIC_APP_VERSION` (required): Application version
     ///
+    /// # Optional environment variables
+    ///
+    /// - `RITHMIC_{DEMO,LIVE,TEST}_SYSTEM_NAME`: Rithmic system name to log in
+    ///   to. Defaults to "Rithmic Paper Trading" (Demo), "Rithmic 01" (Live),
+    ///   or "Rithmic Test" (Test). Set it on Live to select another provider,
+    ///   e.g. Thrive Trading.
+    /// - `RITHMIC_REQUEST_TIMEOUT_SECS`: Seconds a request waits for a
+    ///   response (default 30; 0 selects the default)
+    ///
     /// # Example
     /// ```no_run
     /// use rithmic_rs::config::{RithmicConfig, RithmicEnv};
@@ -336,47 +344,21 @@ impl RithmicConfig {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn from_env(env: RithmicEnv) -> Result<Self, ConfigError> {
-        let (url, beta_url, user, password, system_name) = match &env {
-            RithmicEnv::Demo => (
-                env::var("RITHMIC_DEMO_URL")
-                    .map_err(|_| ConfigError::MissingEnvVar("RITHMIC_DEMO_URL".to_string()))?,
-                env::var("RITHMIC_DEMO_ALT_URL")
-                    .map_err(|_| ConfigError::MissingEnvVar("RITHMIC_DEMO_ALT_URL".to_string()))?,
-                env::var("RITHMIC_DEMO_USER")
-                    .map_err(|_| ConfigError::MissingEnvVar("RITHMIC_DEMO_USER".to_string()))?,
-                env::var("RITHMIC_DEMO_PW")
-                    .map_err(|_| ConfigError::MissingEnvVar("RITHMIC_DEMO_PW".to_string()))?,
-                "Rithmic Paper Trading".to_string(),
-            ),
-            RithmicEnv::Live => (
-                env::var("RITHMIC_LIVE_URL")
-                    .map_err(|_| ConfigError::MissingEnvVar("RITHMIC_LIVE_URL".to_string()))?,
-                env::var("RITHMIC_LIVE_ALT_URL")
-                    .map_err(|_| ConfigError::MissingEnvVar("RITHMIC_LIVE_ALT_URL".to_string()))?,
-                env::var("RITHMIC_LIVE_USER")
-                    .map_err(|_| ConfigError::MissingEnvVar("RITHMIC_LIVE_USER".to_string()))?,
-                env::var("RITHMIC_LIVE_PW")
-                    .map_err(|_| ConfigError::MissingEnvVar("RITHMIC_LIVE_PW".to_string()))?,
-                "Rithmic 01".to_string(),
-            ),
-            RithmicEnv::Test => (
-                env::var("RITHMIC_TEST_URL")
-                    .map_err(|_| ConfigError::MissingEnvVar("RITHMIC_TEST_URL".to_string()))?,
-                env::var("RITHMIC_TEST_ALT_URL")
-                    .map_err(|_| ConfigError::MissingEnvVar("RITHMIC_TEST_ALT_URL".to_string()))?,
-                env::var("RITHMIC_TEST_USER")
-                    .map_err(|_| ConfigError::MissingEnvVar("RITHMIC_TEST_USER".to_string()))?,
-                env::var("RITHMIC_TEST_PW")
-                    .map_err(|_| ConfigError::MissingEnvVar("RITHMIC_TEST_PW".to_string()))?,
-                "Rithmic Test".to_string(),
-            ),
-        };
+        let prefix = env.var_prefix();
 
-        let app_name = env::var("RITHMIC_APP_NAME")
-            .map_err(|_| ConfigError::MissingEnvVar("RITHMIC_APP_NAME".to_string()))?;
+        let url = require_env(&format!("{prefix}_URL"))?;
+        let beta_url = require_env(&format!("{prefix}_ALT_URL"))?;
+        let user = require_env(&format!("{prefix}_USER"))?;
+        let password = require_env(&format!("{prefix}_PW"))?;
 
-        let app_version = env::var("RITHMIC_APP_VERSION")
-            .map_err(|_| ConfigError::MissingEnvVar("RITHMIC_APP_VERSION".to_string()))?;
+        // The environment's usual system name is only a default: on Live in
+        // particular, providers other than Rithmic 01 (Thrive Trading, etc.)
+        // are selected by overriding it.
+        let system_name = env::var(format!("{prefix}_SYSTEM_NAME"))
+            .unwrap_or_else(|_| env.default_system_name().to_string());
+
+        let app_name = require_env("RITHMIC_APP_NAME")?;
+        let app_version = require_env("RITHMIC_APP_VERSION")?;
 
         let request_timeout = match env::var(REQUEST_TIMEOUT_VAR) {
             Err(env::VarError::NotPresent) => DEFAULT_REQUEST_TIMEOUT,
@@ -435,7 +417,7 @@ impl RithmicConfig {
 
 /// Builder for constructing a RithmicConfig with custom values.
 pub struct RithmicConfigBuilder {
-    env: Option<RithmicEnv>,
+    env: RithmicEnv,
     url: Option<String>,
     beta_url: Option<String>,
     user: Option<String>,
@@ -463,7 +445,7 @@ impl RithmicConfigBuilder {
         let config = RithmicConfig::from_env(env)?;
 
         Ok(Self {
-            env: Some(config.env),
+            env: config.env,
             url: Some(config.url),
             beta_url: Some(config.beta_url),
             user: Some(config.user),
@@ -477,15 +459,10 @@ impl RithmicConfigBuilder {
 
     /// Create a new builder for the specified environment.
     pub fn new(env: RithmicEnv) -> Self {
-        // Set system name default based on environment
-        let system_name = match &env {
-            RithmicEnv::Demo => "Rithmic Paper Trading".to_string(),
-            RithmicEnv::Live => "Rithmic 01".to_string(),
-            RithmicEnv::Test => "Rithmic Test".to_string(),
-        };
+        let system_name = env.default_system_name().to_string();
 
         Self {
-            env: Some(env),
+            env,
             url: None,
             beta_url: None,
             user: None,
@@ -557,9 +534,7 @@ impl RithmicConfigBuilder {
     /// Returns an error if any required fields are missing.
     pub fn build(self) -> Result<RithmicConfig, ConfigError> {
         Ok(RithmicConfig {
-            env: self
-                .env
-                .ok_or_else(|| ConfigError::MissingField("env".to_string()))?,
+            env: self.env,
             url: self
                 .url
                 .ok_or_else(|| ConfigError::MissingField("url".to_string()))?,
@@ -778,6 +753,18 @@ mod tests {
             assert_eq!(config.password, "live_password");
             assert_eq!(config.system_name, "Rithmic 01");
             assert_eq!(config.env, RithmicEnv::Live);
+        });
+    }
+
+    #[test]
+    fn from_env_overrides_the_system_name_when_set() {
+        let mut vars = live_env_vars();
+        vars.push(("RITHMIC_LIVE_SYSTEM_NAME", Some("Thrive Trading")));
+
+        temp_env::with_vars(vars, || {
+            let config = RithmicConfig::from_env(RithmicEnv::Live).unwrap();
+
+            assert_eq!(config.system_name, "Thrive Trading");
         });
     }
 

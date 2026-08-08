@@ -10,6 +10,10 @@
 //! - **PnlPlant**: Position and profit/loss tracking
 //! - **HistoryPlant**: Historical data retrieval
 
+use tokio::sync::oneshot;
+
+use crate::{api::receiver_api::RithmicResponse, error::RithmicError};
+
 pub(crate) mod core;
 /// Access to historical market data
 pub mod history_plant;
@@ -24,3 +28,24 @@ pub(crate) mod test_support;
 /// Real-time market data subscription
 pub mod ticker_plant;
 pub(crate) mod trade_routes;
+
+/// Await a plant actor's reply and return the first (usually only) response.
+///
+/// A dropped responder means the actor stopped before answering, which handles
+/// surface as [`RithmicError::ConnectionClosed`].
+pub(crate) async fn await_first_response(
+    rx: oneshot::Receiver<Result<Vec<RithmicResponse>, RithmicError>>,
+) -> Result<RithmicResponse, RithmicError> {
+    await_all_responses(rx)
+        .await?
+        .into_iter()
+        .next()
+        .ok_or(RithmicError::EmptyResponse)
+}
+
+/// Await a plant actor's reply and return every accumulated response.
+pub(crate) async fn await_all_responses(
+    rx: oneshot::Receiver<Result<Vec<RithmicResponse>, RithmicError>>,
+) -> Result<Vec<RithmicResponse>, RithmicError> {
+    rx.await.map_err(|_| RithmicError::ConnectionClosed)?
+}

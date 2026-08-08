@@ -27,6 +27,8 @@ pub(crate) mod oco;
 pub(crate) mod order;
 pub(crate) mod triggers;
 
+use crate::{error::RithmicError, types::OrderType};
+
 pub use bracket::{RithmicBracketLevelAdjustment, RithmicBracketOrder};
 pub use cancel::{RithmicCancelAllOrders, RithmicCancelOrder};
 pub use exit::RithmicExitPosition;
@@ -35,3 +37,40 @@ pub use modify::{RithmicModifyOrder, RithmicModifyOrderReferenceData};
 pub use oco::{RithmicOcoOrder, RithmicOcoOrderLeg};
 pub use order::RithmicOrder;
 pub use triggers::{RithmicIfTouchedTrigger, TrailingStop};
+
+/// Which prices an order of this type must carry: `Limit`, `StopLimit` and
+/// `LimitIfTouched` need a price; `StopMarket`, `StopLimit`, `MarketIfTouched`
+/// and `LimitIfTouched` need a trigger price. `Market` needs neither.
+pub(crate) fn price_requirements(price_type: OrderType) -> (bool, bool) {
+    match price_type {
+        OrderType::Market => (false, false),
+        OrderType::Limit => (true, false),
+        OrderType::StopMarket | OrderType::MarketIfTouched => (false, true),
+        OrderType::StopLimit | OrderType::LimitIfTouched => (true, true),
+    }
+}
+
+/// Check `price` and `trigger_price` against [`price_requirements`], naming the
+/// missing field in the error.
+pub(crate) fn require_prices(
+    price_type: OrderType,
+    price: Option<f64>,
+    trigger_price: Option<f64>,
+) -> Result<(), RithmicError> {
+    let (needs_price, needs_trigger) = price_requirements(price_type);
+    let order_type = price_type.as_str_name();
+
+    if needs_price && price.is_none() {
+        return Err(RithmicError::InvalidArgument(format!(
+            "price is required for a {order_type} order"
+        )));
+    }
+
+    if needs_trigger && trigger_price.is_none() {
+        return Err(RithmicError::InvalidArgument(format!(
+            "trigger_price is required for a {order_type} order"
+        )));
+    }
+
+    Ok(())
+}

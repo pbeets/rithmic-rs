@@ -7,7 +7,9 @@
 
 [Official Rithmic API](https://www.rithmic.com/apis)
 
-Unofficial rust client for connecting to Rithmic's R | Protocol API version 0.89.0.0
+Unofficial rust client for connecting to Rithmic's R | Protocol API.
+
+Supported version: **0.89.0.0**
 
 ## Quick Start
 
@@ -37,7 +39,12 @@ RITHMIC_DEMO_ACCOUNT_ID=your_account_id
 RITHMIC_DEMO_FCM_ID=your_fcm_id
 RITHMIC_DEMO_IB_ID=your_ib_id
 
-# See examples/.env.blank for Live
+# Optional: Rithmic system name to log in to (default "Rithmic Paper Trading"
+# on Demo, "Rithmic 01" on Live). Set e.g. RITHMIC_LIVE_SYSTEM_NAME to select
+# another provider on Live.
+# RITHMIC_DEMO_SYSTEM_NAME=Rithmic Paper Trading
+
+# See examples/.env.blank for Live and Test
 ```
 
 `RithmicConfig` contains connection and login details. `RithmicAccount` is separate and
@@ -179,7 +186,7 @@ use rithmic_rs::{
 let config = RithmicConfig::from_env(RithmicEnv::Demo)?;
 let account = RithmicAccount::from_env(RithmicEnv::Demo)?;
 let plant = RithmicPnlPlant::connect(&config, ConnectStrategy::Retry).await?;
-let mut handle = plant.get_handle(&account);
+let handle = plant.get_handle(&account);
 handle.login().await?;
 
 // Monitor P&L

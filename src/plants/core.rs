@@ -101,7 +101,7 @@ impl PlantCore<WsSink> {
         };
 
         let interval = get_heartbeat_interval(None);
-        let ping_interval = get_ping_interval(None);
+        let ping_interval = get_ping_interval();
         let ping_manager = PingManager::new(PING_TIMEOUT_SECS);
 
         Ok(PlantCore {
@@ -336,7 +336,7 @@ where
     /// failed to decode take the same paths. Heartbeats are the one special
     /// case: a failed heartbeat is also broadcast as `HeartbeatTimeout`, while
     /// the original frame still resolves any request waiting on it.
-    fn forward_response(&mut self, source: &str, response: RithmicResponse) {
+    fn forward_response(&mut self, response: RithmicResponse) {
         // A failed heartbeat is broadcast as a synthetic HeartbeatTimeout, but
         // handle_response must get the original ResponseHeartbeat, not the
         // synthetic: it dispatches on message type, and a caller awaiting the
@@ -368,7 +368,10 @@ where
 
         if response.is_update {
             if let Err(e) = self.subscription_sender.send(response) {
-                warn!("{}: no active subscribers: {:?}", source, e);
+                warn!(
+                    "{}: no active subscribers: {:?}",
+                    self.rithmic_receiver_api.source, e
+                );
             }
         } else {
             self.request_handler.handle_response(response);
@@ -381,8 +384,10 @@ where
 
         match message {
             Ok(Message::Close(frame)) => {
-                let source = self.rithmic_receiver_api.source.clone();
-                info!("{}: received close frame: {:?}", source, frame);
+                info!(
+                    "{}: received close frame: {:?}",
+                    self.rithmic_receiver_api.source, frame
+                );
 
                 if self.close_requested {
                     self.request_handler.drain_and_drop();
@@ -395,32 +400,29 @@ where
             Ok(Message::Pong(_)) => {
                 self.ping_manager.received();
             }
-            Ok(Message::Binary(data)) => {
-                let source = self.rithmic_receiver_api.source.clone();
+            Ok(Message::Binary(data)) => match self.rithmic_receiver_api.buf_to_message(data) {
+                Ok(response) => {
+                    let forced_logout = matches!(response.message, RithmicMessage::ForcedLogout(_));
 
-                match self.rithmic_receiver_api.buf_to_message(data) {
-                    Ok(response) => {
-                        let forced_logout =
-                            matches!(response.message, RithmicMessage::ForcedLogout(_));
+                    self.forward_response(response);
 
-                        self.forward_response(&source, response);
-
-                        if forced_logout {
-                            stop = self.handle_forced_logout();
-                        }
-                    }
-                    Err(err_response) => {
-                        error!("{}: decode failure: {:?}", source, err_response);
-                        self.forward_response(&source, err_response);
+                    if forced_logout {
+                        stop = self.handle_forced_logout();
                     }
                 }
-            }
+                Err(err_response) => {
+                    error!(
+                        "{}: decode failure: {:?}",
+                        self.rithmic_receiver_api.source, err_response
+                    );
+                    self.forward_response(err_response);
+                }
+            },
             Ok(Message::Ping(data)) => {
                 // Answer with a Pong carrying the same payload. With a split
                 // sink/stream the tungstenite internal write buffer is only
                 // flushed when the sink side is polled, so we send the Pong
                 // explicitly to guarantee delivery.
-                let source = self.rithmic_receiver_api.source.clone();
                 match send_with_timeout(
                     &mut self.rithmic_sender,
                     Message::Pong(data),
@@ -437,7 +439,10 @@ where
                         // timeout semantics with a true heartbeat timeout.
                         // Both satisfy is_connection_issue() so reconnect
                         // callers see the same signal either way.
-                        warn!("{}: failed to send pong: {:?}", source, e);
+                        warn!(
+                            "{}: failed to send pong: {:?}",
+                            self.rithmic_receiver_api.source, e
+                        );
                         self.fail_connection_and_drain(
                             "",
                             RithmicError::ConnectionFailed(
@@ -448,48 +453,38 @@ where
                     }
                 }
             }
-            Err(Error::ConnectionClosed) => {
-                let source = self.rithmic_receiver_api.source.clone();
-                error!("{}: connection closed", source);
-                self.fail_connection_and_drain("", RithmicError::ConnectionClosed);
-                stop = true;
-            }
-            Err(Error::AlreadyClosed) => {
-                let source = self.rithmic_receiver_api.source.clone();
-                error!("{}: connection already closed", source);
+            Err(
+                e @ (Error::ConnectionClosed
+                | Error::AlreadyClosed
+                | Error::Protocol(
+                    ProtocolError::ResetWithoutClosingHandshake
+                    | ProtocolError::SendAfterClosing
+                    | ProtocolError::ReceivedAfterClosing,
+                )),
+            ) => {
+                error!(
+                    "{}: connection closed: {}",
+                    self.rithmic_receiver_api.source, e
+                );
                 self.fail_connection_and_drain("", RithmicError::ConnectionClosed);
                 stop = true;
             }
             Err(Error::Io(ref io_err)) => {
-                let source = self.rithmic_receiver_api.source.clone();
-                error!("{}: I/O error: {}", source, io_err);
+                error!(
+                    "{}: I/O error: {}",
+                    self.rithmic_receiver_api.source, io_err
+                );
                 self.fail_connection_and_drain(
                     "",
                     RithmicError::ConnectionFailed(format!("WebSocket I/O error: {}", io_err)),
                 );
                 stop = true;
             }
-            Err(Error::Protocol(ProtocolError::ResetWithoutClosingHandshake)) => {
-                let source = self.rithmic_receiver_api.source.clone();
-                error!("{}: connection reset without closing handshake", source);
-                self.fail_connection_and_drain("", RithmicError::ConnectionClosed);
-                stop = true;
-            }
-            Err(Error::Protocol(ProtocolError::SendAfterClosing)) => {
-                let source = self.rithmic_receiver_api.source.clone();
-                error!("{}: attempted to send after closing", source);
-                self.fail_connection_and_drain("", RithmicError::ConnectionClosed);
-                stop = true;
-            }
-            Err(Error::Protocol(ProtocolError::ReceivedAfterClosing)) => {
-                let source = self.rithmic_receiver_api.source.clone();
-                error!("{}: received data after closing", source);
-                self.fail_connection_and_drain("", RithmicError::ConnectionClosed);
-                stop = true;
-            }
             Err(e) => {
-                let source = self.rithmic_receiver_api.source.clone();
-                error!("{}: unhandled WebSocket error, closing: {}", source, e);
+                error!(
+                    "{}: unhandled WebSocket error, closing: {}",
+                    self.rithmic_receiver_api.source, e
+                );
                 self.fail_connection_and_drain(
                     "",
                     RithmicError::ConnectionFailed(format!("WebSocket error: {e}")),
@@ -537,12 +532,55 @@ where
         self.fail_connection_and_drain("", RithmicError::ConnectionClosed);
         true
     }
-}
 
-impl<S> PlantCore<S>
-where
-    S: Sink<Message, Error = Error> + Unpin,
-{
+    /// Handle a ping timeout from the select loop. Returns `true` (stop).
+    ///
+    /// After a requested close this is the expected way out (the server close
+    /// echo may never arrive); otherwise it is a dead connection.
+    pub(crate) fn handle_ping_timeout(&mut self) -> bool {
+        if self.close_requested {
+            warn!(
+                "{}: ping timed out while waiting for server close echo — terminating",
+                self.rithmic_receiver_api.source
+            );
+            self.request_handler.drain_and_drop();
+        } else {
+            self.fail_connection_and_drain(
+                "websocket_ping_timeout",
+                RithmicError::HeartbeatTimeout,
+            );
+        }
+
+        true
+    }
+
+    /// Immediately shut the actor down on an abort command. Returns `true` (stop).
+    pub(crate) fn handle_abort(&mut self) -> bool {
+        info!(
+            "{}: abort requested, shutting down immediately",
+            self.rithmic_receiver_api.source
+        );
+        self.fail_connection_and_drain("", RithmicError::ConnectionClosed);
+
+        true
+    }
+
+    /// Register `responder` under `id`, then send `buf` as a binary frame,
+    /// failing the request if the send fails.
+    pub(crate) async fn register_and_send(
+        &mut self,
+        buf: Vec<u8>,
+        id: String,
+        responder: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
+    ) {
+        self.request_handler.register_request(RithmicRequest {
+            request_id: id.clone(),
+            responder,
+        });
+
+        self.send_or_fail(Message::Binary(buf.into()), &id).await;
+    }
+
     pub(crate) async fn handle_close(&mut self) {
         self.close_requested = true;
         // Drain pending requests immediately so callers are not left waiting for
@@ -556,13 +594,7 @@ where
         response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
     ) {
         let (get_system_info_buf, id) = self.rithmic_sender_api.request_rithmic_system_info();
-
-        self.request_handler.register_request(RithmicRequest {
-            request_id: id.clone(),
-            responder: response_sender,
-        });
-
-        self.send_or_fail(Message::Binary(get_system_info_buf.into()), &id)
+        self.register_and_send(get_system_info_buf, id, response_sender)
             .await;
     }
 
@@ -585,13 +617,7 @@ where
             self.rithmic_receiver_api.source, id
         );
 
-        self.request_handler.register_request(RithmicRequest {
-            request_id: id.clone(),
-            responder: response_sender,
-        });
-
-        self.send_or_fail(Message::Binary(login_buf.into()), &id)
-            .await;
+        self.register_and_send(login_buf, id, response_sender).await;
     }
 
     pub(crate) fn handle_set_login(&mut self) {
@@ -609,13 +635,7 @@ where
         self.close_requested = true;
 
         let (logout_buf, id) = self.rithmic_sender_api.request_logout();
-
-        self.request_handler.register_request(RithmicRequest {
-            request_id: id.clone(),
-            responder: response_sender,
-        });
-
-        self.send_or_fail(Message::Binary(logout_buf.into()), &id)
+        self.register_and_send(logout_buf, id, response_sender)
             .await;
     }
 
@@ -828,7 +848,7 @@ mod tests {
             close_requested: false,
             interval: get_heartbeat_interval(None),
             logged_in: false,
-            ping_interval: get_ping_interval(None),
+            ping_interval: get_ping_interval(),
             ping_manager: PingManager::new(PING_TIMEOUT_SECS),
             request_handler,
             rithmic_reader,

@@ -12,7 +12,7 @@ pub(crate) mod sender_api;
 
 // Re-export commonly used types
 pub use crate::config::{LoginConfig, RithmicAccount};
-pub use receiver_api::RithmicResponse;
+pub use response::RithmicResponse;
 
 pub use commands::{
     RithmicBracketLevelAdjustment, RithmicBracketOrder, RithmicCancelAllOrders, RithmicCancelOrder,
@@ -23,8 +23,8 @@ pub use commands::{
 
 // Re-export the crate-owned order enums so `api::ManualOrAutoEntry` also resolves
 pub use crate::types::{
-    BracketType, ManualOrAutoEntry, OrderCondition, OrderPriceField, OrderSide, OrderType,
-    TimeInForce,
+    BracketOperationType, BracketType, FillHistoryRange, ManualOrAutoEntry, OrderCondition,
+    OrderPriceField, OrderSide, OrderType, TimeInForce,
 };
 
 // Re-export easy-to-borrow list request type

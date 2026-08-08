@@ -14,8 +14,8 @@ use tracing::info;
 
 use rithmic_rs::{
     ConnectStrategy, OrderSide, OrderType, RithmicAccount, RithmicBracketOrder, RithmicConfig,
-    RithmicEnv, RithmicOrderPlant, TimeInForce, plants::subscription::SubscriptionFilter,
-    rti::messages::RithmicMessage,
+    RithmicEnv, RithmicError, RithmicOrderPlant, TimeInForce,
+    plants::subscription::SubscriptionFilter, rti::messages::RithmicMessage,
 };
 
 /// Spawns a task to listen for order notifications
@@ -29,6 +29,8 @@ fn spawn_order_listener(mut receiver: SubscriptionFilter) {
                     }
 
                     match &update.message {
+                        RithmicMessage::HeartbeatTimeout
+                            if matches!(update.error, Some(RithmicError::RequestRejected(_))) => {}
                         RithmicMessage::HeartbeatTimeout
                         | RithmicMessage::ForcedLogout(_)
                         | RithmicMessage::ConnectionError => {

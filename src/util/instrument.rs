@@ -9,8 +9,10 @@ use crate::rti::ResponseReferenceData;
 ///
 /// # Example
 /// ```ignore
-/// let info = InstrumentInfo::try_from(&response)?;
-/// println!("{} on {} - tick size {:?}", info.symbol, info.exchange, info.tick_size);
+/// if let RithmicMessage::ResponseReferenceData(data) = &response.message {
+///     let info = InstrumentInfo::try_from(data)?;
+///     println!("{} on {} - tick size {:?}", info.symbol, info.exchange, info.tick_size);
+/// }
 /// ```
 #[derive(Debug, Clone, Default)]
 #[non_exhaustive]

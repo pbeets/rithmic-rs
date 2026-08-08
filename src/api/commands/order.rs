@@ -256,28 +256,7 @@ impl RithmicOrder {
     /// `StopMarket`, `StopLimit`, `MarketIfTouched` and `LimitIfTouched` need
     /// [`Self::trigger_price`]. `Market` needs neither.
     pub fn validate(&self) -> Result<(), RithmicError> {
-        let (needs_price, needs_trigger) = match self.price_type {
-            OrderType::Market => (false, false),
-            OrderType::Limit => (true, false),
-            OrderType::StopMarket | OrderType::MarketIfTouched => (false, true),
-            OrderType::StopLimit | OrderType::LimitIfTouched => (true, true),
-        };
-
-        let order_type = self.price_type.as_str_name();
-
-        if needs_price && self.price.is_none() {
-            return Err(RithmicError::InvalidArgument(format!(
-                "price is required for a {order_type} order"
-            )));
-        }
-
-        if needs_trigger && self.trigger_price.is_none() {
-            return Err(RithmicError::InvalidArgument(format!(
-                "trigger_price is required for a {order_type} order"
-            )));
-        }
-
-        Ok(())
+        super::require_prices(self.price_type, self.price, self.trigger_price)
     }
 
     /// Validate and return the order.

@@ -142,7 +142,7 @@ pub enum RithmicMessage {
     /// ```ignore
     /// match update.message {
     ///     RithmicMessage::ConnectionError => {
-    ///         log::error!("Connection lost: {:?}", update.error);
+    ///         tracing::error!("Connection lost: {:?}", update.error);
     ///         // Trigger your reconnection logic
     ///     }
     ///     _ => {}
@@ -167,7 +167,7 @@ pub enum RithmicMessage {
     /// ```ignore
     /// match update.message {
     ///     RithmicMessage::HeartbeatTimeout => {
-    ///         log::warn!("Connection unresponsive: {:?}", update.error);
+    ///         tracing::warn!("Connection unresponsive: {:?}", update.error);
     ///         // Trigger your reconnection logic
     ///     }
     ///     _ => {}

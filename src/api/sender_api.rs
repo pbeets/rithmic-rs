@@ -159,16 +159,13 @@ impl RithmicSenderApi {
     }
 
     fn request_to_buf(&self, req: impl Message, id: String) -> (Vec<u8>, String) {
-        let mut buf = Vec::new();
         let len = req.encoded_len() as u32;
-        let header = len.to_be_bytes();
 
-        buf.reserve((len + 4) as usize);
+        let mut buf = Vec::with_capacity((len + 4) as usize);
+        buf.extend_from_slice(&len.to_be_bytes());
 
         req.encode(&mut buf)
             .expect("prost encoding into a Vec<u8> is infallible");
-
-        buf.splice(0..0, header.iter().cloned());
 
         (buf, id)
     }
@@ -540,10 +537,8 @@ impl RithmicSenderApi {
         self.request_to_buf(req, id)
     }
 
-    /// Send a new order request using [`RithmicOrder`].
-    ///
-    /// This is the preferred method for placing orders as it supports
-    /// advanced features like trigger prices and trailing stops.
+    /// Build a new order request from a [`RithmicOrder`], including advanced
+    /// features like trigger prices and trailing stops.
     ///
     /// The route sent is the `trade_route` argument; `order.trade_route` is one
     /// of the inputs the caller resolved it from and is not read here.
@@ -617,11 +612,11 @@ impl RithmicSenderApi {
 
     /// Build a bracket order request from a [`RithmicBracketOrder`].
     ///
-    /// The route sent is the `trade_route` argument; `order.trade_route`
+    /// The route sent is the `trade_route` argument; `bracket_order.trade_route`
     /// is one of the inputs the caller resolved it from and is not read here.
     ///
     /// # Arguments
-    /// * `order` - The bracket order parameters
+    /// * `bracket_order` - The bracket order parameters
     /// * `account` - The account to place the order for
     /// * `scope` - Supplies the user type the login granted
     /// * `trade_route` - The route to send the order on
@@ -1180,7 +1175,7 @@ impl RithmicSenderApi {
         self.request_to_buf(req, id)
     }
 
-    pub fn request_depth_by_order_update(
+    pub fn request_depth_by_order_updates(
         &mut self,
         symbol: &str,
         exchange: &str,
@@ -1363,7 +1358,7 @@ impl RithmicSenderApi {
     ///
     /// # Returns
     /// A tuple of (serialized request buffer, request ID)
-    pub fn request_list_exchanges(&mut self, user: &str) -> (Vec<u8>, String) {
+    pub fn request_list_exchange_permissions(&mut self, user: &str) -> (Vec<u8>, String) {
         let id = self.get_next_message_id();
 
         let req = RequestListExchangePermissions {
@@ -1396,6 +1391,7 @@ impl RithmicSenderApi {
     ///
     /// # Arguments
     /// * `date` - Date in YYYYMMDD format (e.g., "20250122")
+    /// * `account` - The account to query
     ///
     /// # Returns
     /// A tuple of (serialized request buffer, request ID)
@@ -1423,6 +1419,7 @@ impl RithmicSenderApi {
     /// # Arguments
     /// * `basket_id` - Order/basket identifier
     /// * `date` - Date in YYYYMMDD format
+    /// * `account` - The account to query
     ///
     /// # Returns
     /// A tuple of (serialized request buffer, request ID)
@@ -1451,6 +1448,7 @@ impl RithmicSenderApi {
     ///
     /// # Arguments
     /// * `basket_id` - Optional order/basket identifier filter
+    /// * `account` - The account to query
     ///
     /// # Returns
     /// A tuple of (serialized request buffer, request ID)
@@ -1887,6 +1885,7 @@ impl RithmicSenderApi {
     /// # Arguments
     /// * `start_index_sec` - Start time in unix seconds
     /// * `finish_index_sec` - End time in unix seconds
+    /// * `account` - The account to query
     ///
     /// # Returns
     /// A tuple of (serialized request buffer, request ID)
