@@ -33,7 +33,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Everywhere else, Ok doesn't mean it worked — check resp.error.
-    match handle.subscribe("ESM6", "CME").await {
+    match handle.subscribe("ESU6", "CME").await {
         Ok(resp) => match resp.error {
             Some(RithmicError::RequestRejected(err)) => warn!(
                 "subscribe rejected: {}",

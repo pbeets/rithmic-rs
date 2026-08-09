@@ -163,12 +163,16 @@ before the first run against a live account.
   `ProtocolError`.
 
 - **`load_ticks_all`, `load_tick_bars_all` and `load_time_bars_all`** — replay
-  loaders that auto-paginate. Rithmic truncates a large replay and puts a
-  `request_key` on its closing response; these follow each key until a page closes
-  without one. Resumption uses the server's key, not a timestamp restart, which
-  would skip or duplicate ticks sharing a timestamp at a page boundary. Set
-  `max_pages` to bound a runaway replay — `None` follows every page. The last
-  response still exposes its key through **`RithmicResponse::resume_key()`**.
+  loaders that return the whole window instead of the first 10,000 records.
+  A plain replay stops at 10,000 and says nothing about it: the closing response
+  of a truncated replay is byte-identical to a complete one's. These loaders set
+  `resume_bars` on the request, which lifts the cap, so one request covers the
+  window. The whole window is buffered before it returns, so a full 23-hour ES
+  session is roughly 800,000 records in memory.
+
+- **`resume_bars` on the replay requests.** `request_tick_bar_replay` and
+  `request_time_bar_replay` now take `user_max_count` and `resume_bars`, so a
+  caller building requests directly can cap or uncap a replay themselves.
 
 - **Per-order trade routes.** The new `trade_route` field on `RithmicOrder`,
   `RithmicBracketOrder` and `RithmicOcoOrderLeg` overrides the route the plant
@@ -285,6 +289,13 @@ before the first run against a live account.
   README samples show correct API usage. No API changed.
 
 ### Fixed
+
+- **Login declared template version `5.30`,** the version of the 0.84.0.0 protos
+  the crate used to bundle, while the bundled protos are now 0.89.0.0 / template
+  5.42. It declares `5.42`. The field is a client declaration rather than a
+  negotiation — Rithmic's own samples send `3.9`, and the server answers with its
+  own version whatever you send (`5.54` at the time of writing) — so this changes
+  no server behavior. It just stops the login misreporting what the crate speaks.
 
 - **Market orders were sent with `price = 0.0`,** and multi-leg OCO orders
   zero-filled `price` and `trigger_price`. Both now follow the all-or-none rule the

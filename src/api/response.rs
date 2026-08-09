@@ -65,13 +65,15 @@ impl RithmicResponse {
         self.rp_code().and_then(|c| c.get(1).map(String::as_str))
     }
 
-    /// The `request_key` a truncated bar replay carries on its closing response.
+    /// The `request_key` a bar replay carries, to pass to
+    /// [`resume_bars`](crate::RithmicHistoryPlantHandle::resume_bars).
     ///
-    /// Rithmic truncates large history replays; the closing response of a
-    /// truncated page carries a `request_key` to pass to
-    /// [`resume_bars`](crate::RithmicHistoryPlantHandle::resume_bars) for the
-    /// next page. Returns `None` when the replay is complete or the message is
-    /// not a bar replay response.
+    /// Returns `None` when the message is not a bar replay response, or when the
+    /// server sent no key — which, against Rithmic's live and demo systems, is
+    /// every replay tried so far, truncated or not. A truncated replay is
+    /// instead resumed by setting `resume_bars` on the original request, which
+    /// makes the server send the remaining records on that request; see
+    /// [`load_ticks_all`](crate::RithmicHistoryPlantHandle::load_ticks_all).
     pub fn resume_key(&self) -> Option<&str> {
         let key = match &self.message {
             RithmicMessage::ResponseTickBarReplay(m) => m.request_key.as_deref(),

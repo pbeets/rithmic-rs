@@ -82,7 +82,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // `.trade_route(..)` to send on a route of your own, including one the
     // server never published.
     let order = RithmicOrder::new()
-        .symbol("ESM6")
+        .symbol("ESU6")
         .exchange("CME")
         .quantity(1)
         .transaction_type(OrderSide::Buy)

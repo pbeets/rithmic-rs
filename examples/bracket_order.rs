@@ -107,7 +107,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Define the bracket order
     // Note: Update symbol to a valid front-month contract for your use case
     let bracket_order = RithmicBracketOrder::new()
-        .symbol("ESM6")
+        .symbol("ESU6")
         .exchange("CME")
         .quantity(1)
         .action(OrderSide::Buy)

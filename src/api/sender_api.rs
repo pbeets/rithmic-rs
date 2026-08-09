@@ -45,6 +45,13 @@ use crate::{
     types::{EasyToBorrowRequest, FillHistoryRange, OrderType, RmsUpdateBits},
 };
 
+/// The protocol template version sent on every login.
+///
+/// It names the `.proto` set in `src/raw-proto/`, which the R | Protocol API
+/// 0.89.0.0 change log labels template 5.42. Bump it whenever those protos are
+/// regenerated against a newer release.
+pub(crate) const TEMPLATE_VERSION: &str = "5.42";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum LoginUserType {
     Fcm,
@@ -193,7 +200,7 @@ impl RithmicSenderApi {
 
         let req = RequestLogin {
             template_id: 10,
-            template_version: Some("5.30".into()),
+            template_version: Some(TEMPLATE_VERSION.into()),
             user: Some(user.to_string()),
             password: Some(password.to_string()),
             app_name: Some(self.app_name.clone()),
@@ -1018,10 +1025,15 @@ impl RithmicSenderApi {
     ///   individual ticks, `"5"` for 5-tick bars)
     /// * `start_index_sec` - Start time as a Unix timestamp (seconds)
     /// * `finish_index_sec` - End time as a Unix timestamp (seconds)
+    /// * `user_max_count` - cap on records returned; `None` leaves the server's
+    ///   own cap to apply silently
+    /// * `resume_bars` - `Some(true)` lifts the server's 10,000 record cap so the
+    ///   whole window replays in one response stream
     ///
     /// # Returns
     ///
     /// A tuple containing the request buffer and the message id.
+    #[allow(clippy::too_many_arguments)]
     pub fn request_tick_bar_replay(
         &mut self,
         symbol: &str,
@@ -1029,6 +1041,8 @@ impl RithmicSenderApi {
         bar_type_specifier: &str,
         start_index_sec: i32,
         finish_index_sec: i32,
+        user_max_count: Option<i32>,
+        resume_bars: Option<bool>,
     ) -> (Vec<u8>, String) {
         let id = self.get_next_message_id();
 
@@ -1043,6 +1057,8 @@ impl RithmicSenderApi {
             finish_index: Some(finish_index_sec),
             direction: Some(Direction::First.into()),
             time_order: Some(TimeOrder::Forwards.into()),
+            user_max_count,
+            resume_bars,
             user_msg: vec![id.clone()],
             ..Default::default()
         };
@@ -1060,10 +1076,15 @@ impl RithmicSenderApi {
     /// * `bar_type_period` - The period for the bar type (e.g., 1 for 1-minute bars, 5 for 5-minute bars)
     /// * `start_index_sec` - unix seconds
     /// * `finish_index_sec` - unix seconds
+    /// * `user_max_count` - cap on records returned; `None` leaves the server's
+    ///   own cap to apply silently
+    /// * `resume_bars` - `Some(true)` lifts the server's 10,000 record cap so the
+    ///   whole window replays in one response stream
     ///
     /// # Returns
     ///
     /// A tuple containing the request buffer and the message id
+    #[allow(clippy::too_many_arguments)]
     pub fn request_time_bar_replay(
         &mut self,
         symbol: &str,
@@ -1072,6 +1093,8 @@ impl RithmicSenderApi {
         bar_type_period: i32,
         start_index_sec: i32,
         finish_index_sec: i32,
+        user_max_count: Option<i32>,
+        resume_bars: Option<bool>,
     ) -> (Vec<u8>, String) {
         let id = self.get_next_message_id();
 
@@ -1085,6 +1108,8 @@ impl RithmicSenderApi {
             finish_index: Some(finish_index_sec),
             direction: Some(request_time_bar_replay::Direction::First.into()),
             time_order: Some(request_time_bar_replay::TimeOrder::Forwards.into()),
+            user_max_count,
+            resume_bars,
             user_msg: vec![id.clone()],
             ..Default::default()
         };

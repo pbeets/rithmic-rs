@@ -41,7 +41,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let config = RithmicConfig::from_env(RithmicEnv::Demo)?;
     let mut subscriptions: HashSet<(String, String)> = HashSet::new();
-    let symbol = env::var("SYMBOL").unwrap_or_else(|_| "ESM6".to_string());
+    let symbol = env::var("SYMBOL").unwrap_or_else(|_| "ESU6".to_string());
     let exchange = env::var("EXCHANGE").unwrap_or_else(|_| "CME".to_string());
 
     subscriptions.insert((symbol, exchange));

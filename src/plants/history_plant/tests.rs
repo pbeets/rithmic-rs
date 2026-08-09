@@ -8,8 +8,7 @@ use crate::{
         assert_sent_while_open, assert_wire_silent, read_wire_request, write_wire_response,
     },
     rti::{
-        RequestResumeBars, RequestTickBarReplay, RequestTimeBarReplay, ResponseTickBarReplay,
-        ResponseTimeBarReplay,
+        RequestTickBarReplay, RequestTimeBarReplay, ResponseTickBarReplay, ResponseTimeBarReplay,
     },
 };
 
@@ -29,6 +28,8 @@ fn load_ticks(response_sender: Responder) -> HistoryPlantCommand {
         response_sender,
         start_time_sec: 0,
         symbol: "ESH6".to_string(),
+        user_max_count: None,
+        resume_bars: None,
     }
 }
 
@@ -105,180 +106,190 @@ async fn running_plant_with_handle() -> (
     (handle, actor, client)
 }
 
-/// An intermediate replay frame: the presence of `rq_handler_rp_code` marks it.
-fn tick_page_bar(id: &str) -> ResponseTickBarReplay {
+/// An intermediate replay frame carrying one tick at `sec`.`usec`.
+fn tick_at(id: &str, sec: i32, usec: i32) -> ResponseTickBarReplay {
     ResponseTickBarReplay {
         template_id: 207,
         user_msg: vec![id.to_string()],
         rq_handler_rp_code: vec!["0".to_string()],
+        data_bar_ssboe: vec![sec, sec],
+        data_bar_usecs: vec![usec, usec],
         ..Default::default()
     }
 }
 
-/// A closing replay frame, truncated when it carries a `request_key`.
-fn tick_page_end(id: &str, resume_key: Option<&str>) -> ResponseTickBarReplay {
+/// The data-less frame every replay closes with, truncated or not.
+fn tick_page_end(id: &str) -> ResponseTickBarReplay {
     ResponseTickBarReplay {
         template_id: 207,
         user_msg: vec![id.to_string()],
         rp_code: vec!["0".to_string()],
-        request_key: resume_key.map(String::from),
         ..Default::default()
     }
 }
 
-#[tokio::test]
-async fn load_ticks_all_follows_the_resume_key_across_pages() {
-    let (handle, actor, mut client) = running_plant_with_handle().await;
+fn time_bar_at(id: &str, marker: i32) -> ResponseTimeBarReplay {
+    ResponseTimeBarReplay {
+        template_id: 203,
+        user_msg: vec![id.to_string()],
+        rq_handler_rp_code: vec!["0".to_string()],
+        marker: Some(marker),
+        ..Default::default()
+    }
+}
 
-    let call = tokio::spawn({
-        let handle = handle.clone();
-        async move {
-            handle
-                .load_ticks_all("ESH6".to_string(), "CME".to_string(), 0, 1000, None)
-                .await
-        }
-    });
+fn time_bar_page_end(id: &str) -> ResponseTimeBarReplay {
+    ResponseTimeBarReplay {
+        template_id: 203,
+        user_msg: vec![id.to_string()],
+        rp_code: vec!["0".to_string()],
+        ..Default::default()
+    }
+}
 
-    // Page 1: the replay request goes out, and its closing frame is truncated.
-    let request = RequestTickBarReplay::decode(read_wire_request(&mut client).await.as_slice())
-        .expect("the first request must be a tick bar replay");
+/// Read one tick bar replay request and return its `resume_bars` and message id.
+async fn read_tick_replay(client: &mut TcpStream) -> (Option<bool>, String) {
+    let request = RequestTickBarReplay::decode(read_wire_request(client).await.as_slice())
+        .expect("the request must be a tick bar replay");
+
     assert_eq!(request.template_id, 206);
-    let id = request.user_msg[0].clone();
 
-    write_wire_response(&mut client, &tick_page_bar(&id)).await;
-    write_wire_response(&mut client, &tick_page_end(&id, Some("key-1"))).await;
-
-    // Page 2: the truncation must be resumed with the key the server handed out.
-    let resume = RequestResumeBars::decode(read_wire_request(&mut client).await.as_slice())
-        .expect("the second request must be a resume");
-    assert_eq!(resume.template_id, 210);
-    assert_eq!(resume.request_key.as_deref(), Some("key-1"));
-    let id = resume.user_msg[0].clone();
-
-    write_wire_response(&mut client, &tick_page_bar(&id)).await;
-    write_wire_response(&mut client, &tick_page_end(&id, None)).await;
-
-    let responses = call
-        .await
-        .expect("call task panicked")
-        .expect("the paginated load must succeed");
-
-    assert_eq!(responses.len(), 4, "both pages must be returned");
-    assert_eq!(
-        responses[1].resume_key(),
-        Some("key-1"),
-        "page order must be preserved"
-    );
-    assert!(
-        responses.last().unwrap().resume_key().is_none(),
-        "a completed replay leaves no resume key"
-    );
-
-    handle.abort();
-    let _ = actor.await;
+    (request.resume_bars, request.user_msg[0].clone())
 }
 
 #[tokio::test]
-async fn load_ticks_all_with_max_pages_stops_and_keeps_the_resume_key() {
+async fn load_ticks_all_asks_the_server_to_lift_the_record_cap() {
     let (handle, actor, mut client) = running_plant_with_handle().await;
 
-    let call = tokio::spawn({
-        let handle = handle.clone();
-        async move {
-            handle
-                .load_ticks_all("ESH6".to_string(), "CME".to_string(), 0, 1000, Some(1))
-                .await
-        }
+    let loader = tokio::spawn(async move {
+        handle
+            .load_ticks_all("ESH6".to_string(), "CME".to_string(), 0, 1000)
+            .await
     });
 
-    let request = RequestTickBarReplay::decode(read_wire_request(&mut client).await.as_slice())
-        .expect("the first request must be a tick bar replay");
-    let id = request.user_msg[0].clone();
-
-    write_wire_response(&mut client, &tick_page_bar(&id)).await;
-    write_wire_response(&mut client, &tick_page_end(&id, Some("key-1"))).await;
-
-    let responses = call
-        .await
-        .expect("call task panicked")
-        .expect("a capped load still returns the gathered page");
-
-    assert_eq!(responses.len(), 2, "only the first page must be returned");
+    // One request only: resume_bars replaces paging, so there is nothing to
+    // follow up.
+    let (resume_bars, id) = read_tick_replay(&mut client).await;
     assert_eq!(
-        responses.last().unwrap().resume_key(),
-        Some("key-1"),
-        "the cut-short replay must keep its resume key"
+        resume_bars,
+        Some(true),
+        "load_ticks_all must set resume_bars, which is what lifts the 10,000 record cap"
     );
-    assert_wire_silent(&mut client).await;
 
-    handle.abort();
-    let _ = actor.await;
+    write_wire_response(&mut client, &tick_at(&id, 100, 1)).await;
+    write_wire_response(&mut client, &tick_at(&id, 100, 2)).await;
+    write_wire_response(&mut client, &tick_at(&id, 200, 5)).await;
+    write_wire_response(&mut client, &tick_page_end(&id)).await;
+
+    let responses = loader
+        .await
+        .expect("the loader must not panic")
+        .expect("the load must succeed");
+
+    let ticks: Vec<(i32, i32)> = responses
+        .iter()
+        .filter_map(|response| match &response.message {
+            RithmicMessage::ResponseTickBarReplay(bar) if bar.data_bar_ssboe.len() == 2 => {
+                Some((bar.data_bar_ssboe[1], bar.data_bar_usecs[1]))
+            }
+            _ => None,
+        })
+        .collect();
+
+    assert_eq!(ticks, vec![(100, 1), (100, 2), (200, 5)]);
+    assert_eq!(
+        responses.len(),
+        4,
+        "every record plus the replay's closing frame"
+    );
+
+    actor.abort();
 }
 
 #[tokio::test]
-async fn load_time_bars_all_follows_the_resume_key_across_pages() {
+async fn load_ticks_leaves_the_cap_in_place() {
     let (handle, actor, mut client) = running_plant_with_handle().await;
 
-    let call = tokio::spawn({
-        let handle = handle.clone();
-        async move {
-            handle
-                .load_time_bars_all(
-                    "ESH6".to_string(),
-                    "CME".to_string(),
-                    BarType::MinuteBar,
-                    1,
-                    0,
-                    1000,
-                    None,
-                )
-                .await
-        }
+    let loader = tokio::spawn(async move {
+        handle
+            .load_ticks("ESH6".to_string(), "CME".to_string(), 0, 1000)
+            .await
+    });
+
+    let (resume_bars, id) = read_tick_replay(&mut client).await;
+    assert_eq!(
+        resume_bars, None,
+        "the capped loader must not ask for the cap to be lifted"
+    );
+
+    write_wire_response(&mut client, &tick_page_end(&id)).await;
+    loader
+        .await
+        .expect("the loader must not panic")
+        .expect("the load must succeed");
+
+    actor.abort();
+}
+
+#[tokio::test]
+async fn load_time_bars_all_asks_the_server_to_lift_the_record_cap() {
+    let (handle, actor, mut client) = running_plant_with_handle().await;
+
+    let loader = tokio::spawn(async move {
+        handle
+            .load_time_bars_all(
+                "ESH6".to_string(),
+                "CME".to_string(),
+                BarType::MinuteBar,
+                1,
+                0,
+                1000,
+            )
+            .await
     });
 
     let request = RequestTimeBarReplay::decode(read_wire_request(&mut client).await.as_slice())
-        .expect("the first request must be a time bar replay");
+        .expect("the request must be a time bar replay");
     assert_eq!(request.template_id, 202);
+    assert_eq!(
+        request.resume_bars,
+        Some(true),
+        "load_time_bars_all must set resume_bars too"
+    );
+
     let id = request.user_msg[0].clone();
+    write_wire_response(&mut client, &time_bar_at(&id, 60)).await;
+    write_wire_response(&mut client, &time_bar_at(&id, 120)).await;
+    write_wire_response(&mut client, &time_bar_page_end(&id)).await;
 
-    write_wire_response(
-        &mut client,
-        &ResponseTimeBarReplay {
-            template_id: 203,
-            user_msg: vec![id.clone()],
-            rp_code: vec!["0".to_string()],
-            request_key: Some("key-2".to_string()),
-            ..Default::default()
-        },
-    )
-    .await;
-
-    let resume = RequestResumeBars::decode(read_wire_request(&mut client).await.as_slice())
-        .expect("the second request must be a resume");
-    assert_eq!(resume.request_key.as_deref(), Some("key-2"));
-    let id = resume.user_msg[0].clone();
-
-    write_wire_response(
-        &mut client,
-        &ResponseTimeBarReplay {
-            template_id: 203,
-            user_msg: vec![id],
-            rp_code: vec!["0".to_string()],
-            ..Default::default()
-        },
-    )
-    .await;
-
-    let responses = call
+    let responses = loader
         .await
-        .expect("call task panicked")
-        .expect("the paginated load must succeed");
+        .expect("the loader must not panic")
+        .expect("the load must succeed");
 
-    assert_eq!(responses.len(), 2, "both pages must be returned");
-    assert!(responses.last().unwrap().resume_key().is_none());
+    let markers: Vec<i32> = responses
+        .iter()
+        .filter_map(|response| match &response.message {
+            RithmicMessage::ResponseTimeBarReplay(bar) => bar.marker,
+            _ => None,
+        })
+        .collect();
 
-    handle.abort();
-    let _ = actor.await;
+    assert_eq!(markers, vec![60, 120]);
+
+    actor.abort();
+}
+
+#[tokio::test]
+async fn load_tick_bars_all_rejects_a_zero_bar_length() {
+    let (handle, _command_receiver) = test_handle();
+
+    let err = handle
+        .load_tick_bars_all("ESH6".to_string(), "CME".to_string(), 0, 0, 1000)
+        .await
+        .expect_err("a zero bar length must be refused");
+
+    assert!(matches!(err, RithmicError::InvalidArgument(_)));
 }
 
 fn test_handle() -> (

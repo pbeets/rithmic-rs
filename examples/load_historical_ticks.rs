@@ -28,7 +28,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenvy::dotenv().ok();
     tracing_subscriber::fmt().init();
 
-    let symbol = env::var("SYMBOL").unwrap_or_else(|_| "ESM6".to_string());
+    let symbol = env::var("SYMBOL").unwrap_or_else(|_| "ESU6".to_string());
     let exchange = env::var("EXCHANGE").unwrap_or_else(|_| "CME".to_string());
     let start_time: i32 = env::var("START_TIME")
         .ok()
@@ -46,10 +46,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         symbol, start_time, end_time
     );
 
-    // `load_ticks_all` follows Rithmic's resume keys, so a replay the server
-    // truncates comes back complete. `load_ticks` returns just the first page.
+    // `load_ticks_all` sets `resume_bars`, which lifts the server's 10,000
+    // record cap, so the whole window arrives in one request. `load_ticks`
+    // leaves the cap in place and returns at most 10,000 records.
     let ticks = handle
-        .load_ticks_all(symbol, exchange, start_time, end_time, None)
+        .load_ticks_all(symbol, exchange, start_time, end_time)
         .await?;
 
     info!("Received {} tick responses", ticks.len());
