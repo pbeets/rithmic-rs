@@ -1,6 +1,7 @@
 //! Bracket entry orders and the adjustment that moves one of their exit legs.
 
 use super::triggers::RithmicIfTouchedTrigger;
+use super::validate_instrument;
 
 use crate::{
     error::RithmicError,
@@ -56,7 +57,9 @@ use crate::{
 /// # }
 /// ```
 #[derive(Debug, Clone, Default, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
+#[must_use = "an order does nothing until passed to a plant handle"]
 pub struct RithmicBracketOrder {
     /// Buy or Sell.
     pub action: OrderSide,
@@ -412,6 +415,8 @@ impl RithmicBracketOrder {
     /// form. Tick distances themselves are not judged — Rithmic is the
     /// authority on what it accepts.
     pub fn validate(&self) -> Result<(), RithmicError> {
+        validate_instrument(&self.symbol, &self.exchange, self.quantity)?;
+
         super::require_prices(self.price_type, self.price, self.trigger_price)?;
 
         for (side, quantities, ticks) in [
@@ -497,7 +502,9 @@ impl RithmicBracketOrder {
 /// # }
 /// ```
 #[derive(Debug, Clone, Default, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
+#[must_use = "an adjustment does nothing until passed to a plant handle"]
 pub struct RithmicBracketLevelAdjustment {
     /// The `basket_id` from the order notification
     pub id: String,
@@ -533,8 +540,19 @@ impl RithmicBracketLevelAdjustment {
         self
     }
 
-    /// Return the adjustment.
+    /// Requires the basket_id of the bracket to adjust.
+    pub fn validate(&self) -> Result<(), RithmicError> {
+        if self.id.is_empty() {
+            return Err(RithmicError::InvalidArgument(
+                "an adjustment requires the basket_id of the bracket it adjusts".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Requires the basket_id of the bracket to adjust.
     pub fn build(self) -> Result<Self, RithmicError> {
+        self.validate()?;
         Ok(self)
     }
 }
@@ -556,7 +574,7 @@ mod tests {
     fn a_bracket_validates_its_entry_leg() {
         let mut order = RithmicBracketOrder {
             price_type: OrderType::Limit,
-            ..Default::default()
+            ..bracket(1, OrderType::Limit)
         };
 
         assert!(order.validate().is_err());
@@ -572,46 +590,39 @@ mod tests {
     fn a_bracket_checks_its_exit_legs_hold_together() {
         // Mismatched vector lengths.
         let ragged = RithmicBracketOrder {
-            price_type: OrderType::Market,
             target_quantity: vec![1],
             target_ticks: vec![16, 24],
-            ..Default::default()
+            ..bracket(1, OrderType::Market)
         };
         assert!(ragged.validate().is_err());
 
         // A zero-quantity leg.
         let zero_sized = RithmicBracketOrder {
-            price_type: OrderType::Market,
             stop_quantity: vec![0],
             stop_ticks: vec![10],
-            ..Default::default()
+            ..bracket(1, OrderType::Market)
         };
         assert!(zero_sized.validate().is_err());
 
         // A bracket_type that disagrees with the legs supplied.
         let mismatched = RithmicBracketOrder {
-            price_type: OrderType::Market,
             bracket_type: Some(BracketType::TargetOnly),
             stop_quantity: vec![1],
             stop_ticks: vec![10],
-            ..Default::default()
+            ..bracket(1, OrderType::Market)
         };
         assert!(mismatched.validate().is_err());
 
         // No exit legs at all is still fine: template 330 carries the entry.
-        let bare = RithmicBracketOrder {
-            price_type: OrderType::Market,
-            ..Default::default()
-        };
+        let bare = bracket(1, OrderType::Market);
         assert!(bare.validate().is_ok());
 
         // A hand-set bracket_type that agrees with the legs passes.
         let matched = RithmicBracketOrder {
-            price_type: OrderType::Market,
             bracket_type: Some(BracketType::StopOnly),
             stop_quantity: vec![1],
             stop_ticks: vec![10],
-            ..Default::default()
+            ..bracket(1, OrderType::Market)
         };
         assert!(matched.validate().is_ok());
     }
@@ -653,6 +664,8 @@ mod tests {
     #[test]
     fn the_bracket_sugar_sizes_its_leg_to_the_quantity_set_so_far() {
         let after = RithmicBracketOrder::new()
+            .symbol("ESH6")
+            .exchange("CME")
             .price_type(OrderType::Market)
             .quantity(3)
             .target(20)
@@ -661,6 +674,8 @@ mod tests {
         assert_eq!(after.target_quantity, vec![3]);
 
         let before = RithmicBracketOrder::new()
+            .symbol("ESH6")
+            .exchange("CME")
             .price_type(OrderType::Market)
             .target(20)
             .quantity(3)
@@ -699,5 +714,28 @@ mod tests {
             bracket(1, OrderType::Market).build().unwrap().bracket_type,
             None
         );
+    }
+    #[test]
+    fn an_adjustment_requires_the_basket_id() {
+        assert!(
+            RithmicBracketLevelAdjustment::new()
+                .ticks(10)
+                .build()
+                .is_err()
+        );
+        assert!(
+            RithmicBracketLevelAdjustment::new()
+                .id("123456")
+                .ticks(10)
+                .build()
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn a_bracket_requires_its_identity() {
+        assert!(bracket(0, OrderType::Market).build().is_err());
+        assert!(bracket(1, OrderType::Market).symbol("").build().is_err());
+        assert!(bracket(1, OrderType::Market).build().is_ok());
     }
 }

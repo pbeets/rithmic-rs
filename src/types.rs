@@ -9,8 +9,9 @@ use std::str::FromStr;
 use crate::{
     error::RithmicError,
     rti::{
-        request_bracket_order, request_cancel_all_orders, request_cancel_order,
-        request_exit_position, request_modify_order, request_new_order, request_oco_order,
+        request_account_rms_updates, request_bracket_order, request_cancel_all_orders,
+        request_cancel_order, request_easy_to_borrow_list, request_exit_position,
+        request_modify_order, request_new_order, request_oco_order,
     },
 };
 
@@ -526,6 +527,7 @@ impl fmt::Display for BracketOperationType {
 #[non_exhaustive]
 pub enum FillHistoryRange {
     /// Bounds are seconds since the beginning of the epoch.
+    #[non_exhaustive]
     Ssboe {
         /// Start of the window, in seconds since the beginning of the epoch.
         start: i32,
@@ -533,6 +535,7 @@ pub enum FillHistoryRange {
         finish: i32,
     },
     /// Bounds are trade dates written as CCYYMMDD, e.g. `20260804`.
+    #[non_exhaustive]
     TradeDate {
         /// First trade date of the window, as CCYYMMDD.
         start: i32,
@@ -542,6 +545,16 @@ pub enum FillHistoryRange {
 }
 
 impl FillHistoryRange {
+    /// A window bounded in seconds since the beginning of the epoch.
+    pub fn ssboe(start: i32, finish: i32) -> Self {
+        Self::Ssboe { start, finish }
+    }
+
+    /// A window bounded by trade dates written as CCYYMMDD, e.g. `20260804`.
+    pub fn trade_date(start: i32, finish: i32) -> Self {
+        Self::TradeDate { start, finish }
+    }
+
     /// The `index_format` spelling sent on the wire.
     pub fn index_format(&self) -> &'static str {
         match self {
@@ -565,8 +578,217 @@ impl FillHistoryRange {
     }
 }
 
-/// Comparison operator for an if-touched trigger.
+/// Subscribe to or unsubscribe from the easy-to-borrow list (template 348).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[non_exhaustive]
+pub enum EasyToBorrowRequest {
+    /// Request the current list and receive updates as it changes.
+    Subscribe,
+    /// Stop receiving easy-to-borrow updates.
+    Unsubscribe,
+}
+
+impl EasyToBorrowRequest {
+    /// The protobuf spelling, as the generated enum's `as_str_name` writes it.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Subscribe => "SUBSCRIBE",
+            Self::Unsubscribe => "UNSUBSCRIBE",
+        }
+    }
+}
+
+impl fmt::Display for EasyToBorrowRequest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str_name())
+    }
+}
+
+impl From<EasyToBorrowRequest> for request_easy_to_borrow_list::Request {
+    fn from(request: EasyToBorrowRequest) -> Self {
+        match request {
+            EasyToBorrowRequest::Subscribe => Self::Subscribe,
+            EasyToBorrowRequest::Unsubscribe => Self::Unsubscribe,
+        }
+    }
+}
+
+/// Selects which RMS fields to stream via
+/// [`subscribe_account_rms_updates`](crate::RithmicOrderPlantHandle::subscribe_account_rms_updates).
+///
+/// Pass one or more selectors; they are combined into the request's
+/// `update_bits` bitmask. An empty selection leaves the field off the
+/// request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[non_exhaustive]
+pub enum RmsUpdateBits {
+    /// Stream `auto_liq_threshold_current_value` updates.
+    AutoLiqThresholdCurrentValue,
+}
+
+impl RmsUpdateBits {
+    /// The protobuf spelling, as the generated enum's `as_str_name` writes it.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::AutoLiqThresholdCurrentValue => "AUTO_LIQ_THRESHOLD_CURRENT_VALUE",
+        }
+    }
+}
+
+impl fmt::Display for RmsUpdateBits {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str_name())
+    }
+}
+
+impl From<RmsUpdateBits> for request_account_rms_updates::UpdateBits {
+    fn from(bits: RmsUpdateBits) -> Self {
+        match bits {
+            RmsUpdateBits::AutoLiqThresholdCurrentValue => Self::AutoLiqThresholdCurrentValue,
+        }
+    }
+}
+
+/// A volume-profile minute-bars request, passed to
+/// [`load_volume_profile_minute_bars`].
+///
+/// # Example
+///
+/// ```
+/// use rithmic_rs::VolumeProfileMinuteBarsRequest;
+/// # fn main() -> Result<(), rithmic_rs::RithmicError> {
+/// let request = VolumeProfileMinuteBarsRequest::new()
+///     .symbol("ESH6")
+///     .exchange("CME")
+///     .bar_type_period(5)
+///     .start_time_sec(1_750_000_000)
+///     .end_time_sec(1_750_003_600)
+///     .build()?;
+/// # Ok(())
+/// # }
+/// ```
+///
+/// [`load_volume_profile_minute_bars`]: crate::RithmicHistoryPlantHandle::load_volume_profile_minute_bars
+#[derive(Debug, Clone, Default, PartialEq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[non_exhaustive]
+#[must_use = "a request does nothing until passed to the history handle"]
+pub struct VolumeProfileMinuteBarsRequest {
+    /// The trading symbol, e.g. `"ESH6"`.
+    pub symbol: String,
+    /// The exchange code, e.g. `"CME"`.
+    pub exchange: String,
+    /// Number of minutes each bar aggregates.
+    pub bar_type_period: i32,
+    /// Start of the window as a Unix timestamp in seconds.
+    pub start_time_sec: i32,
+    /// End of the window as a Unix timestamp in seconds.
+    pub end_time_sec: i32,
+    /// Maximum number of bars to return; the server applies its own default
+    /// when unset.
+    pub user_max_count: Option<i32>,
+    /// Whether to resume from a previous request.
+    pub resume_bars: Option<bool>,
+}
+
+impl VolumeProfileMinuteBarsRequest {
+    /// Start an empty request.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The trading symbol, e.g. `"ESH6"`.
+    pub fn symbol(mut self, symbol: impl Into<String>) -> Self {
+        self.symbol = symbol.into();
+        self
+    }
+
+    /// The exchange code, e.g. `"CME"`.
+    pub fn exchange(mut self, exchange: impl Into<String>) -> Self {
+        self.exchange = exchange.into();
+        self
+    }
+
+    /// Number of minutes each bar aggregates.
+    pub fn bar_type_period(mut self, bar_type_period: i32) -> Self {
+        self.bar_type_period = bar_type_period;
+        self
+    }
+
+    /// Start of the window as a Unix timestamp in seconds.
+    pub fn start_time_sec(mut self, start_time_sec: i32) -> Self {
+        self.start_time_sec = start_time_sec;
+        self
+    }
+
+    /// End of the window as a Unix timestamp in seconds.
+    pub fn end_time_sec(mut self, end_time_sec: i32) -> Self {
+        self.end_time_sec = end_time_sec;
+        self
+    }
+
+    /// Maximum number of bars to return.
+    pub fn user_max_count(mut self, user_max_count: i32) -> Self {
+        self.user_max_count = Some(user_max_count);
+        self
+    }
+
+    /// Whether to resume from a previous request.
+    pub fn resume_bars(mut self, resume_bars: bool) -> Self {
+        self.resume_bars = Some(resume_bars);
+        self
+    }
+
+    /// Requires a symbol, an exchange, a bar period, and an ordered time
+    /// window.
+    pub fn validate(&self) -> Result<(), RithmicError> {
+        if self.symbol.is_empty() {
+            return Err(RithmicError::InvalidArgument(
+                "a volume-profile request requires a symbol".to_string(),
+            ));
+        }
+
+        if self.exchange.is_empty() {
+            return Err(RithmicError::InvalidArgument(
+                "a volume-profile request requires an exchange".to_string(),
+            ));
+        }
+
+        if self.bar_type_period < 1 {
+            return Err(RithmicError::InvalidArgument(
+                "bar_type_period must be at least 1".to_string(),
+            ));
+        }
+
+        if self.start_time_sec < 1 || self.end_time_sec < 1 {
+            return Err(RithmicError::InvalidArgument(
+                "start_time_sec and end_time_sec are both required, as positive Unix \
+                 timestamps"
+                    .to_string(),
+            ));
+        }
+
+        if self.end_time_sec < self.start_time_sec {
+            return Err(RithmicError::InvalidArgument(
+                "end_time_sec must not precede start_time_sec".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Requires a symbol, an exchange, a bar period, and an ordered time
+    /// window.
+    pub fn build(self) -> Result<Self, RithmicError> {
+        self.validate()?;
+        Ok(self)
+    }
+}
+
+/// Comparison operator for an if-touched trigger. Defaults to
+/// `GreaterThanEqualTo`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[non_exhaustive]
 pub enum OrderCondition {
@@ -577,6 +799,7 @@ pub enum OrderCondition {
     /// Fires when the price field is above the threshold.
     GreaterThan,
     /// Fires when the price field is at or above the threshold.
+    #[default]
     GreaterThanEqualTo,
     /// Fires when the price field is below the threshold.
     LesserThan,
@@ -643,8 +866,8 @@ impl From<OrderCondition> for request_modify_order::Condition {
     }
 }
 
-/// Which price an if-touched trigger watches.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// Which price an if-touched trigger watches. Defaults to `TradePrice`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[non_exhaustive]
 pub enum OrderPriceField {
@@ -653,6 +876,7 @@ pub enum OrderPriceField {
     /// The best offer.
     OfferPrice,
     /// The last trade price.
+    #[default]
     TradePrice,
     /// The lean price.
     LeanPrice,
@@ -734,6 +958,40 @@ mod tests {
             assert!(err.contains("is not available on an OCO leg"), "{err}");
             assert!(err.contains(order_type.as_str_name()), "{err}");
         }
+    }
+
+    #[test]
+    fn volume_profile_request_rejects_a_missing_or_reversed_window() {
+        let request = VolumeProfileMinuteBarsRequest::new()
+            .symbol("ESH6")
+            .exchange("CME")
+            .bar_type_period(5);
+
+        let err = request
+            .clone()
+            .start_time_sec(-10)
+            .end_time_sec(1_750_003_600)
+            .build()
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("both required"), "{err}");
+
+        let err = request
+            .clone()
+            .start_time_sec(1_750_003_600)
+            .end_time_sec(1_750_000_000)
+            .build()
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("must not precede"), "{err}");
+
+        assert!(
+            request
+                .start_time_sec(1_750_000_000)
+                .end_time_sec(1_750_000_000)
+                .build()
+                .is_ok()
+        );
     }
 
     #[test]

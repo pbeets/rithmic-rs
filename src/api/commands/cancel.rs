@@ -15,7 +15,9 @@ use crate::{error::RithmicError, types::ManualOrAutoEntry};
 /// # }
 /// ```
 #[derive(Debug, Clone, Default, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
+#[must_use = "a cancellation does nothing until passed to a plant handle"]
 pub struct RithmicCancelOrder {
     /// The `basket_id` from the order notification
     pub id: String,
@@ -49,8 +51,19 @@ impl RithmicCancelOrder {
         self
     }
 
-    /// Return the cancellation.
+    /// Requires the basket_id of the order to cancel.
+    pub fn validate(&self) -> Result<(), RithmicError> {
+        if self.id.is_empty() {
+            return Err(RithmicError::InvalidArgument(
+                "a cancel requires the basket_id of the order it cancels".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Requires the basket_id of the order to cancel.
     pub fn build(self) -> Result<Self, RithmicError> {
+        self.validate()?;
         Ok(self)
     }
 }
@@ -73,7 +86,9 @@ impl RithmicCancelOrder {
 /// # }
 /// ```
 #[derive(Debug, Clone, Default, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
+#[must_use = "a cancellation does nothing until passed to a plant handle"]
 pub struct RithmicCancelAllOrders {
     /// Whether the cancellation was made by a human or automatically.
     pub manual_or_auto: ManualOrAutoEntry,
@@ -91,8 +106,21 @@ impl RithmicCancelAllOrders {
         self
     }
 
-    /// Return the command.
+    /// Requires nothing — the command names no order.
     pub fn build(self) -> Result<Self, RithmicError> {
         Ok(self)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_cancel_requires_the_basket_id() {
+        assert!(RithmicCancelOrder::new().build().is_err());
+        assert!(RithmicCancelOrder::new().id("123456").build().is_ok());
+        // Cancel-all names no order, so it has nothing to require.
+        assert!(RithmicCancelAllOrders::new().build().is_ok());
     }
 }

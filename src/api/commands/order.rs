@@ -1,6 +1,7 @@
 //! A standalone order.
 
 use super::triggers::{RithmicIfTouchedTrigger, TrailingStop};
+use super::validate_instrument;
 
 use crate::{
     error::RithmicError,
@@ -74,7 +75,9 @@ use crate::{
 /// # }
 /// ```
 #[derive(Debug, Clone, Default, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
+#[must_use = "an order does nothing until passed to a plant handle"]
 pub struct RithmicOrder {
     /// Trading symbol (e.g., "ESH6")
     pub symbol: String,
@@ -184,7 +187,11 @@ impl RithmicOrder {
 
     /// Trail by `trail_by_ticks` against Rithmic's `trail_by_price_id`.
     pub fn trailing_stop_by(self, trail_by_ticks: i32, trail_by_price_id: i32) -> Self {
-        self.trailing_stop(TrailingStop::new(trail_by_ticks, trail_by_price_id))
+        self.trailing_stop(
+            TrailingStop::new()
+                .trail_by_ticks(trail_by_ticks)
+                .trail_by_price_id(trail_by_price_id),
+        )
     }
 
     /// Route to send on, overriding the route published for the exchange.
@@ -251,15 +258,20 @@ impl RithmicOrder {
         self
     }
 
-    /// Check the order carries the prices its [`Self::price_type`] requires:
+    /// Check the order names an instrument (symbol, exchange, a positive
+    /// quantity) and carries the prices its [`Self::price_type`] requires:
     /// `Limit`, `StopLimit` and `LimitIfTouched` need [`Self::price`];
     /// `StopMarket`, `StopLimit`, `MarketIfTouched` and `LimitIfTouched` need
-    /// [`Self::trigger_price`]. `Market` needs neither.
+    /// [`Self::trigger_price`]. `Market` needs neither. An embedded
+    /// [`TrailingStop`] or [`RithmicIfTouchedTrigger`] is deliberately not
+    /// re-validated — `build()` on those types is the opt-in strict path.
     pub fn validate(&self) -> Result<(), RithmicError> {
+        validate_instrument(&self.symbol, &self.exchange, self.quantity)?;
+
         super::require_prices(self.price_type, self.price, self.trigger_price)
     }
 
-    /// Validate and return the order.
+    /// Requires an instrument and the prices the price type needs.
     pub fn build(self) -> Result<Self, RithmicError> {
         self.validate()?;
         Ok(self)
@@ -283,7 +295,7 @@ mod tests {
     fn a_market_order_validates_without_a_price() {
         let order = RithmicOrder {
             price_type: OrderType::Market,
-            ..Default::default()
+            ..order()
         };
 
         assert!(order.validate().is_ok());
@@ -293,7 +305,7 @@ mod tests {
     fn a_limit_order_needs_a_price() {
         let mut order = RithmicOrder {
             price_type: OrderType::Limit,
-            ..Default::default()
+            ..order()
         };
 
         let err = order.validate().unwrap_err().to_string();
@@ -307,7 +319,7 @@ mod tests {
     fn a_stop_market_order_needs_a_trigger_but_no_price() {
         let mut order = RithmicOrder {
             price_type: OrderType::StopMarket,
-            ..Default::default()
+            ..order()
         };
 
         let err = order.validate().unwrap_err().to_string();
@@ -322,7 +334,7 @@ mod tests {
         let mut order = RithmicOrder {
             price_type: OrderType::StopLimit,
             price: Some(4980.0),
-            ..Default::default()
+            ..order()
         };
 
         assert!(order.validate().is_err());
@@ -337,7 +349,7 @@ mod tests {
     fn the_error_names_the_order_type() {
         let order = RithmicOrder {
             price_type: OrderType::LimitIfTouched,
-            ..Default::default()
+            ..order()
         };
 
         let err = order.validate().unwrap_err().to_string();
@@ -364,5 +376,12 @@ mod tests {
         assert_eq!(order.release_at_usecs, Some(500));
         assert_eq!(order.cancel_at_ssboe, Some(36000));
         assert_eq!(order.cancel_at_usecs, Some(250));
+    }
+    #[test]
+    fn an_order_requires_its_identity() {
+        assert!(order().symbol("").price(5000.0).build().is_err());
+        assert!(order().exchange("").price(5000.0).build().is_err());
+        assert!(order().quantity(0).price(5000.0).build().is_err());
+        assert!(order().price(5000.0).build().is_ok());
     }
 }

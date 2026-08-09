@@ -18,6 +18,7 @@ use crate::{
         messages::RithmicMessage, request_login::SysInfraType, request_tick_bar_update,
         request_time_bar_replay::BarType, request_time_bar_update,
     },
+    types::VolumeProfileMinuteBarsRequest,
 };
 
 pub(crate) enum HistoryPlantCommand {
@@ -55,13 +56,7 @@ pub(crate) enum HistoryPlantCommand {
         symbol: String,
     },
     LoadVolumeProfileMinuteBars {
-        symbol: String,
-        exchange: String,
-        bar_type_period: i32,
-        start_time_sec: i32,
-        end_time_sec: i32,
-        user_max_count: Option<i32>,
-        resume_bars: Option<bool>,
+        request: VolumeProfileMinuteBarsRequest,
         response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
     },
     ResumeBars {
@@ -333,26 +328,20 @@ impl PlantActor for HistoryPlant {
                     .await;
             }
             HistoryPlantCommand::LoadVolumeProfileMinuteBars {
-                symbol,
-                exchange,
-                bar_type_period,
-                start_time_sec,
-                end_time_sec,
-                user_max_count,
-                resume_bars,
+                request,
                 response_sender,
             } => {
                 let (buf, id) = self
                     .core
                     .rithmic_sender_api
                     .request_volume_profile_minute_bars(
-                        &symbol,
-                        &exchange,
-                        bar_type_period,
-                        start_time_sec,
-                        end_time_sec,
-                        user_max_count,
-                        resume_bars,
+                        &request.symbol,
+                        &request.exchange,
+                        request.bar_type_period,
+                        request.start_time_sec,
+                        request.end_time_sec,
+                        request.user_max_count,
+                        request.resume_bars,
                     );
 
                 self.core.register_and_send(buf, id, response_sender).await;
@@ -627,6 +616,129 @@ impl RithmicHistoryPlantHandle {
         await_all_responses(rx).await
     }
 
+    /// Load historical tick data, following resume keys until the replay completes.
+    ///
+    /// This is a convenience wrapper around [`load_tick_bars_all`](Self::load_tick_bars_all)
+    /// with `bar_length = 1`, so each response contains a single tick.
+    /// See there for how truncation and `max_pages` behave.
+    pub async fn load_ticks_all(
+        &self,
+        symbol: String,
+        exchange: String,
+        start_time_sec: i32,
+        end_time_sec: i32,
+        max_pages: Option<usize>,
+    ) -> Result<Vec<RithmicResponse>, RithmicError> {
+        self.load_tick_bars_all(symbol, exchange, 1, start_time_sec, end_time_sec, max_pages)
+            .await
+    }
+
+    /// Load historical tick bar data, following resume keys until the replay completes.
+    ///
+    /// Rithmic truncates a large replay and puts a `request_key` on its closing
+    /// response. Where [`load_tick_bars`](Self::load_tick_bars) returns such a
+    /// page as-is, this method keeps issuing [`resume_bars`](Self::resume_bars)
+    /// until a page closes without a key, and returns every page's responses in
+    /// order.
+    ///
+    /// `max_pages` caps how many pages are fetched; `None` means unbounded,
+    /// and the initial page always loads, so `Some(0)` behaves like `Some(1)`.
+    /// When the cap cuts the replay short, the last returned response still
+    /// carries its resume key — check [`RithmicResponse::resume_key`] and
+    /// continue manually with [`resume_bars`](Self::resume_bars).
+    ///
+    /// # Errors
+    /// An error on any page — including a [`RithmicError::RequestTimeout`] on a
+    /// stalled resume — discards the pages already gathered.
+    pub async fn load_tick_bars_all(
+        &self,
+        symbol: String,
+        exchange: String,
+        bar_length: u32,
+        start_time_sec: i32,
+        end_time_sec: i32,
+        max_pages: Option<usize>,
+    ) -> Result<Vec<RithmicResponse>, RithmicError> {
+        let mut responses = self
+            .load_tick_bars(symbol, exchange, bar_length, start_time_sec, end_time_sec)
+            .await?;
+
+        self.follow_resume_keys(&mut responses, max_pages).await?;
+
+        Ok(responses)
+    }
+
+    /// Load historical time bar data, following resume keys until the replay completes.
+    ///
+    /// The paginating counterpart of [`load_time_bars`](Self::load_time_bars);
+    /// truncation, `max_pages` and errors behave as on
+    /// [`load_tick_bars_all`](Self::load_tick_bars_all).
+    #[allow(clippy::too_many_arguments)]
+    pub async fn load_time_bars_all(
+        &self,
+        symbol: String,
+        exchange: String,
+        bar_type: BarType,
+        bar_type_period: i32,
+        start_time_sec: i32,
+        end_time_sec: i32,
+        max_pages: Option<usize>,
+    ) -> Result<Vec<RithmicResponse>, RithmicError> {
+        let mut responses = self
+            .load_time_bars(
+                symbol,
+                exchange,
+                bar_type,
+                bar_type_period,
+                start_time_sec,
+                end_time_sec,
+            )
+            .await?;
+
+        self.follow_resume_keys(&mut responses, max_pages).await?;
+
+        Ok(responses)
+    }
+
+    /// Append resumed pages to `responses` until one closes without a resume key
+    /// or `max_pages` pages have been fetched.
+    //
+    // Pages resume with the server's `request_key`, never by re-requesting from
+    // the last item's timestamp. A tick replay routinely carries several ticks
+    // on one timestamp — one aggressor filling several resting orders stamps
+    // every fill identically — so a page boundary can fall mid-timestamp, and a
+    // timestamp restart would either skip the rest of that instant or duplicate
+    // what already arrived. Only the server's own cursor resumes exactly.
+    async fn follow_resume_keys(
+        &self,
+        responses: &mut Vec<RithmicResponse>,
+        max_pages: Option<usize>,
+    ) -> Result<(), RithmicError> {
+        let mut pages: usize = 1;
+
+        while max_pages.is_none_or(|cap| pages < cap) {
+            let Some(key) = responses
+                .last()
+                .and_then(|r| r.resume_key().map(String::from))
+            else {
+                break;
+            };
+
+            let page = self.resume_bars(key).await?;
+
+            // An empty page would leave the old closing response — and its
+            // key — as `last()`, so break rather than resume it forever.
+            if page.is_empty() {
+                break;
+            }
+
+            pages += 1;
+            responses.extend(page);
+        }
+
+        Ok(())
+    }
+
     /// Load historical time bar data for a specific symbol and time range
     ///
     /// # Arguments
@@ -665,40 +777,18 @@ impl RithmicHistoryPlantHandle {
         await_all_responses(rx).await
     }
 
-    /// Load volume profile minute bars
-    ///
-    /// # Arguments
-    /// * `symbol` - The trading symbol (e.g., "ESH6")
-    /// * `exchange` - The exchange code (e.g., "CME")
-    /// * `bar_type_period` - The period for the bars
-    /// * `start_time_sec` - Start time in Unix timestamp (seconds)
-    /// * `end_time_sec` - End time in Unix timestamp (seconds)
-    /// * `user_max_count` - Optional maximum number of bars to return
-    /// * `resume_bars` - Whether to resume from a previous request
+    /// Load volume profile minute bars for the window `request` describes.
     ///
     /// # Returns
     /// The volume profile minute bar responses or an error message
-    #[allow(clippy::too_many_arguments)]
     pub async fn load_volume_profile_minute_bars(
         &self,
-        symbol: String,
-        exchange: String,
-        bar_type_period: i32,
-        start_time_sec: i32,
-        end_time_sec: i32,
-        user_max_count: Option<i32>,
-        resume_bars: Option<bool>,
+        request: VolumeProfileMinuteBarsRequest,
     ) -> Result<Vec<RithmicResponse>, RithmicError> {
         let (tx, rx) = oneshot::channel::<Result<Vec<RithmicResponse>, RithmicError>>();
 
         let command = HistoryPlantCommand::LoadVolumeProfileMinuteBars {
-            symbol,
-            exchange,
-            bar_type_period,
-            start_time_sec,
-            end_time_sec,
-            user_max_count,
-            resume_bars,
+            request,
             response_sender: tx,
         };
 

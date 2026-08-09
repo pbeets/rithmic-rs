@@ -95,12 +95,13 @@ impl FromStr for RithmicEnv {
 }
 
 /// Configuration error types.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ConfigError {
     /// The environment string could not be parsed.
     InvalidEnvironment(String),
     /// A configuration value was present but invalid.
+    #[non_exhaustive]
     InvalidValue {
         /// The variable or field name.
         var: String,
@@ -210,7 +211,7 @@ impl RithmicAccount {
 /// # Ok(())
 /// # }
 /// ```
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 #[non_exhaustive]
 pub struct LoginConfig {
     /// Aggregated rather than tick-by-tick quotes. Ticker plant only.
@@ -416,6 +417,7 @@ impl RithmicConfig {
 }
 
 /// Builder for constructing a RithmicConfig with custom values.
+#[must_use = "the builder does nothing until build() is called"]
 pub struct RithmicConfigBuilder {
     env: RithmicEnv,
     url: Option<String>,

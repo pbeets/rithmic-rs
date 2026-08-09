@@ -23,12 +23,6 @@ pub use commands::{
 
 // Re-export the crate-owned order enums so `api::ManualOrAutoEntry` also resolves
 pub use crate::types::{
-    BracketOperationType, BracketType, FillHistoryRange, ManualOrAutoEntry, OrderCondition,
-    OrderPriceField, OrderSide, OrderType, TimeInForce,
+    BracketOperationType, BracketType, EasyToBorrowRequest, FillHistoryRange, ManualOrAutoEntry,
+    OrderCondition, OrderPriceField, OrderSide, OrderType, RmsUpdateBits, TimeInForce,
 };
-
-// Re-export easy-to-borrow list request type
-pub use crate::rti::request_easy_to_borrow_list::Request as EasyToBorrowRequest;
-
-// Re-export account RMS update selector
-pub use crate::rti::request_account_rms_updates::UpdateBits as RmsUpdateBits;

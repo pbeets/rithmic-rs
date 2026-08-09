@@ -497,5 +497,15 @@ impl RithmicPnlPlantHandle {
     }
 }
 
+impl Clone for RithmicPnlPlantHandle {
+    fn clone(&self) -> Self {
+        RithmicPnlPlantHandle {
+            account: Arc::clone(&self.account),
+            sender: self.sender.clone(),
+            subscription_receiver: self.subscription_receiver.resubscribe(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests;

@@ -47,14 +47,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         symbol, start_time, end_time
     );
 
+    // `load_time_bars_all` follows Rithmic's resume keys, so a replay the
+    // server truncates comes back complete; `None` places no cap on the pages.
     let bars = handle
-        .load_time_bars(
+        .load_time_bars_all(
             symbol,
             exchange,
             BarType::MinuteBar,
             5,
             start_time,
             end_time,
+            None,
         )
         .await?;
 

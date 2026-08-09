@@ -1,6 +1,7 @@
 //! Modifying a working order: its terms, and the tag it reports under.
 
 use super::triggers::RithmicIfTouchedTrigger;
+use super::validate_instrument;
 
 use crate::{
     error::RithmicError,
@@ -27,7 +28,9 @@ use crate::{
 /// # }
 /// ```
 #[derive(Debug, Clone, Default, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
+#[must_use = "a modification does nothing until passed to a plant handle"]
 pub struct RithmicModifyOrder {
     /// The `basket_id` from the order notification
     pub id: String,
@@ -142,6 +145,14 @@ impl RithmicModifyOrder {
     /// trigger, which is [`Self::trigger_price`] or the [`Self::price`] that
     /// stands in for it. `Market` needs neither.
     pub fn validate(&self) -> Result<(), RithmicError> {
+        if self.id.is_empty() {
+            return Err(RithmicError::InvalidArgument(
+                "a modify requires the basket_id of the order it restates".to_string(),
+            ));
+        }
+
+        validate_instrument(&self.symbol, &self.exchange, self.quantity)?;
+
         let (needs_price, needs_trigger) = super::price_requirements(self.price_type);
 
         let order_type = self.price_type.as_str_name();
@@ -161,7 +172,8 @@ impl RithmicModifyOrder {
         Ok(())
     }
 
-    /// Validate and return the modification.
+    /// Requires the basket_id, the instrument, and the prices the price type
+    /// needs.
     pub fn build(self) -> Result<Self, RithmicError> {
         self.validate()?;
         Ok(self)
@@ -183,7 +195,9 @@ impl RithmicModifyOrder {
 /// # }
 /// ```
 #[derive(Debug, Clone, Default, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
+#[must_use = "a command does nothing until passed to a plant handle"]
 pub struct RithmicModifyOrderReferenceData {
     /// The `basket_id` from the order notification.
     pub basket_id: String,
@@ -209,8 +223,19 @@ impl RithmicModifyOrderReferenceData {
         self
     }
 
-    /// Return the command.
+    /// Requires the basket_id; the tag itself may be empty.
+    pub fn validate(&self) -> Result<(), RithmicError> {
+        if self.basket_id.is_empty() {
+            return Err(RithmicError::InvalidArgument(
+                "a retag requires the basket_id of the order it retags".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Requires the basket_id; the tag itself may be empty.
     pub fn build(self) -> Result<Self, RithmicError> {
+        self.validate()?;
         Ok(self)
     }
 }
@@ -220,7 +245,12 @@ mod tests {
     use super::*;
 
     fn modify(price_type: OrderType) -> RithmicModifyOrder {
-        RithmicModifyOrder::new().id("b").price_type(price_type)
+        RithmicModifyOrder::new()
+            .id("b")
+            .symbol("ESM6")
+            .exchange("CME")
+            .quantity(1)
+            .price_type(price_type)
     }
 
     /// The table is `RithmicOrder::validate`'s, except that a triggering type
@@ -256,6 +286,24 @@ mod tests {
         assert!(
             modify(OrderType::LimitIfTouched)
                 .price(5000.0)
+                .build()
+                .is_ok()
+        );
+    }
+    #[test]
+    fn a_modify_requires_the_basket_id_and_instrument() {
+        assert!(modify(OrderType::Market).id("").build().is_err());
+        assert!(modify(OrderType::Market).symbol("").build().is_err());
+        assert!(modify(OrderType::Market).quantity(0).build().is_err());
+    }
+
+    #[test]
+    fn a_retag_requires_the_basket_id_but_takes_an_empty_tag() {
+        assert!(RithmicModifyOrderReferenceData::new().build().is_err());
+        assert!(
+            RithmicModifyOrderReferenceData::new()
+                .basket_id("b")
+                .user_tag("")
                 .build()
                 .is_ok()
         );

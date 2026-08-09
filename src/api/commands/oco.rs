@@ -1,6 +1,7 @@
 //! OCO (One-Cancels-Other) groups and the legs they hold.
 
 use super::triggers::TrailingStop;
+use super::validate_instrument;
 
 use crate::{
     error::RithmicError,
@@ -27,7 +28,9 @@ use crate::{
 /// # }
 /// ```
 #[derive(Debug, Clone, Default, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
+#[must_use = "a leg does nothing until added to an OCO group"]
 pub struct RithmicOcoOrderLeg {
     /// Trading symbol (e.g., "ESH6")
     pub symbol: String,
@@ -129,7 +132,11 @@ impl RithmicOcoOrderLeg {
 
     /// Trail by `trail_by_ticks` against Rithmic's `trail_by_price_id`.
     pub fn trailing_stop_by(self, trail_by_ticks: i32, trail_by_price_id: i32) -> Self {
-        self.trailing_stop(TrailingStop::new(trail_by_ticks, trail_by_price_id))
+        self.trailing_stop(
+            TrailingStop::new()
+                .trail_by_ticks(trail_by_ticks)
+                .trail_by_price_id(trail_by_price_id),
+        )
     }
 
     /// Route to send on, overriding the route published for the exchange.
@@ -150,10 +157,12 @@ impl RithmicOcoOrderLeg {
         self
     }
 
-    /// Check the leg carries the prices its [`Self::price_type`] requires:
-    /// `Limit` and `StopLimit` need [`Self::price`]; `StopMarket` and
-    /// `StopLimit` need [`Self::trigger_price`]. `Market` needs neither.
+    /// Requires a symbol, an exchange, a positive quantity, and the prices
+    /// the [`Self::price_type`] needs. An OCO leg cannot be if-touched. An
+    /// embedded trailing stop is not re-validated.
     pub fn validate(&self) -> Result<(), RithmicError> {
+        validate_instrument(&self.symbol, &self.exchange, self.quantity)?;
+
         if matches!(
             self.price_type,
             OrderType::MarketIfTouched | OrderType::LimitIfTouched
@@ -167,7 +176,7 @@ impl RithmicOcoOrderLeg {
         super::require_prices(self.price_type, self.price, self.trigger_price)
     }
 
-    /// Validate and return the leg.
+    /// Requires an instrument and the prices the price type needs.
     pub fn build(self) -> Result<Self, RithmicError> {
         self.validate()?;
         Ok(self)
@@ -203,7 +212,9 @@ impl RithmicOcoOrderLeg {
 /// # }
 /// ```
 #[derive(Debug, Clone, Default, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
+#[must_use = "an order does nothing until passed to a plant handle"]
 pub struct RithmicOcoOrder {
     /// The legs of the group, in the order they are sent.
     pub legs: Vec<RithmicOcoOrderLeg>,
@@ -300,12 +311,19 @@ pub(crate) struct OcoCancelTiming {
 mod tests {
     use super::*;
 
+    fn leg(price_type: OrderType) -> RithmicOcoOrderLeg {
+        RithmicOcoOrderLeg {
+            symbol: "ESM6".to_string(),
+            exchange: "CME".to_string(),
+            quantity: 1,
+            price_type,
+            ..Default::default()
+        }
+    }
+
     #[test]
     fn an_oco_leg_validates_on_the_same_rules() {
-        let mut leg = RithmicOcoOrderLeg {
-            price_type: OrderType::Limit,
-            ..Default::default()
-        };
+        let mut leg = leg(OrderType::Limit);
 
         assert!(leg.validate().is_err());
 
@@ -317,10 +335,9 @@ mod tests {
     #[test]
     fn an_oco_leg_rejects_the_if_touched_price_types() {
         let leg = RithmicOcoOrderLeg {
-            price_type: OrderType::LimitIfTouched,
             price: Some(5000.0),
             trigger_price: Some(5000.0),
-            ..Default::default()
+            ..leg(OrderType::LimitIfTouched)
         };
 
         let err = leg.validate().unwrap_err().to_string();
@@ -331,10 +348,7 @@ mod tests {
     /// The group checks its legs, not how many of them there are.
     #[test]
     fn an_oco_order_validates_each_leg_but_not_the_count() {
-        let ok = RithmicOcoOrderLeg {
-            price_type: OrderType::Market,
-            ..Default::default()
-        };
+        let ok = leg(OrderType::Market);
 
         assert!(RithmicOcoOrder::default().validate().is_ok());
         assert!(
@@ -346,10 +360,7 @@ mod tests {
             .is_ok()
         );
 
-        let bad = RithmicOcoOrderLeg {
-            price_type: OrderType::Limit,
-            ..Default::default()
-        };
+        let bad = leg(OrderType::Limit);
         assert!(
             RithmicOcoOrder {
                 legs: vec![ok, bad],

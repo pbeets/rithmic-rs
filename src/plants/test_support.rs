@@ -216,6 +216,34 @@ pub(crate) async fn read_wire_request(client: &mut TcpStream) -> Vec<u8> {
     payload.split_off(4)
 }
 
+/// Writes one protobuf response into the plant: length header, then a masked
+/// binary frame, since the plant's transport holds the server role.
+pub(crate) async fn write_wire_response(client: &mut TcpStream, message: &impl prost::Message) {
+    use tokio::io::AsyncWriteExt;
+
+    let payload = message.encode_to_vec();
+    let mut body = (payload.len() as u32).to_be_bytes().to_vec();
+    body.extend(payload);
+
+    let mut frame = vec![0x82];
+    match body.len() {
+        len if len < 126 => frame.push(0x80 | len as u8),
+        len if len <= u16::MAX as usize => {
+            frame.push(0x80 | 126);
+            frame.extend((len as u16).to_be_bytes());
+        }
+        _ => panic!("a test response larger than 64 KiB is not something this helper frames"),
+    }
+    // An all-zero masking key, so the masked payload is the payload itself.
+    frame.extend([0u8; 4]);
+    frame.extend(body);
+
+    tokio::time::timeout(WIRE_WRITE_TIMEOUT, client.write_all(&frame))
+        .await
+        .expect("timed out writing the response to the wire")
+        .expect("the connection closed before the response was written");
+}
+
 /// Resolves a response channel the way every plant handle method does: a
 /// dropped responder becomes `ConnectionClosed`. Fails rather than hangs.
 pub(crate) async fn awaited_caller_outcome(

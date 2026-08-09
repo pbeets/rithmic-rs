@@ -42,7 +42,7 @@ use crate::{
         request_tick_bar_update, request_time_bar_replay, request_time_bar_update,
         response_login_info,
     },
-    types::{FillHistoryRange, OrderType},
+    types::{EasyToBorrowRequest, FillHistoryRange, OrderType, RmsUpdateBits},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -604,7 +604,7 @@ impl RithmicSenderApi {
                 .if_touched
                 .as_ref()
                 .map(|trigger| request_new_order::PriceField::from(trigger.price_field).into()),
-            if_touched_price: order.if_touched.as_ref().map(|trigger| trigger.price),
+            if_touched_price: order.if_touched.as_ref().and_then(|trigger| trigger.price),
         };
 
         self.request_to_buf(req, id)
@@ -701,7 +701,7 @@ impl RithmicSenderApi {
             if_touched_price: bracket_order
                 .if_touched
                 .as_ref()
-                .map(|trigger| trigger.price),
+                .and_then(|trigger| trigger.price),
             price: bracket_order.price,
             trigger_price: bracket_order.trigger_price,
             user_msg: vec![id.clone()],
@@ -781,7 +781,7 @@ impl RithmicSenderApi {
                 .if_touched
                 .as_ref()
                 .map(|trigger| request_modify_order::PriceField::from(trigger.price_field).into()),
-            if_touched_price: order.if_touched.as_ref().map(|trigger| trigger.price),
+            if_touched_price: order.if_touched.as_ref().and_then(|trigger| trigger.price),
         };
 
         self.request_to_buf(req, id)
@@ -841,8 +841,8 @@ impl RithmicSenderApi {
             fcm_id: Some(account.fcm_id.clone()),
             ib_id: Some(account.ib_id.clone()),
             account_id: Some(account.account_id.clone()),
-            symbol: Some(command.symbol.clone()),
-            exchange: Some(command.exchange.clone()),
+            symbol: command.symbol.clone(),
+            exchange: command.exchange.clone(),
             manual_or_auto: Some(
                 request_exit_position::OrderPlacement::from(command.manual_or_auto).into(),
             ),
@@ -1617,7 +1617,7 @@ impl RithmicSenderApi {
     pub fn request_account_rms_updates(
         &mut self,
         subscribe: bool,
-        update_bits: Vec<request_account_rms_updates::UpdateBits>,
+        update_bits: Vec<RmsUpdateBits>,
         account: &RithmicAccount,
     ) -> (Vec<u8>, String) {
         let id = self.get_next_message_id();
@@ -1627,7 +1627,9 @@ impl RithmicSenderApi {
         let bits = if update_bits.is_empty() {
             None
         } else {
-            Some(update_bits.into_iter().fold(0i32, |acc, f| acc | f as i32))
+            Some(update_bits.into_iter().fold(0i32, |acc, f| {
+                acc | request_account_rms_updates::UpdateBits::from(f) as i32
+            }))
         };
 
         let req = RequestAccountRmsUpdates {
@@ -1811,14 +1813,14 @@ impl RithmicSenderApi {
     /// A tuple of (serialized request buffer, request ID)
     pub fn request_easy_to_borrow_list(
         &mut self,
-        request_type: request_easy_to_borrow_list::Request,
+        request_type: EasyToBorrowRequest,
     ) -> (Vec<u8>, String) {
         let id = self.get_next_message_id();
 
         let req = RequestEasyToBorrowList {
             template_id: 348,
             user_msg: vec![id.clone()],
-            request: Some(request_type.into()),
+            request: Some(request_easy_to_borrow_list::Request::from(request_type).into()),
         };
 
         self.request_to_buf(req, id)
@@ -2134,13 +2136,14 @@ mod tests {
             .bracket_type(BracketType::TargetAndStop)
             .targets([(2, 16), (1, 24)])
             .stops([(3, 8)])
-            .if_touched(RithmicIfTouchedTrigger::new(
-                "NQM6",
-                "CME",
-                OrderCondition::GreaterThanEqualTo,
-                OrderPriceField::TradePrice,
-                18250.5,
-            ))
+            .if_touched(
+                RithmicIfTouchedTrigger::new()
+                    .symbol("NQM6")
+                    .exchange("CME")
+                    .condition(OrderCondition::GreaterThanEqualTo)
+                    .price_field(OrderPriceField::TradePrice)
+                    .price(18250.5),
+            )
             .break_even_ticks(2)
             .break_even_trigger_ticks(10)
             .trailing_stop_trigger_ticks(12)
@@ -2521,13 +2524,33 @@ mod tests {
 
         let (buf, _) = api.request_account_rms_updates(
             true,
-            vec![request_account_rms_updates::UpdateBits::AutoLiqThresholdCurrentValue],
+            vec![RmsUpdateBits::AutoLiqThresholdCurrentValue],
             &default_account(),
         );
         let request: RequestAccountRmsUpdates = decode_request(&buf);
 
         assert_eq!(request.update_bits, Some(1));
         assert_eq!(request.request.as_deref(), Some("subscribe"));
+    }
+
+    #[test]
+    fn easy_to_borrow_list_maps_the_request_enum_by_name() {
+        let mut api = RithmicSenderApi::new(&test_config());
+
+        let (buf, _) = api.request_easy_to_borrow_list(EasyToBorrowRequest::Subscribe);
+        let request: RequestEasyToBorrowList = decode_request(&buf);
+        assert_eq!(request.template_id, 348);
+        assert_eq!(
+            request.request,
+            Some(request_easy_to_borrow_list::Request::Subscribe as i32)
+        );
+
+        let (buf, _) = api.request_easy_to_borrow_list(EasyToBorrowRequest::Unsubscribe);
+        let request: RequestEasyToBorrowList = decode_request(&buf);
+        assert_eq!(
+            request.request,
+            Some(request_easy_to_borrow_list::Request::Unsubscribe as i32)
+        );
     }
 
     #[test]
@@ -2559,7 +2582,7 @@ mod tests {
             duration: TimeInForce::Gtc,
             price_type: OrderType::StopMarket,
             user_tag: "leg-1".to_string(),
-            trailing_stop: Some(TrailingStop::new(15, 7)),
+            trailing_stop: Some(TrailingStop::new().trail_by_ticks(15).trail_by_price_id(7)),
             trade_route: None,
             manual_or_auto: ManualOrAutoEntry::Auto,
             ..Default::default()
@@ -2574,7 +2597,7 @@ mod tests {
             duration: TimeInForce::Day,
             price_type: OrderType::StopMarket,
             user_tag: "leg-2".to_string(),
-            trailing_stop: Some(TrailingStop::new(25, 9)),
+            trailing_stop: Some(TrailingStop::new().trail_by_ticks(25).trail_by_price_id(9)),
             trade_route: None,
             manual_or_auto: ManualOrAutoEntry::Auto,
             ..Default::default()
@@ -2672,7 +2695,7 @@ mod tests {
             price_type: OrderType::StopMarket,
             user_tag: "trailing-stop".to_string(),
             trigger_price: None,
-            trailing_stop: Some(TrailingStop::new(20, 3)),
+            trailing_stop: Some(TrailingStop::new().trail_by_ticks(20).trail_by_price_id(3)),
             trade_route: None,
             ..RithmicOrder::default()
         };
@@ -2730,6 +2753,9 @@ mod tests {
         ] {
             let modification = RithmicModifyOrder::new()
                 .id("b")
+                .symbol("ESM6")
+                .exchange("CME")
+                .quantity(1)
                 .price(5005.0)
                 .price_type(price_type)
                 .build()
@@ -2748,6 +2774,9 @@ mod tests {
         for price_type in [OrderType::Market, OrderType::Limit] {
             let modification = RithmicModifyOrder::new()
                 .id("b")
+                .symbol("ESM6")
+                .exchange("CME")
+                .quantity(1)
                 .price(5005.0)
                 .price_type(price_type)
                 .build()
@@ -2770,6 +2799,9 @@ mod tests {
         let mut api = RithmicSenderApi::new(&test_config());
         let modification = RithmicModifyOrder::new()
             .id("b")
+            .symbol("ESM6")
+            .exchange("CME")
+            .quantity(1)
             .price(5005.0)
             .price_type(OrderType::StopMarket)
             .build()
@@ -2792,16 +2824,20 @@ mod tests {
         let mut api = RithmicSenderApi::new(&test_config());
         let modification = RithmicModifyOrder::new()
             .id("b")
+            .symbol("ESM6")
+            .exchange("CME")
+            .quantity(1)
             .price(5005.0)
             .price_type(OrderType::Limit)
             .window_name("chart")
-            .if_touched(RithmicIfTouchedTrigger::new(
-                "NQM6",
-                "CME",
-                OrderCondition::GreaterThanEqualTo,
-                OrderPriceField::TradePrice,
-                18250.5,
-            ))
+            .if_touched(
+                RithmicIfTouchedTrigger::new()
+                    .symbol("NQM6")
+                    .exchange("CME")
+                    .condition(OrderCondition::GreaterThanEqualTo)
+                    .price_field(OrderPriceField::TradePrice)
+                    .price(18250.5),
+            )
             .build()
             .expect("valid modification");
 
@@ -3502,6 +3538,71 @@ mod tests {
         );
     }
 
+    /// With neither symbol nor exchange, both fields stay off the wire — the
+    /// absent pair is how template 3504 spells "flatten the whole account".
+    #[test]
+    fn exit_position_request_omits_the_instrument_for_an_account_wide_exit() {
+        let mut api = RithmicSenderApi::new(&test_config());
+
+        let (buf, _) = api.request_exit_position(
+            &RithmicExitPosition::new().build().expect("valid exit"),
+            &default_account(),
+        );
+        let request: RequestExitPosition = decode_request(&buf);
+
+        assert_eq!(request.symbol, None);
+        assert_eq!(request.exchange, None);
+
+        let (buf, _) = api.request_exit_position(
+            &RithmicExitPosition::new()
+                .symbol("ESM6")
+                .exchange("CME")
+                .build()
+                .expect("valid exit"),
+            &default_account(),
+        );
+        let request: RequestExitPosition = decode_request(&buf);
+
+        assert_eq!(request.symbol.as_deref(), Some("ESM6"));
+        assert_eq!(request.exchange.as_deref(), Some("CME"));
+    }
+
+    /// The same omission contract as the new-order path: an unset trigger
+    /// price stays off the wire on bracket and modify requests too.
+    #[test]
+    fn bracket_and_modify_requests_omit_an_unset_if_touched_price() {
+        let mut api = RithmicSenderApi::new(&test_config());
+        let trigger = crate::api::RithmicIfTouchedTrigger::new()
+            .symbol("NQM6")
+            .exchange("CME");
+
+        let bracket = RithmicBracketOrder {
+            symbol: "ESM6".to_string(),
+            exchange: "CME".to_string(),
+            quantity: 1,
+            price: Some(5000.0),
+            if_touched: Some(trigger.clone()),
+            ..RithmicBracketOrder::default()
+        };
+        let (buf, _) = api.request_bracket_order(bracket, &default_account(), None, "globex");
+        let request: RequestBracketOrder = decode_request(&buf);
+        assert_eq!(request.if_touched_symbol.as_deref(), Some("NQM6"));
+        assert_eq!(request.if_touched_price, None);
+
+        let modification = RithmicModifyOrder::new()
+            .id("b")
+            .symbol("ESM6")
+            .exchange("CME")
+            .quantity(1)
+            .price(5005.0)
+            .price_type(OrderType::Limit)
+            .if_touched(trigger);
+        let (buf, _) = api.request_modify_order(&modification, &default_account());
+        let request: RequestModifyOrder = decode_request(&buf);
+        assert_eq!(request.if_touched_symbol.as_deref(), Some("NQM6"));
+        assert_eq!(request.if_touched_price, None);
+    }
+
     /// The attribution is always stated. An exit the caller did not attribute is
     /// `Auto` like every other command, not an omitted field the server fills in.
     #[test]
@@ -3612,13 +3713,14 @@ mod tests {
             exchange: "CME".to_string(),
             quantity: 1,
             price: Some(5000.0),
-            if_touched: Some(crate::api::RithmicIfTouchedTrigger {
-                symbol: "NQM6".to_string(),
-                exchange: "CME".to_string(),
-                condition: OrderCondition::GreaterThanEqualTo,
-                price_field: OrderPriceField::TradePrice,
-                price: 18250.5,
-            }),
+            if_touched: Some(
+                crate::api::RithmicIfTouchedTrigger::new()
+                    .symbol("NQM6")
+                    .exchange("CME")
+                    .condition(OrderCondition::GreaterThanEqualTo)
+                    .price_field(OrderPriceField::TradePrice)
+                    .price(18250.5),
+            ),
             ..RithmicOrder::default()
         };
 
@@ -3636,6 +3738,33 @@ mod tests {
             Some(request_new_order::PriceField::TradePrice as i32)
         );
         assert_eq!(request.if_touched_price, Some(18250.5));
+    }
+
+    /// A trigger that skipped `build()` and never set a price must omit
+    /// `if_touched_price` from the wire — sent as `0.0`, the default
+    /// `GreaterThanEqualTo`/`TradePrice` condition would release the order
+    /// immediately.
+    #[test]
+    fn order_request_omits_an_unset_if_touched_price() {
+        let mut api = RithmicSenderApi::new(&test_config());
+        let order = RithmicOrder {
+            symbol: "ESM6".to_string(),
+            exchange: "CME".to_string(),
+            quantity: 1,
+            price: Some(5000.0),
+            if_touched: Some(
+                crate::api::RithmicIfTouchedTrigger::new()
+                    .symbol("NQM6")
+                    .exchange("CME"),
+            ),
+            ..RithmicOrder::default()
+        };
+
+        let (buf, _) = api.request_order(&order, &default_account(), "globex");
+        let request: RequestNewOrder = decode_request(&buf);
+
+        assert_eq!(request.if_touched_symbol.as_deref(), Some("NQM6"));
+        assert_eq!(request.if_touched_price, None);
     }
 
     #[test]

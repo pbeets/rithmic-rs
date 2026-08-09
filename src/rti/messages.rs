@@ -31,7 +31,7 @@ use super::{
 };
 
 #[allow(clippy::large_enum_variant)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum RithmicMessage {
     AccountPnLPositionUpdate(AccountPnLPositionUpdate),

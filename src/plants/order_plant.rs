@@ -25,11 +25,8 @@ use crate::{
         subscription::SubscriptionFilter,
         trade_routes::TradeRouteCache,
     },
-    rti::{
-        TradeRoute, messages::RithmicMessage, request_account_rms_updates,
-        request_easy_to_borrow_list, request_login::SysInfraType,
-    },
-    types::FillHistoryRange,
+    rti::{TradeRoute, messages::RithmicMessage, request_login::SysInfraType},
+    types::{EasyToBorrowRequest, FillHistoryRange, RmsUpdateBits},
 };
 
 pub(crate) enum OrderPlantCommand {
@@ -160,7 +157,7 @@ pub(crate) enum OrderPlantCommand {
         response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
     },
     GetEasyToBorrowList {
-        request_type: request_easy_to_borrow_list::Request,
+        request_type: EasyToBorrowRequest,
         response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
     },
     ModifyOrderReferenceData {
@@ -191,7 +188,7 @@ pub(crate) enum OrderPlantCommand {
     },
     SubscribeAccountRmsUpdates {
         subscribe: bool,
-        update_bits: Vec<request_account_rms_updates::UpdateBits>,
+        update_bits: Vec<RmsUpdateBits>,
         account: Arc<RithmicAccount>,
         response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
     },
@@ -1798,9 +1795,10 @@ impl RithmicOrderPlantHandle {
         await_all_responses(rx).await
     }
 
-    /// Exit an entire position for a given symbol
+    /// Flatten a position — one instrument, or the whole account.
     ///
-    /// This closes all open positions for the specified symbol/exchange.
+    /// The command's symbol and exchange select one instrument; with neither
+    /// set, every open position on the account is exited.
     ///
     /// Resolves when the final frame of the response sequence arrives. That
     /// result describes the request, not the resulting orders.
@@ -1860,7 +1858,7 @@ impl RithmicOrderPlantHandle {
     /// A vector of responses containing easy-to-borrow securities or an error message
     pub async fn get_easy_to_borrow_list(
         &self,
-        request_type: request_easy_to_borrow_list::Request,
+        request_type: EasyToBorrowRequest,
     ) -> Result<Vec<RithmicResponse>, RithmicError> {
         let (tx, rx) = oneshot::channel::<Result<Vec<RithmicResponse>, RithmicError>>();
 
@@ -2025,7 +2023,7 @@ impl RithmicOrderPlantHandle {
     pub async fn subscribe_account_rms_updates(
         &self,
         subscribe: bool,
-        update_bits: Vec<request_account_rms_updates::UpdateBits>,
+        update_bits: Vec<RmsUpdateBits>,
     ) -> Result<RithmicResponse, RithmicError> {
         let (tx, rx) = oneshot::channel::<Result<Vec<RithmicResponse>, RithmicError>>();
 
@@ -2210,6 +2208,17 @@ impl RithmicOrderPlantHandle {
         let _ = self.sender.send(command).await;
 
         await_all_responses(rx).await
+    }
+}
+
+impl Clone for RithmicOrderPlantHandle {
+    fn clone(&self) -> Self {
+        RithmicOrderPlantHandle {
+            account: Arc::clone(&self.account),
+            login_scope: Arc::clone(&self.login_scope),
+            sender: self.sender.clone(),
+            subscription_receiver: self.subscription_receiver.resubscribe(),
+        }
     }
 }
 

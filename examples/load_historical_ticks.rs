@@ -46,8 +46,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         symbol, start_time, end_time
     );
 
+    // `load_ticks_all` follows Rithmic's resume keys, so a replay the server
+    // truncates comes back complete. `load_ticks` returns just the first page.
     let ticks = handle
-        .load_ticks(symbol, exchange, start_time, end_time)
+        .load_ticks_all(symbol, exchange, start_time, end_time, None)
         .await?;
 
     info!("Received {} tick responses", ticks.len());

@@ -131,6 +131,7 @@ pub enum RithmicError {
     /// and why).
     InvalidArgument(String),
     /// No route for the order's exchange and the order named none, so nothing was sent.
+    #[non_exhaustive]
     NoTradeRoute {
         /// The exchange the order named.
         exchange: String,

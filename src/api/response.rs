@@ -25,7 +25,7 @@ use crate::{error::RithmicError, rti::messages::RithmicMessage};
 /// }
 /// # }
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub struct RithmicResponse {
     /// Unique identifier for matching responses to requests. Empty for updates.
@@ -63,6 +63,24 @@ impl RithmicResponse {
     /// Second element of rp_code (the human message), if present.
     pub fn rp_code_text(&self) -> Option<&str> {
         self.rp_code().and_then(|c| c.get(1).map(String::as_str))
+    }
+
+    /// The `request_key` a truncated bar replay carries on its closing response.
+    ///
+    /// Rithmic truncates large history replays; the closing response of a
+    /// truncated page carries a `request_key` to pass to
+    /// [`resume_bars`](crate::RithmicHistoryPlantHandle::resume_bars) for the
+    /// next page. Returns `None` when the replay is complete or the message is
+    /// not a bar replay response.
+    pub fn resume_key(&self) -> Option<&str> {
+        let key = match &self.message {
+            RithmicMessage::ResponseTickBarReplay(m) => m.request_key.as_deref(),
+            RithmicMessage::ResponseTimeBarReplay(m) => m.request_key.as_deref(),
+            RithmicMessage::ResponseVolumeProfileMinuteBars(m) => m.request_key.as_deref(),
+            _ => None,
+        };
+
+        key.filter(|k| !k.is_empty())
     }
 
     /// Returns true if this response contains market data.

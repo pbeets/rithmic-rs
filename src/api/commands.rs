@@ -38,6 +38,31 @@ pub use oco::{RithmicOcoOrder, RithmicOcoOrderLeg};
 pub use order::RithmicOrder;
 pub use triggers::{RithmicIfTouchedTrigger, TrailingStop};
 
+pub(crate) fn validate_instrument(
+    symbol: &str,
+    exchange: &str,
+    quantity: i32,
+) -> Result<(), RithmicError> {
+    if symbol.is_empty() {
+        return Err(RithmicError::InvalidArgument(
+            "a symbol is required".to_string(),
+        ));
+    }
+
+    if exchange.is_empty() {
+        return Err(RithmicError::InvalidArgument(
+            "an exchange is required".to_string(),
+        ));
+    }
+
+    if quantity < 1 {
+        return Err(RithmicError::InvalidArgument(format!(
+            "quantity must be at least 1, got {quantity}"
+        )));
+    }
+    Ok(())
+}
+
 /// Which prices an order of this type must carry: `Limit`, `StopLimit` and
 /// `LimitIfTouched` need a price; `StopMarket`, `StopLimit`, `MarketIfTouched`
 /// and `LimitIfTouched` need a trigger price. `Market` needs neither.

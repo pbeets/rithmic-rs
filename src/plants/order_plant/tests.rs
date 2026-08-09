@@ -253,7 +253,13 @@ async fn place_order_through_the_handle_after_close_requested_reports_connection
 
     let err = tokio::time::timeout(
         std::time::Duration::from_secs(5),
-        handle.place_order(RithmicOrder::default()),
+        handle.place_order(
+            RithmicOrder::new()
+                .symbol("ESH6")
+                .exchange("CME")
+                .quantity(1)
+                .price_type(OrderType::Market),
+        ),
     )
     .await
     .expect("place_order must be answered, not left waiting")

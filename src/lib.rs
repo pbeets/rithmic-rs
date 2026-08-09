@@ -71,7 +71,7 @@
 //! The library provides three connection strategies:
 //!
 //! - [`ConnectStrategy::Simple`]: Single connection attempt, fast-fail
-//! - [`ConnectStrategy::Retry`]: Indefinite retries with exponential backoff capped at 60s (recommended default)
+//! - [`ConnectStrategy::Retry`]: Indefinite retries with linear backoff — 500 ms more per attempt, capped at 60s, jittered ±50% (recommended default)
 //! - [`ConnectStrategy::AlternateWithRetry`]: Alternates between primary and beta URLs
 //!
 //! A graceful `disconnect().await` logs out first and then closes the WebSocket.
@@ -225,7 +225,7 @@
 //!
 //! | Flag | Default | Description |
 //! |------|---------|-------------|
-//! | `serde` | off | Adds `Serialize`/`Deserialize` derives on trading enums and config types (`RithmicEnv`, `RithmicAccount`, `OrderSide`, `OrderType`, `TimeInForce`, `OrderStatus`, `ManualOrAutoEntry`, `BracketType`, `BracketOperationType`, `FillHistoryRange`, `OrderCondition`, `OrderPriceField`) |
+//! | `serde` | off | Adds `Serialize`/`Deserialize` derives on the config types (`RithmicEnv`, `RithmicAccount`), the trading enums (`OrderSide`, `OrderType`, `TimeInForce`, `ManualOrAutoEntry`, `OrderCondition`, `OrderPriceField`, `BracketType`, `BracketOperationType`, `FillHistoryRange`, `EasyToBorrowRequest`, `RmsUpdateBits`, `OrderStatus`), every order command type (`RithmicOrder`, `RithmicBracketOrder`, `RithmicOcoOrder` and its legs, `RithmicModifyOrder`, the cancel/exit/link/retag/adjustment commands), the triggers (`TrailingStop`, `RithmicIfTouchedTrigger`) and `VolumeProfileMinuteBarsRequest` |
 //!
 //! **TLS backend:** The crate uses `native-tls` (via `tokio-tungstenite`) for all
 //! WebSocket connections. There is currently no `rustls` option.
@@ -283,16 +283,15 @@ pub mod util;
 
 mod ws;
 
-/// The `prost` this crate's protobuf types are generated against, re-exported so
-/// downstream code can decode an [`UnknownTemplateMessage`] payload without
-/// risking a version mismatch. prost is a public dependency, so a major bump of
-/// it is a breaking change of this crate.
+/// The `prost` these types are generated against, so downstream decoding uses
+/// the same version.
 pub use prost;
 
 // Re-export plant types for easier access
 pub use plants::history_plant::{RithmicHistoryPlant, RithmicHistoryPlantHandle};
 pub use plants::order_plant::{RithmicOrderPlant, RithmicOrderPlantHandle};
 pub use plants::pnl_plant::{RithmicPnlPlant, RithmicPnlPlantHandle};
+pub use plants::subscription::SubscriptionFilter;
 pub use plants::ticker_plant::{RithmicTickerPlant, RithmicTickerPlantHandle};
 
 // Re-export modern configuration types for convenience
@@ -307,10 +306,10 @@ pub use ws::ConnectStrategy;
 
 // Re-export API types
 pub use api::{
-    EasyToBorrowRequest, LoginConfig, RithmicBracketLevelAdjustment, RithmicBracketOrder,
-    RithmicCancelAllOrders, RithmicCancelOrder, RithmicExitPosition, RithmicIfTouchedTrigger,
-    RithmicLinkOrders, RithmicModifyOrder, RithmicModifyOrderReferenceData, RithmicOcoOrder,
-    RithmicOcoOrderLeg, RithmicOrder, RithmicResponse, RmsUpdateBits, TrailingStop,
+    LoginConfig, RithmicBracketLevelAdjustment, RithmicBracketOrder, RithmicCancelAllOrders,
+    RithmicCancelOrder, RithmicExitPosition, RithmicIfTouchedTrigger, RithmicLinkOrders,
+    RithmicModifyOrder, RithmicModifyOrderReferenceData, RithmicOcoOrder, RithmicOcoOrderLeg,
+    RithmicOrder, RithmicResponse, TrailingStop,
 };
 
 // Re-export utility types for convenience
@@ -321,7 +320,8 @@ pub use util::{
 
 // Re-export high-level trading types
 pub use types::{
-    BracketOperationType, BracketType, FillHistoryRange, ManualOrAutoEntry, OrderCondition,
-    OrderPriceField, OrderSide, OrderType, ParseOrderSideError, ParseOrderTypeError,
-    ParseTimeInForceError, TimeInForce,
+    BracketOperationType, BracketType, EasyToBorrowRequest, FillHistoryRange, ManualOrAutoEntry,
+    OrderCondition, OrderPriceField, OrderSide, OrderType, ParseOrderSideError,
+    ParseOrderTypeError, ParseTimeInForceError, RmsUpdateBits, TimeInForce,
+    VolumeProfileMinuteBarsRequest,
 };

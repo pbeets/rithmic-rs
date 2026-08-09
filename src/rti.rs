@@ -5062,6 +5062,7 @@ pub struct ResponseListExchangePermissions {
         optional,
         tag = "153400"
     )]
+    #[deprecated = "use level_1_market_data and level_2_market_data instead"]
     pub entitlement_flag: ::core::option::Option<i32>,
 }
 /// Nested message and enum types in `ResponseListExchangePermissions`.

@@ -40,7 +40,7 @@ const MAX_BACKOFF_SECS: u64 = 60;
 pub enum ConnectStrategy {
     /// Single connection attempt. Fast-fail, no retries.
     Simple,
-    /// Retry same URL indefinitely with exponential backoff (capped at 60s). Recommended for most users.
+    /// Retry same URL indefinitely with linear backoff (500 ms more per attempt, capped at 60s, jittered ±50%). Recommended for most users.
     Retry,
     /// Alternates between primary and beta URLs indefinitely. Useful when main server has issues.
     AlternateWithRetry,
@@ -137,8 +137,24 @@ async fn connect(url: &str) -> Result<WebSocketStream<MaybeTlsStream<TcpStream>>
     Ok(ws_stream)
 }
 
-/// Connect with indefinite retry and exponential backoff (capped at
-/// [`MAX_BACKOFF_SECS`], so at most one attempt per minute after ramp-up).
+/// Scale a delay by a factor in [0.5, 1.5), seeded from the clock's
+/// sub-second nanos — enough spread to break reconnect lockstep without
+/// pulling in a rand dependency.
+fn jittered(ms: u64) -> u64 {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| u64::from(d.subsec_nanos()))
+        .unwrap_or(512);
+
+    ms / 2 + ms * (nanos % 1024) / 1024
+}
+
+/// Connect with indefinite retry and linear backoff — 500 ms more per
+/// attempt, capped at [`MAX_BACKOFF_SECS`] and then jittered by ±50%, so
+/// the spread survives a long outage (delays range 30–90 s at the cap).
+///
+/// The jitter keeps plants that lost the same connection from retrying in
+/// lockstep against a recovering server.
 ///
 /// `urls` is cycled by attempt number: pass one URL to retry it, or
 /// primary + beta to alternate between them. Never returns until a
@@ -165,9 +181,10 @@ async fn connect_with_retry(urls: &[&str]) -> WebSocketStream<MaybeTlsStream<Tcp
             Err(e) => warn!("connect_async to {} timed out: {:?}", url, e),
         }
 
-        let backoff_ms: u64 = BACKOFF_MS_BASE.saturating_mul(attempt);
-        let backoff_duration =
-            Duration::from_millis(backoff_ms).min(Duration::from_secs(MAX_BACKOFF_SECS));
+        let backoff_ms = BACKOFF_MS_BASE
+            .saturating_mul(attempt)
+            .min(MAX_BACKOFF_SECS * 1000);
+        let backoff_duration = Duration::from_millis(jittered(backoff_ms));
 
         info!("Backing off for {:?} before retry", backoff_duration);
 

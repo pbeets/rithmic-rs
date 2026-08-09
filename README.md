@@ -77,7 +77,7 @@ See [`examples/`](examples/) for more usage patterns including [error handling](
 
 ## Architecture
 
-This library uses the actor pattern where each Rithmic service runs independently in its own thread. All communication happens through tokio channels.
+This library uses the actor pattern where each Rithmic service runs independently as its own tokio task. All communication happens through tokio channels.
 
 - **`RithmicTickerPlant`** - Real-time market data (trades, quotes, order book)
 - **`RithmicOrderPlant`** - Order entry and management
@@ -237,7 +237,7 @@ in one runnable file. The crate docs cover the same ground in
 Three strategies for initial connection:
 
 - **`Simple`**: Single attempt, fast-fail
-- **`Retry`**: Exponential backoff, capped at 60 seconds (recommended default)
+- **`Retry`**: Linear backoff (500 ms more per attempt, capped at 60 seconds, jittered ±50%) (recommended default)
 - **`AlternateWithRetry`**: Alternates between primary and alt URLs
 
 ### Reconnection

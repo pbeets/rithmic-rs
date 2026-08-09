@@ -16,7 +16,9 @@ use crate::error::RithmicError;
 /// # }
 /// ```
 #[derive(Debug, Clone, Default, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
+#[must_use = "a command does nothing until passed to a plant handle"]
 pub struct RithmicLinkOrders {
     /// The `basket_id`s to link, from the order notifications.
     pub basket_ids: Vec<String>,
@@ -41,8 +43,54 @@ impl RithmicLinkOrders {
         self
     }
 
-    /// Return the command.
+    /// Requires at least two non-empty basket_ids.
+    pub fn validate(&self) -> Result<(), RithmicError> {
+        if self.basket_ids.len() < 2 {
+            return Err(RithmicError::InvalidArgument(format!(
+                "linking needs at least two basket_ids, got {}",
+                self.basket_ids.len()
+            )));
+        }
+
+        if self.basket_ids.iter().any(String::is_empty) {
+            return Err(RithmicError::InvalidArgument(
+                "every basket_id to link must be non-empty".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Requires at least two non-empty basket_ids.
     pub fn build(self) -> Result<Self, RithmicError> {
+        self.validate()?;
         Ok(self)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn linking_requires_at_least_two_non_empty_basket_ids() {
+        assert!(RithmicLinkOrders::new().build().is_err());
+        assert!(
+            RithmicLinkOrders::new()
+                .basket_id("123456")
+                .build()
+                .is_err()
+        );
+        assert!(
+            RithmicLinkOrders::new()
+                .basket_ids(["123456", ""])
+                .build()
+                .is_err()
+        );
+        assert!(
+            RithmicLinkOrders::new()
+                .basket_ids(["123456", "123457"])
+                .build()
+                .is_ok()
+        );
     }
 }

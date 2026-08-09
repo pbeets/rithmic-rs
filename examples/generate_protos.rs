@@ -11,6 +11,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Rithmic adds fields to existing messages in most template releases, so a
     // generated type without this makes every proto refresh a semver-major event here.
     config.type_attribute(".", "#[non_exhaustive]");
+    // Rithmic deprecated entitlement_flag in template version 5.42 in favor of
+    // the level_1_market_data / level_2_market_data fields.
+    config.field_attribute(
+        ".rti.ResponseListExchangePermissions.entitlement_flag",
+        "#[deprecated = \"use level_1_market_data and level_2_market_data instead\"]",
+    );
     config.out_dir(&src_dir);
     config.compile_protos(
         &[
