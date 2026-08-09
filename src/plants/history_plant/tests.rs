@@ -22,14 +22,13 @@ async fn plant_with_wire() -> (HistoryPlant, mpsc::Sender<HistoryPlantCommand>, 
 
 fn load_ticks(response_sender: Responder) -> HistoryPlantCommand {
     HistoryPlantCommand::LoadTicks {
-        bar_type_specifier: "1".to_string(),
-        end_time_sec: 1000,
-        exchange: "CME".to_string(),
+        request: TickBarReplayRequest::new()
+            .symbol("ESH6")
+            .exchange("CME")
+            .bar_length(1)
+            .start_time_sec(1)
+            .end_time_sec(1000),
         response_sender,
-        start_time_sec: 0,
-        symbol: "ESH6".to_string(),
-        user_max_count: None,
-        resume_bars: None,
     }
 }
 
@@ -66,7 +65,7 @@ async fn load_ticks_through_the_handle_after_close_requested_reports_connection_
 
     let err = tokio::time::timeout(
         std::time::Duration::from_secs(5),
-        handle.load_ticks("ESH6".to_string(), "CME".to_string(), 0, 1000),
+        handle.load_ticks("ESH6".to_string(), "CME".to_string(), 1, 1000),
     )
     .await
     .expect("load_ticks must be answered, not left waiting")
@@ -138,7 +137,7 @@ fn time_bar_at(id: &str, marker: i32) -> ResponseTimeBarReplay {
     }
 }
 
-fn time_bar_page_end(id: &str) -> ResponseTimeBarReplay {
+fn time_bar_replay_end(id: &str) -> ResponseTimeBarReplay {
     ResponseTimeBarReplay {
         template_id: 203,
         user_msg: vec![id.to_string()],
@@ -163,7 +162,7 @@ async fn load_ticks_all_asks_the_server_to_lift_the_record_cap() {
 
     let loader = tokio::spawn(async move {
         handle
-            .load_ticks_all("ESH6".to_string(), "CME".to_string(), 0, 1000)
+            .load_ticks_all("ESH6".to_string(), "CME".to_string(), 1, 1000)
             .await
     });
 
@@ -212,7 +211,7 @@ async fn load_ticks_leaves_the_cap_in_place() {
 
     let loader = tokio::spawn(async move {
         handle
-            .load_ticks("ESH6".to_string(), "CME".to_string(), 0, 1000)
+            .load_ticks("ESH6".to_string(), "CME".to_string(), 1, 1000)
             .await
     });
 
@@ -242,7 +241,7 @@ async fn load_time_bars_all_asks_the_server_to_lift_the_record_cap() {
                 "CME".to_string(),
                 BarType::MinuteBar,
                 1,
-                0,
+                1,
                 1000,
             )
             .await
@@ -260,7 +259,7 @@ async fn load_time_bars_all_asks_the_server_to_lift_the_record_cap() {
     let id = request.user_msg[0].clone();
     write_wire_response(&mut client, &time_bar_at(&id, 60)).await;
     write_wire_response(&mut client, &time_bar_at(&id, 120)).await;
-    write_wire_response(&mut client, &time_bar_page_end(&id)).await;
+    write_wire_response(&mut client, &time_bar_replay_end(&id)).await;
 
     let responses = loader
         .await
@@ -285,7 +284,7 @@ async fn load_tick_bars_all_rejects_a_zero_bar_length() {
     let (handle, _command_receiver) = test_handle();
 
     let err = handle
-        .load_tick_bars_all("ESH6".to_string(), "CME".to_string(), 0, 0, 1000)
+        .load_tick_bars_all("ESH6".to_string(), "CME".to_string(), 0, 1, 1000)
         .await
         .expect_err("a zero bar length must be refused");
 

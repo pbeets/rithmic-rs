@@ -18,7 +18,7 @@ use crate::{
         messages::RithmicMessage, request_login::SysInfraType, request_tick_bar_update,
         request_time_bar_replay::BarType, request_time_bar_update,
     },
-    types::VolumeProfileMinuteBarsRequest,
+    types::{TickBarReplayRequest, TimeBarReplayRequest, VolumeProfileMinuteBarsRequest},
 };
 
 pub(crate) enum HistoryPlantCommand {
@@ -39,25 +39,12 @@ pub(crate) enum HistoryPlantCommand {
         seconds: u64,
     },
     LoadTicks {
-        bar_type_specifier: String,
-        end_time_sec: i32,
-        exchange: String,
+        request: TickBarReplayRequest,
         response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
-        start_time_sec: i32,
-        symbol: String,
-        user_max_count: Option<i32>,
-        resume_bars: Option<bool>,
     },
     LoadTimeBars {
-        bar_type: BarType,
-        bar_type_period: i32,
-        end_time_sec: i32,
-        exchange: String,
+        request: TimeBarReplayRequest,
         response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
-        start_time_sec: i32,
-        symbol: String,
-        user_max_count: Option<i32>,
-        resume_bars: Option<bool>,
     },
     LoadVolumeProfileMinuteBars {
         request: VolumeProfileMinuteBarsRequest,
@@ -343,52 +330,26 @@ impl PlantActor for HistoryPlant {
                 self.core.handle_update_heartbeat(seconds);
             }
             HistoryPlantCommand::LoadTicks {
-                bar_type_specifier,
-                exchange,
-                symbol,
-                start_time_sec,
-                end_time_sec,
+                request,
                 response_sender,
-                user_max_count,
-                resume_bars,
             } => {
-                let (tick_bar_replay_buf, id) =
-                    self.core.rithmic_sender_api.request_tick_bar_replay(
-                        &symbol,
-                        &exchange,
-                        &bar_type_specifier,
-                        start_time_sec,
-                        end_time_sec,
-                        user_max_count,
-                        resume_bars,
-                    );
+                let (tick_bar_replay_buf, id) = self
+                    .core
+                    .rithmic_sender_api
+                    .request_tick_bar_replay(&request);
 
                 self.core
                     .register_and_send(tick_bar_replay_buf, id, response_sender)
                     .await;
             }
             HistoryPlantCommand::LoadTimeBars {
-                bar_type,
-                bar_type_period,
-                end_time_sec,
-                exchange,
+                request,
                 response_sender,
-                start_time_sec,
-                symbol,
-                user_max_count,
-                resume_bars,
             } => {
-                let (time_bar_replay_buf, id) =
-                    self.core.rithmic_sender_api.request_time_bar_replay(
-                        &symbol,
-                        &exchange,
-                        bar_type,
-                        bar_type_period,
-                        start_time_sec,
-                        end_time_sec,
-                        user_max_count,
-                        resume_bars,
-                    );
+                let (time_bar_replay_buf, id) = self
+                    .core
+                    .rithmic_sender_api
+                    .request_time_bar_replay(&request);
 
                 self.core
                     .register_and_send(time_bar_replay_buf, id, response_sender)
@@ -401,15 +362,7 @@ impl PlantActor for HistoryPlant {
                 let (buf, id) = self
                     .core
                     .rithmic_sender_api
-                    .request_volume_profile_minute_bars(
-                        &request.symbol,
-                        &request.exchange,
-                        request.bar_type_period,
-                        request.start_time_sec,
-                        request.end_time_sec,
-                        request.user_max_count,
-                        request.resume_bars,
-                    );
+                    .request_volume_profile_minute_bars(&request);
 
                 self.core.register_and_send(buf, id, response_sender).await;
             }
@@ -678,7 +631,9 @@ impl RithmicHistoryPlantHandle {
     /// One response per bar, followed by an end marker carrying no data.
     ///
     /// # Errors
-    /// * [`RithmicError::InvalidArgument`] if `bar_length` is 0.
+    /// * [`RithmicError::InvalidArgument`] if the symbol or exchange is empty,
+    ///   `bar_length` is 0, either timestamp is not positive, or the window ends
+    ///   before it starts. Nothing is sent.
     /// * [`RithmicError::ConnectionClosed`] if the history plant has shut down.
     pub async fn load_tick_bars(
         &self,
@@ -688,47 +643,29 @@ impl RithmicHistoryPlantHandle {
         start_time_sec: i32,
         end_time_sec: i32,
     ) -> Result<Vec<RithmicResponse>, RithmicError> {
-        if bar_length == 0 {
-            return Err(RithmicError::InvalidArgument(
-                "bar_length must be at least 1".to_string(),
-            ));
-        }
-
-        self.tick_bar_page(
-            symbol,
-            exchange,
-            bar_length,
-            start_time_sec,
-            end_time_sec,
-            None,
-            None,
+        self.tick_bar_replay(
+            TickBarReplayRequest::new()
+                .symbol(symbol)
+                .exchange(exchange)
+                .bar_length(bar_length)
+                .start_time_sec(start_time_sec)
+                .end_time_sec(end_time_sec),
         )
         .await
     }
 
     /// One tick bar replay request.
-    #[allow(clippy::too_many_arguments)]
-    async fn tick_bar_page(
+    async fn tick_bar_replay(
         &self,
-        symbol: String,
-        exchange: String,
-        bar_length: u32,
-        start_time_sec: i32,
-        end_time_sec: i32,
-        user_max_count: Option<i32>,
-        resume_bars: Option<bool>,
+        request: TickBarReplayRequest,
     ) -> Result<Vec<RithmicResponse>, RithmicError> {
+        request.validate()?;
+
         let (tx, rx) = oneshot::channel::<Result<Vec<RithmicResponse>, RithmicError>>();
 
         let command = HistoryPlantCommand::LoadTicks {
-            bar_type_specifier: bar_length.to_string(),
-            exchange,
-            symbol,
-            start_time_sec,
-            end_time_sec,
+            request,
             response_sender: tx,
-            user_max_count,
-            resume_bars,
         };
 
         let _ = self.sender.send(command).await;
@@ -779,7 +716,9 @@ impl RithmicHistoryPlantHandle {
     /// what it costs in memory.
     ///
     /// # Errors
-    /// * [`RithmicError::InvalidArgument`] if `bar_length` is 0.
+    /// * [`RithmicError::InvalidArgument`] if the symbol or exchange is empty,
+    ///   `bar_length` is 0, either timestamp is not positive, or the window ends
+    ///   before it starts. Nothing is sent.
     pub async fn load_tick_bars_all(
         &self,
         symbol: String,
@@ -788,20 +727,14 @@ impl RithmicHistoryPlantHandle {
         start_time_sec: i32,
         end_time_sec: i32,
     ) -> Result<Vec<RithmicResponse>, RithmicError> {
-        if bar_length == 0 {
-            return Err(RithmicError::InvalidArgument(
-                "bar_length must be at least 1".to_string(),
-            ));
-        }
-
-        self.tick_bar_page(
-            symbol,
-            exchange,
-            bar_length,
-            start_time_sec,
-            end_time_sec,
-            None,
-            Some(true),
+        self.tick_bar_replay(
+            TickBarReplayRequest::new()
+                .symbol(symbol)
+                .exchange(exchange)
+                .bar_length(bar_length)
+                .start_time_sec(start_time_sec)
+                .end_time_sec(end_time_sec)
+                .resume_bars(true),
         )
         .await
     }
@@ -824,15 +757,15 @@ impl RithmicHistoryPlantHandle {
         start_time_sec: i32,
         end_time_sec: i32,
     ) -> Result<Vec<RithmicResponse>, RithmicError> {
-        self.time_bar_page(
-            symbol,
-            exchange,
-            bar_type,
-            bar_type_period,
-            start_time_sec,
-            end_time_sec,
-            None,
-            Some(true),
+        self.time_bar_replay(
+            TimeBarReplayRequest::new()
+                .symbol(symbol)
+                .exchange(exchange)
+                .bar_type(bar_type)
+                .bar_type_period(bar_type_period)
+                .start_time_sec(start_time_sec)
+                .end_time_sec(end_time_sec)
+                .resume_bars(true),
         )
         .await
     }
@@ -872,44 +805,30 @@ impl RithmicHistoryPlantHandle {
         start_time_sec: i32,
         end_time_sec: i32,
     ) -> Result<Vec<RithmicResponse>, RithmicError> {
-        self.time_bar_page(
-            symbol,
-            exchange,
-            bar_type,
-            bar_type_period,
-            start_time_sec,
-            end_time_sec,
-            None,
-            None,
+        self.time_bar_replay(
+            TimeBarReplayRequest::new()
+                .symbol(symbol)
+                .exchange(exchange)
+                .bar_type(bar_type)
+                .bar_type_period(bar_type_period)
+                .start_time_sec(start_time_sec)
+                .end_time_sec(end_time_sec),
         )
         .await
     }
 
     /// One time bar replay request.
-    #[allow(clippy::too_many_arguments)]
-    async fn time_bar_page(
+    async fn time_bar_replay(
         &self,
-        symbol: String,
-        exchange: String,
-        bar_type: BarType,
-        bar_type_period: i32,
-        start_time_sec: i32,
-        end_time_sec: i32,
-        user_max_count: Option<i32>,
-        resume_bars: Option<bool>,
+        request: TimeBarReplayRequest,
     ) -> Result<Vec<RithmicResponse>, RithmicError> {
+        request.validate()?;
+
         let (tx, rx) = oneshot::channel::<Result<Vec<RithmicResponse>, RithmicError>>();
 
         let command = HistoryPlantCommand::LoadTimeBars {
-            bar_type,
-            bar_type_period,
-            end_time_sec,
-            exchange,
+            request,
             response_sender: tx,
-            start_time_sec,
-            symbol,
-            user_max_count,
-            resume_bars,
         };
 
         let _ = self.sender.send(command).await;

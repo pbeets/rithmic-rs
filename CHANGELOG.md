@@ -34,6 +34,19 @@ before the first run against a live account.
 
 ### Breaking Changes
 
+- **The three replay senders take a request struct.**
+  `SenderApi::request_tick_bar_replay`, `request_time_bar_replay` and
+  `request_volume_profile_minute_bars` each took seven or eight positional
+  arguments; they now take a single `&TickBarReplayRequest`,
+  `&TimeBarReplayRequest` or `&VolumeProfileMinuteBarsRequest`. The history
+  plant's `load_*` methods are unchanged — they build the request for you.
+
+- **The `load_*` replay methods validate before sending.** A missing symbol or
+  exchange, a `bar_length` or `bar_type_period` below 1, a non-positive
+  timestamp, or an `end_time_sec` before `start_time_sec` now returns
+  `RithmicError::InvalidArgument` without a round trip. Previously only a zero
+  `bar_length` was caught.
+
 - **Order command types are their own builders and are `#[non_exhaustive]`.**
   `..Default::default()` no longer compiles on them outside this crate. `new()`
   takes no arguments, every field has a setter of the same name, and `build()`
@@ -170,9 +183,14 @@ before the first run against a live account.
   window. The whole window is buffered before it returns, so a full 23-hour ES
   session is roughly 800,000 records in memory.
 
-- **`resume_bars` on the replay requests.** `request_tick_bar_replay` and
-  `request_time_bar_replay` now take `user_max_count` and `resume_bars`, so a
-  caller building requests directly can cap or uncap a replay themselves.
+- **`TickBarReplayRequest` and `TimeBarReplayRequest`**, the replay counterparts
+  of `VolumeProfileMinuteBarsRequest`. Same shape as the order commands: `new()`,
+  chained setters, `validate()` and `build()`. They carry `user_max_count` and
+  `resume_bars`, so a caller building requests directly can cap or uncap a replay
+  themselves.
+
+- **`TimeBarType`**, an alias for the generated `request_time_bar_replay::BarType`
+  under a name that reads better on a request.
 
 - **Per-order trade routes.** The new `trade_route` field on `RithmicOrder`,
   `RithmicBracketOrder` and `RithmicOcoOrderLeg` overrides the route the plant

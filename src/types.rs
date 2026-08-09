@@ -15,6 +15,12 @@ use crate::{
     },
 };
 
+/// The unit a time bar covers: second, minute, day or week.
+///
+/// An alias for the generated `request_time_bar_replay::BarType`, under a name
+/// that reads better on [`TimeBarReplayRequest`].
+pub use crate::rti::request_time_bar_replay::BarType as TimeBarType;
+
 /// Buy or sell.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
@@ -744,15 +750,313 @@ impl VolumeProfileMinuteBarsRequest {
     /// Requires a symbol, an exchange, a bar period, and an ordered time
     /// window.
     pub fn validate(&self) -> Result<(), RithmicError> {
-        if self.symbol.is_empty() {
+        validate_replay_window(
+            "volume-profile",
+            &self.symbol,
+            &self.exchange,
+            self.start_time_sec,
+            self.end_time_sec,
+        )?;
+
+        if self.bar_type_period < 1 {
             return Err(RithmicError::InvalidArgument(
-                "a volume-profile request requires a symbol".to_string(),
+                "bar_type_period must be at least 1".to_string(),
             ));
         }
+        Ok(())
+    }
 
-        if self.exchange.is_empty() {
+    /// Requires a symbol, an exchange, a bar period, and an ordered time
+    /// window.
+    pub fn build(self) -> Result<Self, RithmicError> {
+        self.validate()?;
+        Ok(self)
+    }
+}
+
+/// The instrument and time window every replay request needs. `kind` names the
+/// request in the error message.
+fn validate_replay_window(
+    kind: &str,
+    symbol: &str,
+    exchange: &str,
+    start_time_sec: i32,
+    end_time_sec: i32,
+) -> Result<(), RithmicError> {
+    if symbol.is_empty() {
+        return Err(RithmicError::InvalidArgument(format!(
+            "a {kind} request requires a symbol"
+        )));
+    }
+
+    if exchange.is_empty() {
+        return Err(RithmicError::InvalidArgument(format!(
+            "a {kind} request requires an exchange"
+        )));
+    }
+
+    if start_time_sec < 1 || end_time_sec < 1 {
+        return Err(RithmicError::InvalidArgument(
+            "start_time_sec and end_time_sec are both required, as positive Unix timestamps"
+                .to_string(),
+        ));
+    }
+
+    if end_time_sec < start_time_sec {
+        return Err(RithmicError::InvalidArgument(
+            "end_time_sec must not precede start_time_sec".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+/// A tick bar replay request, passed to [`load_tick_bars`] and its siblings.
+///
+/// A tick bar groups a fixed number of trades. [`bar_length`](Self::bar_length)
+/// of 1 gives one bar per trade — the raw tape.
+///
+/// # Example
+///
+/// ```
+/// use rithmic_rs::TickBarReplayRequest;
+/// # fn main() -> Result<(), rithmic_rs::RithmicError> {
+/// let request = TickBarReplayRequest::new()
+///     .symbol("ESU6")
+///     .exchange("CME")
+///     .bar_length(1)
+///     .start_time_sec(1_750_000_000)
+///     .end_time_sec(1_750_003_600)
+///     .resume_bars(true)
+///     .build()?;
+/// # Ok(())
+/// # }
+/// ```
+///
+/// [`load_tick_bars`]: crate::RithmicHistoryPlantHandle::load_tick_bars
+#[derive(Debug, Clone, Default, PartialEq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[non_exhaustive]
+#[must_use = "a request does nothing until passed to the history handle"]
+pub struct TickBarReplayRequest {
+    /// The trading symbol, e.g. `"ESU6"`.
+    pub symbol: String,
+    /// The exchange code, e.g. `"CME"`.
+    pub exchange: String,
+    /// Trades per bar, as the string Rithmic expects. Set it with
+    /// [`bar_length`](Self::bar_length) unless you need the raw form.
+    pub bar_type_specifier: String,
+    /// Start of the window as a Unix timestamp in seconds.
+    pub start_time_sec: i32,
+    /// End of the window as a Unix timestamp in seconds.
+    pub end_time_sec: i32,
+    /// Cap on records returned. Leaving this unset lets the server apply its
+    /// own cap of 10,000, silently.
+    pub user_max_count: Option<i32>,
+    /// `Some(true)` lifts the server's 10,000 record cap, so the whole window
+    /// replays on this one request.
+    pub resume_bars: Option<bool>,
+}
+
+impl TickBarReplayRequest {
+    /// Start an empty request.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The trading symbol, e.g. `"ESU6"`.
+    pub fn symbol(mut self, symbol: impl Into<String>) -> Self {
+        self.symbol = symbol.into();
+        self
+    }
+
+    /// The exchange code, e.g. `"CME"`.
+    pub fn exchange(mut self, exchange: impl Into<String>) -> Self {
+        self.exchange = exchange.into();
+        self
+    }
+
+    /// How many trades go into each bar. 1 gives one bar per trade.
+    pub fn bar_length(mut self, bar_length: u32) -> Self {
+        self.bar_type_specifier = bar_length.to_string();
+        self
+    }
+
+    /// The raw `bar_type_specifier` Rithmic expects, for a value
+    /// [`bar_length`](Self::bar_length) cannot express.
+    pub fn bar_type_specifier(mut self, bar_type_specifier: impl Into<String>) -> Self {
+        self.bar_type_specifier = bar_type_specifier.into();
+        self
+    }
+
+    /// Start of the window as a Unix timestamp in seconds.
+    pub fn start_time_sec(mut self, start_time_sec: i32) -> Self {
+        self.start_time_sec = start_time_sec;
+        self
+    }
+
+    /// End of the window as a Unix timestamp in seconds.
+    pub fn end_time_sec(mut self, end_time_sec: i32) -> Self {
+        self.end_time_sec = end_time_sec;
+        self
+    }
+
+    /// Cap the records returned.
+    pub fn user_max_count(mut self, user_max_count: i32) -> Self {
+        self.user_max_count = Some(user_max_count);
+        self
+    }
+
+    /// Lift the server's 10,000 record cap so the whole window replays at once.
+    pub fn resume_bars(mut self, resume_bars: bool) -> Self {
+        self.resume_bars = Some(resume_bars);
+        self
+    }
+
+    /// Requires a symbol, an exchange, a bar length of at least 1, and an
+    /// ordered time window.
+    pub fn validate(&self) -> Result<(), RithmicError> {
+        validate_replay_window(
+            "tick bar replay",
+            &self.symbol,
+            &self.exchange,
+            self.start_time_sec,
+            self.end_time_sec,
+        )?;
+
+        match self.bar_type_specifier.parse::<u32>() {
+            Ok(length) if length >= 1 => Ok(()),
+            _ => Err(RithmicError::InvalidArgument(
+                "bar_length must be at least 1".to_string(),
+            )),
+        }
+    }
+
+    /// Requires a symbol, an exchange, a bar length of at least 1, and an
+    /// ordered time window.
+    pub fn build(self) -> Result<Self, RithmicError> {
+        self.validate()?;
+        Ok(self)
+    }
+}
+
+/// A time bar replay request, passed to [`load_time_bars`] and its siblings.
+///
+/// A time bar covers a fixed span: [`bar_type`](Self::bar_type) picks the unit
+/// and [`bar_type_period`](Self::bar_type_period) how many of them per bar.
+///
+/// # Example
+///
+/// ```
+/// use rithmic_rs::{TimeBarReplayRequest, rti::request_time_bar_replay::BarType};
+/// # fn main() -> Result<(), rithmic_rs::RithmicError> {
+/// let request = TimeBarReplayRequest::new()
+///     .symbol("ESU6")
+///     .exchange("CME")
+///     .bar_type(BarType::MinuteBar)
+///     .bar_type_period(5)
+///     .start_time_sec(1_750_000_000)
+///     .end_time_sec(1_750_003_600)
+///     .build()?;
+/// # Ok(())
+/// # }
+/// ```
+///
+/// [`load_time_bars`]: crate::RithmicHistoryPlantHandle::load_time_bars
+//
+// No serde derive: `bar_type` is a generated protobuf enum, which does not
+// implement `Serialize`.
+#[derive(Debug, Clone, Default, PartialEq)]
+#[non_exhaustive]
+#[must_use = "a request does nothing until passed to the history handle"]
+pub struct TimeBarReplayRequest {
+    /// The trading symbol, e.g. `"ESU6"`.
+    pub symbol: String,
+    /// The exchange code, e.g. `"CME"`.
+    pub exchange: String,
+    /// Second, minute, day or week. Required.
+    pub bar_type: Option<TimeBarType>,
+    /// How many of those units each bar covers.
+    pub bar_type_period: i32,
+    /// Start of the window as a Unix timestamp in seconds.
+    pub start_time_sec: i32,
+    /// End of the window as a Unix timestamp in seconds.
+    pub end_time_sec: i32,
+    /// Cap on records returned. Leaving this unset lets the server apply its
+    /// own cap of 10,000, silently.
+    pub user_max_count: Option<i32>,
+    /// `Some(true)` lifts the server's 10,000 record cap, so the whole window
+    /// replays on this one request.
+    pub resume_bars: Option<bool>,
+}
+
+impl TimeBarReplayRequest {
+    /// Start an empty request.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The trading symbol, e.g. `"ESU6"`.
+    pub fn symbol(mut self, symbol: impl Into<String>) -> Self {
+        self.symbol = symbol.into();
+        self
+    }
+
+    /// The exchange code, e.g. `"CME"`.
+    pub fn exchange(mut self, exchange: impl Into<String>) -> Self {
+        self.exchange = exchange.into();
+        self
+    }
+
+    /// Second, minute, day or week.
+    pub fn bar_type(mut self, bar_type: TimeBarType) -> Self {
+        self.bar_type = Some(bar_type);
+        self
+    }
+
+    /// How many of those units each bar covers.
+    pub fn bar_type_period(mut self, bar_type_period: i32) -> Self {
+        self.bar_type_period = bar_type_period;
+        self
+    }
+
+    /// Start of the window as a Unix timestamp in seconds.
+    pub fn start_time_sec(mut self, start_time_sec: i32) -> Self {
+        self.start_time_sec = start_time_sec;
+        self
+    }
+
+    /// End of the window as a Unix timestamp in seconds.
+    pub fn end_time_sec(mut self, end_time_sec: i32) -> Self {
+        self.end_time_sec = end_time_sec;
+        self
+    }
+
+    /// Cap the records returned.
+    pub fn user_max_count(mut self, user_max_count: i32) -> Self {
+        self.user_max_count = Some(user_max_count);
+        self
+    }
+
+    /// Lift the server's 10,000 record cap so the whole window replays at once.
+    pub fn resume_bars(mut self, resume_bars: bool) -> Self {
+        self.resume_bars = Some(resume_bars);
+        self
+    }
+
+    /// Requires a symbol, an exchange, a bar type, a bar period, and an ordered
+    /// time window.
+    pub fn validate(&self) -> Result<(), RithmicError> {
+        validate_replay_window(
+            "time bar replay",
+            &self.symbol,
+            &self.exchange,
+            self.start_time_sec,
+            self.end_time_sec,
+        )?;
+
+        if self.bar_type.is_none() {
             return Err(RithmicError::InvalidArgument(
-                "a volume-profile request requires an exchange".to_string(),
+                "a time bar replay request requires a bar_type".to_string(),
             ));
         }
 
@@ -761,25 +1065,11 @@ impl VolumeProfileMinuteBarsRequest {
                 "bar_type_period must be at least 1".to_string(),
             ));
         }
-
-        if self.start_time_sec < 1 || self.end_time_sec < 1 {
-            return Err(RithmicError::InvalidArgument(
-                "start_time_sec and end_time_sec are both required, as positive Unix \
-                 timestamps"
-                    .to_string(),
-            ));
-        }
-
-        if self.end_time_sec < self.start_time_sec {
-            return Err(RithmicError::InvalidArgument(
-                "end_time_sec must not precede start_time_sec".to_string(),
-            ));
-        }
         Ok(())
     }
 
-    /// Requires a symbol, an exchange, a bar period, and an ordered time
-    /// window.
+    /// Requires a symbol, an exchange, a bar type, a bar period, and an ordered
+    /// time window.
     pub fn build(self) -> Result<Self, RithmicError> {
         self.validate()?;
         Ok(self)
@@ -1027,5 +1317,100 @@ mod tests {
             "limit-if-touched".parse::<OrderType>().unwrap(),
             OrderType::LimitIfTouched
         );
+    }
+
+    fn tick_replay() -> TickBarReplayRequest {
+        TickBarReplayRequest::new()
+            .symbol("ESU6")
+            .exchange("CME")
+            .bar_length(1)
+            .start_time_sec(1_750_000_000)
+            .end_time_sec(1_750_003_600)
+    }
+
+    fn time_replay() -> TimeBarReplayRequest {
+        TimeBarReplayRequest::new()
+            .symbol("ESU6")
+            .exchange("CME")
+            .bar_type(TimeBarType::MinuteBar)
+            .bar_type_period(5)
+            .start_time_sec(1_750_000_000)
+            .end_time_sec(1_750_003_600)
+    }
+
+    #[test]
+    fn a_tick_replay_request_needs_an_instrument_and_an_ordered_window() {
+        assert!(tick_replay().validate().is_ok());
+
+        let err = TickBarReplayRequest {
+            symbol: String::new(),
+            ..tick_replay()
+        }
+        .validate()
+        .unwrap_err()
+        .to_string();
+        assert!(
+            err.contains("tick bar replay request requires a symbol"),
+            "{err}"
+        );
+
+        let err = TickBarReplayRequest {
+            exchange: String::new(),
+            ..tick_replay()
+        }
+        .validate()
+        .unwrap_err()
+        .to_string();
+        assert!(
+            err.contains("tick bar replay request requires an exchange"),
+            "{err}"
+        );
+
+        let err = tick_replay()
+            .end_time_sec(1_749_999_999)
+            .build()
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("must not precede"), "{err}");
+    }
+
+    /// `bar_length` reaches the wire as a string, so a zero or an unparseable
+    /// specifier both have to be caught before the request is sent.
+    #[test]
+    fn a_tick_replay_request_needs_a_bar_length_of_at_least_one() {
+        for specifier in ["0", "", "lots"] {
+            let err = tick_replay()
+                .bar_type_specifier(specifier)
+                .build()
+                .unwrap_err()
+                .to_string();
+            assert!(
+                err.contains("bar_length must be at least 1"),
+                "{specifier}: {err}"
+            );
+        }
+
+        assert_eq!(tick_replay().bar_length(5).bar_type_specifier, "5");
+    }
+
+    #[test]
+    fn a_time_replay_request_needs_a_bar_type_and_period() {
+        assert!(time_replay().validate().is_ok());
+
+        let err = TimeBarReplayRequest {
+            bar_type: None,
+            ..time_replay()
+        }
+        .validate()
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("requires a bar_type"), "{err}");
+
+        let err = time_replay()
+            .bar_type_period(0)
+            .build()
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("bar_type_period must be at least 1"), "{err}");
     }
 }

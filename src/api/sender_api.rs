@@ -42,7 +42,10 @@ use crate::{
         request_tick_bar_update, request_time_bar_replay, request_time_bar_update,
         response_login_info,
     },
-    types::{EasyToBorrowRequest, FillHistoryRange, OrderType, RmsUpdateBits},
+    types::{
+        EasyToBorrowRequest, FillHistoryRange, OrderType, RmsUpdateBits, TickBarReplayRequest,
+        TimeBarReplayRequest, VolumeProfileMinuteBarsRequest,
+    },
 };
 
 /// The protocol template version sent on every login.
@@ -1015,50 +1018,32 @@ impl RithmicSenderApi {
         self.request_to_buf(req, id)
     }
 
-    /// Request a replay of tick bar data.
+    /// Build a tick bar replay request.
     ///
     /// # Arguments
     ///
-    /// * `symbol` - The symbol to request data for
-    /// * `exchange` - The exchange of the symbol
-    /// * `bar_type_specifier` - Number of ticks per bar as a string (e.g., `"1"` for
-    ///   individual ticks, `"5"` for 5-tick bars)
-    /// * `start_index_sec` - Start time as a Unix timestamp (seconds)
-    /// * `finish_index_sec` - End time as a Unix timestamp (seconds)
-    /// * `user_max_count` - cap on records returned; `None` leaves the server's
-    ///   own cap to apply silently
-    /// * `resume_bars` - `Some(true)` lifts the server's 10,000 record cap so the
-    ///   whole window replays in one response stream
+    /// * `request` - The window and bar length to replay. Build it with
+    ///   [`TickBarReplayRequest::new`](crate::TickBarReplayRequest::new).
     ///
     /// # Returns
     ///
     /// A tuple containing the request buffer and the message id.
-    #[allow(clippy::too_many_arguments)]
-    pub fn request_tick_bar_replay(
-        &mut self,
-        symbol: &str,
-        exchange: &str,
-        bar_type_specifier: &str,
-        start_index_sec: i32,
-        finish_index_sec: i32,
-        user_max_count: Option<i32>,
-        resume_bars: Option<bool>,
-    ) -> (Vec<u8>, String) {
+    pub fn request_tick_bar_replay(&mut self, request: &TickBarReplayRequest) -> (Vec<u8>, String) {
         let id = self.get_next_message_id();
 
         let req = RequestTickBarReplay {
             template_id: 206,
-            exchange: Some(exchange.to_string()),
-            symbol: Some(symbol.to_string()),
+            exchange: Some(request.exchange.clone()),
+            symbol: Some(request.symbol.clone()),
             bar_type: Some(BarType::TickBar.into()),
             bar_sub_type: Some(BarSubType::Regular.into()),
-            bar_type_specifier: Some(bar_type_specifier.to_string()),
-            start_index: Some(start_index_sec),
-            finish_index: Some(finish_index_sec),
+            bar_type_specifier: Some(request.bar_type_specifier.clone()),
+            start_index: Some(request.start_time_sec),
+            finish_index: Some(request.end_time_sec),
             direction: Some(Direction::First.into()),
             time_order: Some(TimeOrder::Forwards.into()),
-            user_max_count,
-            resume_bars,
+            user_max_count: request.user_max_count,
+            resume_bars: request.resume_bars,
             user_msg: vec![id.clone()],
             ..Default::default()
         };
@@ -1066,50 +1051,31 @@ impl RithmicSenderApi {
         self.request_to_buf(req, id)
     }
 
-    /// Request a replay of time bar data
+    /// Build a time bar replay request.
     ///
     /// # Arguments
     ///
-    /// * `symbol` - The symbol to request data for
-    /// * `exchange` - The exchange of the symbol
-    /// * `bar_type` - The type of time bar (SecondBar, MinuteBar, DailyBar, WeeklyBar)
-    /// * `bar_type_period` - The period for the bar type (e.g., 1 for 1-minute bars, 5 for 5-minute bars)
-    /// * `start_index_sec` - unix seconds
-    /// * `finish_index_sec` - unix seconds
-    /// * `user_max_count` - cap on records returned; `None` leaves the server's
-    ///   own cap to apply silently
-    /// * `resume_bars` - `Some(true)` lifts the server's 10,000 record cap so the
-    ///   whole window replays in one response stream
+    /// * `request` - The window and bar size to replay. Build it with
+    ///   [`TimeBarReplayRequest::new`](crate::TimeBarReplayRequest::new).
     ///
     /// # Returns
     ///
-    /// A tuple containing the request buffer and the message id
-    #[allow(clippy::too_many_arguments)]
-    pub fn request_time_bar_replay(
-        &mut self,
-        symbol: &str,
-        exchange: &str,
-        bar_type: request_time_bar_replay::BarType,
-        bar_type_period: i32,
-        start_index_sec: i32,
-        finish_index_sec: i32,
-        user_max_count: Option<i32>,
-        resume_bars: Option<bool>,
-    ) -> (Vec<u8>, String) {
+    /// A tuple containing the request buffer and the message id.
+    pub fn request_time_bar_replay(&mut self, request: &TimeBarReplayRequest) -> (Vec<u8>, String) {
         let id = self.get_next_message_id();
 
         let req = RequestTimeBarReplay {
             template_id: 202,
-            exchange: Some(exchange.to_string()),
-            symbol: Some(symbol.to_string()),
-            bar_type: Some(bar_type.into()),
-            bar_type_period: Some(bar_type_period),
-            start_index: Some(start_index_sec),
-            finish_index: Some(finish_index_sec),
+            exchange: Some(request.exchange.clone()),
+            symbol: Some(request.symbol.clone()),
+            bar_type: request.bar_type.map(Into::into),
+            bar_type_period: Some(request.bar_type_period),
+            start_index: Some(request.start_time_sec),
+            finish_index: Some(request.end_time_sec),
             direction: Some(request_time_bar_replay::Direction::First.into()),
             time_order: Some(request_time_bar_replay::TimeOrder::Forwards.into()),
-            user_max_count,
-            resume_bars,
+            user_max_count: request.user_max_count,
+            resume_bars: request.resume_bars,
             user_msg: vec![id.clone()],
             ..Default::default()
         };
@@ -1117,44 +1083,34 @@ impl RithmicSenderApi {
         self.request_to_buf(req, id)
     }
 
-    /// Request volume profile minute bars
+    /// Build a volume profile minute bars request.
     ///
     /// Returns minute bar data with volume profile information.
     ///
     /// # Arguments
-    /// * `symbol` - The trading symbol (e.g., "ESH6")
-    /// * `exchange` - The exchange code (e.g., "CME")
-    /// * `bar_type_period` - The period for the bars
-    /// * `start_index_sec` - Start time in unix seconds
-    /// * `finish_index_sec` - End time in unix seconds
-    /// * `user_max_count` - Optional maximum number of bars to return
-    /// * `resume_bars` - Whether to resume from a previous request
+    ///
+    /// * `request` - The window and bar period to replay. Build it with
+    ///   [`VolumeProfileMinuteBarsRequest::new`](crate::VolumeProfileMinuteBarsRequest::new).
     ///
     /// # Returns
+    ///
     /// A tuple of (serialized request buffer, request ID)
-    #[allow(clippy::too_many_arguments)]
     pub fn request_volume_profile_minute_bars(
         &mut self,
-        symbol: &str,
-        exchange: &str,
-        bar_type_period: i32,
-        start_index_sec: i32,
-        finish_index_sec: i32,
-        user_max_count: Option<i32>,
-        resume_bars: Option<bool>,
+        request: &VolumeProfileMinuteBarsRequest,
     ) -> (Vec<u8>, String) {
         let id = self.get_next_message_id();
 
         let req = RequestVolumeProfileMinuteBars {
             template_id: 208,
             user_msg: vec![id.clone()],
-            symbol: Some(symbol.to_string()),
-            exchange: Some(exchange.to_string()),
-            bar_type_period: Some(bar_type_period),
-            start_index: Some(start_index_sec),
-            finish_index: Some(finish_index_sec),
-            user_max_count,
-            resume_bars,
+            symbol: Some(request.symbol.clone()),
+            exchange: Some(request.exchange.clone()),
+            bar_type_period: Some(request.bar_type_period),
+            start_index: Some(request.start_time_sec),
+            finish_index: Some(request.end_time_sec),
+            user_max_count: request.user_max_count,
+            resume_bars: request.resume_bars,
         };
 
         self.request_to_buf(req, id)
