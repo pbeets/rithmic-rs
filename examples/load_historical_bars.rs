@@ -8,8 +8,8 @@ use std::{env, time::SystemTime};
 use tracing::info;
 
 use rithmic_rs::{
-    ConnectStrategy, RithmicConfig, RithmicEnv, RithmicHistoryPlant,
-    rti::{messages::RithmicMessage, request_time_bar_replay::BarType},
+    ConnectStrategy, RithmicConfig, RithmicEnv, RithmicHistoryPlant, TimeBarType,
+    rti::messages::RithmicMessage,
 };
 
 fn default_start_time() -> i32 {
@@ -54,7 +54,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .load_time_bars_all(
             symbol,
             exchange,
-            BarType::MinuteBar,
+            TimeBarType::MinuteBar,
             5,
             start_time,
             end_time,

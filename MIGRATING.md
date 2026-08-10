@@ -7,7 +7,7 @@ crate-owned ones, and every order call takes a command struct.
 Most of the work is mechanical and the compiler finds it. Work through the
 sections in order — section 1 resolves the majority of the errors.
 
-Section 9 lists what the compiler will *not* find: six changes that compile
+Section 10 lists what the compiler will *not* find: six changes that compile
 untouched and alter what reaches the exchange. Read that one even if everything
 else builds.
 
@@ -213,10 +213,55 @@ a window whose end does not precede its start. The handle runs the same checks, 
 a request that skipped `build()` fails with `RithmicError::InvalidArgument` rather
 than reaching the server incomplete.
 
+The three `RithmicSenderApi` replay methods follow suit. `request_tick_bar_replay`,
+`request_time_bar_replay` and `request_volume_profile_minute_bars` each took seven
+or eight positional arguments and now take a single `&TickBarReplayRequest`,
+`&TimeBarReplayRequest` or `&VolumeProfileMinuteBarsRequest`. This only affects
+code calling the sender API directly — the history plant's `load_*` methods keep
+their flat signatures and build the request for you.
+
+`TimeBarType` is a new alias for `rti::request_time_bar_replay::BarType`, exported
+at the crate root. The old path still works.
+
 `subscribe_account_rms_updates` gains a required `update_bits` parameter. Pass
 `vec![]` for the old behavior.
 
-## 7. Config gains a required `request_timeout`
+## 7. Your replays were probably truncated
+
+Nothing here breaks, but it is the change most likely to have been quietly
+costing you data.
+
+Rithmic caps a replay at 10,000 records and gives no sign that it did: the
+closing response of a truncated replay is byte-identical to a complete one's.
+2.x never asked for the cap to be lifted, so `load_ticks`, `load_tick_bars` and
+`load_time_bars` returned the first 10,000 records of the window and looked like
+they had returned all of it. An hour of a liquid contract runs well past that,
+and one-second bars pass it in under three hours.
+
+`load_ticks_all`, `load_tick_bars_all` and `load_time_bars_all` set Rithmic's
+`resume_bars` flag, which lifts the cap — one request, whole window, no paging.
+Same signatures otherwise, so the switch is the method name.
+
+```rust
+// Before — first 10,000 bars, silently
+let bars = handle.load_time_bars(symbol, exchange, BarType::MinuteBar, 5, start, end).await?;
+
+// After — the whole window
+let bars = handle.load_time_bars_all(symbol, exchange, TimeBarType::MinuteBar, 5, start, end).await?;
+```
+
+The whole window is buffered before the call returns, so a full 23-hour ES
+session is roughly 800,000 records in memory. The capped methods remain for when
+that is what you want.
+
+The `load_*` methods also validate now. An empty symbol or exchange, a
+`bar_length` or `bar_type_period` below 1, a non-positive timestamp, or an
+`end_time_sec` before `start_time_sec` returns `RithmicError::InvalidArgument`
+without a round trip. Only a zero `bar_length` was caught before, so a call that
+appeared to work and came back empty may now surface as an error — which is the
+point.
+
+## 8. Config gains a required `request_timeout`
 
 `RithmicConfig` has a required `request_timeout: Duration`. Build it with
 `RithmicConfig::builder(env)` or `RithmicConfigBuilder::from_env(env)`, which
@@ -230,7 +275,7 @@ A request whose response never arrives now fails with `RithmicError::RequestTime
 instead of blocking its caller forever. Reconcile a timed-out order rather than
 re-sending it.
 
-## 8. Field and module changes
+## 9. Field and module changes
 
 | change | what to do |
 |---|---|
@@ -245,7 +290,7 @@ The new fields are `trade_route` on `RithmicOrder`/`RithmicBracketOrder`/`Rithmi
 `cancel_after_secs` and `if_touched` on `RithmicOrder`; and `manual_or_auto` on
 every order command.
 
-## 9. Behavior changes that need no code change
+## 10. Behavior changes that need no code change
 
 These compile as-is but change what goes on the wire or what the server records.
 
@@ -270,7 +315,7 @@ These compile as-is but change what goes on the wire or what the server records.
   after the cap, so plants that lost the same connection no longer retry in
   lockstep. The schedule is otherwise unchanged.
 
-## 10. Protos move to 0.89.0.0
+## 11. Protos move to 0.89.0.0
 
 The bundled protos track R | Protocol API 0.89.0.0 (template version 5.42).
 
@@ -291,6 +336,8 @@ generated `UpdateType`/`AccessType` enums no longer exist.
 - [ ] Wrap prices in `Some(..)`; pass `None` for market orders
 - [ ] Move off `RithmicAdvancedBracketOrder`
 - [ ] Convert loose-argument order calls to command structs
+- [ ] Pass a request struct to the `RithmicSenderApi::request_*_replay` methods
+- [ ] Switch replays to `load_ticks_all` / `load_tick_bars_all` / `load_time_bars_all` (section 7)
 - [ ] Build `RithmicConfig` through the builder; pick a `request_timeout`
 - [ ] Add a `_` arm to matches on generated enums
 - [ ] Handle `RithmicError::NoTradeRoute` and `RithmicError::RequestTimeout`
