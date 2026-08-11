@@ -33,13 +33,6 @@ account.
 
 ### Breaking Changes
 
-- **The three replay senders take a request struct.**
-  `SenderApi::request_tick_bar_replay`, `request_time_bar_replay` and
-  `request_volume_profile_minute_bars` take a single `&TickBarReplayRequest`,
-  `&TimeBarReplayRequest` or `&VolumeProfileMinuteBarsRequest` instead of
-  positional arguments. The history handle's `load_*` methods are unchanged —
-  they build the request for you.
-
 - **The `load_*` replay methods validate before sending.** A missing symbol or
   exchange, a `bar_length` or `bar_type_period` below 1, a non-positive
   timestamp, or an `end_time_sec` before `start_time_sec` returns
@@ -87,7 +80,7 @@ account.
   | `BracketCondition` | `OrderCondition` |
   | `BracketPriceField` | `OrderPriceField` |
 
-  `BracketType` and `EasyToBorrowRequest` keep their names but now resolve to
+  The remaining two, `BracketType` and `EasyToBorrowRequest`, keep their names but now resolve to
   crate-owned enums rather than `rti::request_bracket_order::BracketType` and
   `rti::request_easy_to_borrow_list::Request`.
 
@@ -132,8 +125,9 @@ account.
 - **`load_volume_profile_minute_bars` takes a `VolumeProfileMinuteBarsRequest`**
   instead of seven positional arguments. See [MIGRATING.md](MIGRATING.md) §6.
 
-- **`TrailingStop` and `RithmicIfTouchedTrigger` are built like the order
-  commands**, and neither implements `Default` — `TrailingStop` had one at 2.0.0.
+- **`TrailingStop` and `RithmicIfTouchedTrigger` are built with `new()`, chained
+  setters and `build()`** — they have no separate `validate()` — and neither
+  implements `Default`; `TrailingStop` had one at 2.0.0.
   `TrailingStop` gains a required `trail_by_price_id: i32`; `build()` refuses a
   zero id (Rithmic rejects it with rp_code 1112) and a `trail_by_ticks` below one.
   `RithmicIfTouchedTrigger::price` is `Option<f64>` and its `build()` requires a
@@ -177,8 +171,8 @@ account.
 
 - **`show_fill_history(range, max_record_count)`** on the order handle — the
   account's fill history (templates 3512/3513), one response per fill. Pass a range
-  in either format the request accepts, and `None` for an uncapped count; above
-  10,000 is refused with `RithmicError::InvalidArgument`.
+  in either format the request accepts, and `None` for an uncapped count; anything
+  outside 0–10,000 is refused with `RithmicError::InvalidArgument`.
 
   ```rust
   let fills = handle
@@ -202,8 +196,8 @@ account.
       .await?;
   ```
 
-  The window is buffered before the call returns — a 23-hour ES session is roughly
-  800,000 records in memory.
+  The window is buffered before the call returns — a 23-hour ES session runs to
+  hundreds of thousands of records in memory.
 
 #### Command types and fields
 
@@ -217,16 +211,25 @@ account.
   and `if_touched` on `RithmicOrder`; group-level cancel timing on `RithmicOcoOrder`;
   `trigger_price`, `trail_by_ticks` and `if_touched` on `RithmicModifyOrder`; and
   `trading_algorithm` on `RithmicExitPosition`. With these, every field of the
-  eleven order request messages is reachable from a command type. On the OCO leg,
+  eleven order request messages that describes the order is reachable from a
+  command type. The session-scoped fields — `template_id`, `user_msg`, `fcm_id`,
+  `ib_id`, `account_id` and `user_type` — still come from the login and the
+  account. On the OCO leg,
   `window_name` is all-or-none across legs like `user_tag`: set it on one leg and
   every leg gets a slot.
 
 - **`validate()` on every command type that has something to check**, public as
-  well as called by `build()`. Every command needs a symbol, an exchange and a
-  positive quantity — plus the basket id on `RithmicModifyOrder`. On top of that,
-  `Limit`, `StopLimit` and `LimitIfTouched` need a price, and the stop and
-  if-touched types need a trigger; `Market` needs neither. Failures return
-  `RithmicError::InvalidArgument`. Nothing beyond this is checked locally.
+  well as called by `build()`. The commands that carry an instrument —
+  `RithmicOrder`, `RithmicBracketOrder`, `RithmicOcoOrderLeg` and
+  `RithmicModifyOrder` — need a symbol, an exchange and a positive quantity. The
+  ones that name an existing order — `RithmicModifyOrder`, `RithmicCancelOrder`,
+  `RithmicBracketLevelAdjustment` and `RithmicModifyOrderReferenceData` — need its
+  basket id, and `RithmicLinkOrders` needs at least two. On top of that, `Limit`,
+  `StopLimit` and `LimitIfTouched` need a price, and the stop and if-touched types
+  need a trigger; `Market` needs neither. On `RithmicModifyOrder` a `price` stands
+  in for a missing `trigger_price`, matching the fallback the sender applies.
+  Failures return `RithmicError::InvalidArgument`. Nothing beyond this is checked
+  locally.
 
 - **`RithmicExitPosition` can flatten the whole account.** `symbol` and `exchange`
   are `Option<String>` and come as a pair: set both to exit one instrument, set
@@ -311,7 +314,7 @@ account.
   lost struct-literal syntax, pre-filled from the same environment variables
   `RithmicConfig::from_env` reads so a single field can be overridden.
 
-- **Reconnect backoff is jittered** by a random factor in `[0.5, 1.5)`, applied
+- **Reconnect backoff is jittered** by a clock-derived factor in `[0.5, 1.5)`, applied
   after the cap, so plants that lost the same connection no longer retry in
   lockstep. The schedule is otherwise unchanged — 500 ms more per attempt, capped
   at 60 seconds — giving 30–90 s delays at the cap.
@@ -392,8 +395,8 @@ account.
 
 - **An order sent from a cloned handle alongside `disconnect()` could reach Rithmic
   while its caller saw `ConnectionClosed`** — a recorded failure for an order that
-  was live at the exchange. The order and PnL plants now reject queued commands once
-  a disconnect is in flight.
+  was live at the exchange. Every plant now rejects queued commands once a
+  disconnect is in flight.
 
 - **A failed logout made `disconnect()` return early without sending `Close`**,
   leaving the actor with `close_requested` set: no heartbeats, every later command
