@@ -46,14 +46,15 @@ let mut order = RithmicOrder::new();
 order.symbol = "ESH6".into();
 ```
 
-`build()` is the opt-in strict path. It requires a symbol, an exchange, a positive
-quantity, and the prices the command's price type needs. The handles send what
+`build()` is the opt-in strict path. Commands carrying an instrument need a symbol,
+an exchange and a positive quantity; commands naming an existing order need its
+basket id; and every price type needs the prices it uses. The handles send what
 they are given, so a command assembled by field access skips those checks — call
 `validate()` yourself if you want them.
 
-`TrailingStop` and `RithmicIfTouchedTrigger` follow the same pattern, and neither
-implements `Default`. `TrailingStop` now requires `trail_by_price_id`, and
-`build()` refuses a zero id.
+`TrailingStop` and `RithmicIfTouchedTrigger` are built the same way, though they
+have no separate `validate()`, and neither implements `Default`. `TrailingStop`
+now requires `trail_by_price_id`, and `build()` refuses a zero id.
 
 ```rust
 let stop = TrailingStop::new().trail_by_ticks(15).trail_by_price_id(7).build()?;
@@ -213,13 +214,6 @@ a window whose end does not precede its start. The handle runs the same checks, 
 a request that skipped `build()` fails with `RithmicError::InvalidArgument` rather
 than reaching the server incomplete.
 
-The three `RithmicSenderApi` replay methods follow suit. `request_tick_bar_replay`,
-`request_time_bar_replay` and `request_volume_profile_minute_bars` each took seven
-or eight positional arguments and now take a single `&TickBarReplayRequest`,
-`&TimeBarReplayRequest` or `&VolumeProfileMinuteBarsRequest`. This only affects
-code calling the sender API directly — the history plant's `load_*` methods keep
-their flat signatures and build the request for you.
-
 `TimeBarType` is a new alias for `rti::request_time_bar_replay::BarType`, exported
 at the crate root. The old path still works.
 
@@ -251,7 +245,7 @@ let bars = handle.load_time_bars_all(symbol, exchange, TimeBarType::MinuteBar, 5
 ```
 
 The whole window is buffered before the call returns, so a full 23-hour ES
-session is roughly 800,000 records in memory. The capped methods remain for when
+session runs to hundreds of thousands of records in memory. The capped methods remain for when
 that is what you want.
 
 The `load_*` methods also validate now. An empty symbol or exchange, a
@@ -311,7 +305,7 @@ These compile as-is but change what goes on the wire or what the server records.
   `RithmicMessage::UnknownTemplate` with the body intact. Code matching
   `RithmicMessage::Unknown` still compiles but no longer sees these frames —
   `Unknown` now means only that a frame failed to decode.
-- **Reconnect delays are jittered** by a random factor in `[0.5, 1.5)`, applied
+- **Reconnect delays are jittered** by a clock-derived factor in `[0.5, 1.5)`, applied
   after the cap, so plants that lost the same connection no longer retry in
   lockstep. The schedule is otherwise unchanged.
 

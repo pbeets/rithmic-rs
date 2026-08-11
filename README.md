@@ -275,8 +275,8 @@ one request covers the window. `load_ticks`, `load_tick_bars` and
 most 10,000 records.
 
 The whole window is buffered before the call returns. A full 23-hour ES session
-is roughly 800,000 records, so ask for the window you need rather than a day at
-a time.
+runs to hundreds of thousands of records, so ask for the window you need rather
+than a day at a time.
 
 Volume profile bars take a request struct:
 

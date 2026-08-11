@@ -693,8 +693,8 @@ impl RithmicHistoryPlantHandle {
     /// # Cost
     ///
     /// The whole window is collected in memory before it returns. A full 23-hour
-    /// ES session is roughly 800,000 records, so ask for the window you actually
-    /// need rather than a day at a time.
+    /// ES session runs to hundreds of thousands of records, so ask for the window
+    /// you actually need rather than a day at a time.
     ///
     /// The first record's open time carries the same quirk described on
     /// [`load_ticks`](Self::load_ticks).
