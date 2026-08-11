@@ -4,10 +4,8 @@ use tokio::sync::broadcast;
 
 /// Filters a shared plant subscription stream down to a single account.
 ///
-/// Order and PnL plants share one upstream connection per login session while
-/// updates remain account-specific. This type keeps the familiar `.recv().await`
-/// API while forwarding connection-level and other non-account-tagged messages to
-/// every handle.
+/// Yields only updates tagged with this handle's account. Connection-health
+/// events and untagged messages reach every handle.
 pub struct SubscriptionFilter {
     account: Arc<RithmicAccount>,
     receiver: broadcast::Receiver<RithmicResponse>,

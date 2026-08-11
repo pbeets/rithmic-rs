@@ -338,7 +338,10 @@ impl RithmicOrderPlant {
     /// A `Result` containing the connected `RithmicOrderPlant` instance, or an error if the connection fails.
     ///
     /// # Errors
-    /// Returns an error if unable to establish WebSocket connection to the server.
+    /// [`RithmicError::ConnectionFailed`] under [`ConnectStrategy::Simple`] only.
+    /// `Retry` and `AlternateWithRetry` never return an error — they retry until
+    /// they connect, so this call can block indefinitely if the server is
+    /// unreachable. Wrap it in `tokio::time::timeout` if you need a deadline.
     pub async fn connect(
         config: &RithmicConfig,
         strategy: ConnectStrategy,
@@ -1050,9 +1053,10 @@ impl PlantActor for OrderPlant {
 
 /// Handle for sending commands to a [`RithmicOrderPlant`] and receiving order updates.
 ///
-/// Obtained from [`RithmicOrderPlant::connect()`]. Use the methods on this handle to
-/// log in, place/modify/cancel orders, and query account information. Real-time order
-/// updates arrive on [`subscription_receiver`](Self::subscription_receiver).
+/// Obtained from [`RithmicOrderPlant::get_handle`], one per account. Use the methods
+/// on this handle to log in, place/modify/cancel orders, and query account
+/// information. Real-time order updates arrive on
+/// [`subscription_receiver`](Self::subscription_receiver).
 pub struct RithmicOrderPlantHandle {
     account: Arc<RithmicAccount>,
     /// Set by the first successful login on any handle from this plant.
@@ -1265,10 +1269,30 @@ impl RithmicOrderPlantHandle {
         await_all_responses(rx).await
     }
 
-    /// Subscribe to order status updates
+    /// Subscribe to order status updates for this handle's account.
     ///
-    /// # Returns
-    /// The subscription response or an error message
+    /// Updates arrive on [`subscription_receiver`](Self::subscription_receiver) as
+    /// [`RithmicOrderNotification`] and [`ExchangeOrderNotification`]. Requires
+    /// [`login`](Self::login) first. Bracket-specific updates need
+    /// [`subscribe_bracket_updates`](Self::subscribe_bracket_updates) as well.
+    ///
+    /// ```no_run
+    /// # use rithmic_rs::{RithmicOrderPlantHandle, rti::messages::RithmicMessage};
+    /// # async fn example(handle: RithmicOrderPlantHandle) -> Result<(), Box<dyn std::error::Error>> {
+    /// handle.subscribe_order_updates().await?;
+    /// let mut updates = handle.subscription_receiver.resubscribe();
+    ///
+    /// while let Ok(response) = updates.recv().await {
+    ///     if let RithmicMessage::ExchangeOrderNotification(order) = &response.message {
+    ///         println!("{:?} filled {:?}", order.status, order.fill_size);
+    ///     }
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// [`RithmicOrderNotification`]: crate::rti::messages::RithmicMessage::RithmicOrderNotification
+    /// [`ExchangeOrderNotification`]: crate::rti::messages::RithmicMessage::ExchangeOrderNotification
     pub async fn subscribe_order_updates(&self) -> Result<RithmicResponse, RithmicError> {
         let (tx, rx) = oneshot::channel::<Result<Vec<RithmicResponse>, RithmicError>>();
 
@@ -1299,13 +1323,43 @@ impl RithmicOrderPlantHandle {
         await_first_response(rx).await
     }
 
-    /// Place a bracket order (entry order with profit target and stop loss)
+    /// Place a bracket order — entry with linked profit target and stop loss.
     ///
-    /// # Arguments
-    /// * `bracket_order` - The bracket order parameters
+    /// Build the order with [`RithmicBracketOrder::build`], which validates it. This
+    /// method does not re-validate: an order assembled without `build()` goes to the
+    /// exchange as-is.
     ///
-    /// # Returns
-    /// The order placement responses or an error message
+    /// `Ok` means the request was sent, not that it was accepted — check `error` on
+    /// each response.
+    ///
+    /// ```no_run
+    /// # use rithmic_rs::{OrderSide, OrderType, RithmicBracketOrder, RithmicOrderPlantHandle};
+    /// # async fn example(handle: RithmicOrderPlantHandle) -> Result<(), Box<dyn std::error::Error>> {
+    /// let order = RithmicBracketOrder::new()
+    ///     .symbol("ESH6")
+    ///     .exchange("CME")
+    ///     .quantity(1)
+    ///     .action(OrderSide::Buy)
+    ///     .price_type(OrderType::Limit)
+    ///     .price(5000.0)
+    ///     .target(20)
+    ///     .stop(10)
+    ///     .localid("my-order-1")
+    ///     .build()?;
+    ///
+    /// for response in handle.place_bracket_order(order).await? {
+    ///     if let Some(err) = &response.error {
+    ///         eprintln!("rejected: {err}");
+    ///     }
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Errors
+    /// * [`RithmicError::NoTradeRoute`] if no route covers the order's exchange and
+    ///   the order named none. Nothing is sent.
+    /// * [`RithmicError::ConnectionClosed`] if the plant has shut down.
     pub async fn place_bracket_order(
         &self,
         bracket_order: RithmicBracketOrder,
@@ -1357,11 +1411,18 @@ impl RithmicOrderPlantHandle {
     ///
     /// [`RithmicOrderNotification`]: crate::rti::messages::RithmicMessage::RithmicOrderNotification
     ///
-    /// # Arguments
-    /// * `order` - The cancel order parameters
+    /// ```no_run
+    /// # use rithmic_rs::{RithmicCancelOrder, RithmicOrderPlantHandle};
+    /// # async fn example(handle: RithmicOrderPlantHandle) -> Result<(), Box<dyn std::error::Error>> {
+    /// // "123456" is the basket_id from the order notification.
+    /// let cancel = RithmicCancelOrder::new().id("123456").build()?;
+    /// handle.cancel_order(cancel).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     ///
-    /// # Returns
-    /// A vector of cancellation responses or an error message
+    /// # Errors
+    /// [`RithmicError::ConnectionClosed`] if the plant has shut down.
     pub async fn cancel_order(
         &self,
         order: RithmicCancelOrder,
@@ -1689,12 +1750,18 @@ impl RithmicOrderPlantHandle {
     /// # Returns
     /// A vector of order placement responses or an error message
     ///
+    /// Build the order with [`RithmicOrder::build`], which validates it. This method
+    /// does not re-validate: an order assembled without `build()` goes to the
+    /// exchange as-is.
+    ///
+    /// `Ok` means the request was sent, not that it was accepted — check `error` on
+    /// each response.
+    ///
     /// # Example
     ///
-    /// ```
-    /// use rithmic_rs::api::{OrderSide, OrderType, RithmicOrder};
-    ///
-    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// ```no_run
+    /// # use rithmic_rs::{OrderSide, OrderType, RithmicOrder, RithmicOrderPlantHandle};
+    /// # async fn example(handle: RithmicOrderPlantHandle) -> Result<(), Box<dyn std::error::Error>> {
     /// let order = RithmicOrder::new()
     ///     .symbol("ESH6")
     ///     .exchange("CME")
@@ -1705,10 +1772,19 @@ impl RithmicOrderPlantHandle {
     ///     .user_tag("my-order")
     ///     .build()?;
     ///
-    /// // handle.place_order(order).await?;
+    /// for response in handle.place_order(order).await? {
+    ///     if let Some(err) = &response.error {
+    ///         eprintln!("rejected: {err}");
+    ///     }
+    /// }
     /// # Ok(())
     /// # }
     /// ```
+    ///
+    /// # Errors
+    /// * [`RithmicError::NoTradeRoute`] if no route covers the order's exchange and
+    ///   the order named none. Nothing is sent.
+    /// * [`RithmicError::ConnectionClosed`] if the plant has shut down.
     pub async fn place_order(
         &self,
         order: RithmicOrder,
@@ -1726,15 +1802,42 @@ impl RithmicOrderPlantHandle {
         await_all_responses(rx).await
     }
 
-    /// Place an OCO (One Cancels Other) order
+    /// Place an OCO (One Cancels Other) order.
     ///
-    /// When one leg is filled, the others are automatically cancelled.
+    /// When one leg is filled, the others are automatically cancelled. See
+    /// [`RithmicOcoOrder`] for building the legs.
     ///
-    /// # Arguments
-    /// * `order` - The order legs (at least two)
+    /// ```no_run
+    /// # use rithmic_rs::{OrderSide, OrderType, RithmicOcoOrder, RithmicOcoOrderLeg, RithmicOrderPlantHandle};
+    /// # async fn example(handle: RithmicOrderPlantHandle) -> Result<(), Box<dyn std::error::Error>> {
+    /// let take_profit = RithmicOcoOrderLeg::new()
+    ///     .symbol("ESH6")
+    ///     .exchange("CME")
+    ///     .quantity(1)
+    ///     .transaction_type(OrderSide::Sell)
+    ///     .price_type(OrderType::Limit)
+    ///     .price(5020.0)
+    ///     .build()?;
+    /// let stop_loss = RithmicOcoOrderLeg::new()
+    ///     .symbol("ESH6")
+    ///     .exchange("CME")
+    ///     .quantity(1)
+    ///     .transaction_type(OrderSide::Sell)
+    ///     .price_type(OrderType::StopMarket)
+    ///     .trigger_price(4980.0)
+    ///     .build()?;
     ///
-    /// # Returns
-    /// A vector of order placement responses or an error message
+    /// let order = RithmicOcoOrder::new().legs([take_profit, stop_loss]).build()?;
+    /// handle.place_oco_order(order).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Errors
+    /// * [`RithmicError::InvalidArgument`] if the group has fewer than two legs —
+    ///   [`RithmicOcoOrder::build`] does not check the count, this does.
+    /// * [`RithmicError::NoTradeRoute`] if no route covers a leg's exchange.
+    /// * [`RithmicError::ConnectionClosed`] if the plant has shut down.
     pub async fn place_oco_order(
         &self,
         order: RithmicOcoOrder,
@@ -1803,11 +1906,21 @@ impl RithmicOrderPlantHandle {
     /// Resolves when the final frame of the response sequence arrives. That
     /// result describes the request, not the resulting orders.
     ///
-    /// # Arguments
-    /// * `command` - The position to exit and how the exit is attributed
+    /// ```no_run
+    /// # use rithmic_rs::{RithmicExitPosition, RithmicOrderPlantHandle};
+    /// # async fn example(handle: RithmicOrderPlantHandle) -> Result<(), Box<dyn std::error::Error>> {
+    /// // One instrument.
+    /// let one = RithmicExitPosition::new().symbol("ESM6").exchange("CME").build()?;
+    /// handle.exit_position(one).await?;
     ///
-    /// # Returns
-    /// A vector of exit position responses or an error message
+    /// // Every open position on the account.
+    /// handle.exit_position(RithmicExitPosition::new().build()?).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Errors
+    /// [`RithmicError::ConnectionClosed`] if the plant has shut down.
     pub async fn exit_position(
         &self,
         command: RithmicExitPosition,

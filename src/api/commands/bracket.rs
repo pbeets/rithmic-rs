@@ -12,9 +12,8 @@ use crate::{
 
 /// Entry order with linked profit target and stop loss orders.
 ///
-/// Maps directly to `RequestBracketOrder`, so it carries the full venue-native
-/// surface: multiple target and stop legs, triggered entry, break-even, trailing
-/// stop management, and timed release/cancel.
+/// Supports multiple target and stop legs, triggered entry, break-even, trailing
+/// stops, and timed release/cancel.
 ///
 /// # Example: one target, one stop
 ///

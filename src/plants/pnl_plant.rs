@@ -122,7 +122,10 @@ impl RithmicPnlPlant {
     /// A `Result` containing the connected `RithmicPnlPlant` instance, or an error if the connection fails.
     ///
     /// # Errors
-    /// Returns an error if unable to establish WebSocket connection to the server.
+    /// [`RithmicError::ConnectionFailed`] under [`ConnectStrategy::Simple`] only.
+    /// `Retry` and `AlternateWithRetry` never return an error — they retry until
+    /// they connect, so this call can block indefinitely if the server is
+    /// unreachable. Wrap it in `tokio::time::timeout` if you need a deadline.
     pub async fn connect(
         config: &RithmicConfig,
         strategy: ConnectStrategy,
@@ -308,7 +311,7 @@ impl PlantActor for PnlPlant {
 
 /// Handle for sending commands to a [`RithmicPnlPlant`] and receiving P&L updates.
 ///
-/// Obtained from [`RithmicPnlPlant::connect()`]. Use the methods on this handle to
+/// Obtained from [`RithmicPnlPlant::get_handle`], one per account. Use the methods on this handle to
 /// log in and subscribe to real-time P&L and position updates. Updates arrive on
 /// [`subscription_receiver`](Self::subscription_receiver).
 pub struct RithmicPnlPlantHandle {

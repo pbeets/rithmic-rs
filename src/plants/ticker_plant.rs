@@ -216,10 +216,10 @@ impl RithmicTickerPlant {
     /// A `Result` containing the connected `RithmicTickerPlant` instance, or an error if the connection fails.
     ///
     /// # Errors
-    /// Returns an error if:
-    /// - Unable to establish WebSocket connection to the server
-    /// - Network timeout occurs
-    /// - Server rejects the connection
+    /// [`RithmicError::ConnectionFailed`] under [`ConnectStrategy::Simple`] only.
+    /// `Retry` and `AlternateWithRetry` never return an error — they retry until
+    /// they connect, so this call can block indefinitely if the server is
+    /// unreachable. Wrap it in `tokio::time::timeout` if you need a deadline.
     ///
     /// # Example
     /// ```no_run
@@ -576,7 +576,7 @@ impl PlantActor for TickerPlant {
 
 /// Handle for sending commands to a [`RithmicTickerPlant`] and receiving market data updates.
 ///
-/// Obtained from [`RithmicTickerPlant::connect()`]. Use the methods on this handle to
+/// Obtained from [`RithmicTickerPlant::get_handle`]. Use the methods on this handle to
 /// log in, subscribe to symbols, and request reference data. Real-time updates arrive
 /// on [`subscription_receiver`](Self::subscription_receiver).
 pub struct RithmicTickerPlantHandle {

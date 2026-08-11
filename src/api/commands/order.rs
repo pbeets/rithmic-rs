@@ -13,9 +13,6 @@ use crate::{
 /// For orders with automatic profit targets and stop losses, use
 /// [`RithmicBracketOrder`](crate::RithmicBracketOrder) instead.
 ///
-/// This struct carries every field [`RequestNewOrder`](crate::rti::RequestNewOrder)
-/// accepts, most of which a given order does not use.
-///
 /// # Example: limit order
 ///
 /// ```

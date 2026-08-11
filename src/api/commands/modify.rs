@@ -55,9 +55,8 @@ pub struct RithmicModifyOrder {
     pub window_name: Option<String>,
     /// Ticks to trail behind the market price.
     ///
-    /// A bare distance rather than a [`TrailingStop`](crate::TrailingStop):
-    /// `RequestModifyOrder` declares `trailing_stop` and `trail_by_ticks` but
-    /// no `trail_by_price_id`, so there is no price-id field to set.
+    /// A bare distance, not a [`TrailingStop`](crate::TrailingStop) — a modify
+    /// takes no price-id.
     pub trail_by_ticks: Option<i32>,
     /// Conditional trigger on the resulting order.
     pub if_touched: Option<RithmicIfTouchedTrigger>,
