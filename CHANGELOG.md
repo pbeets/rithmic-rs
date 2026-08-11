@@ -339,7 +339,14 @@ account.
 - **Documentation pass across the crate.** The "Error Handling" docs now cover
   every way an error surfaces, the rustdoc examples on the command types compile
   instead of being fenced as `ignore`, docs.rs builds with all features, and the
-  README samples show correct API usage. No API changed.
+  README samples show correct API usage. The order handle gains examples on
+  `place_order`, `place_bracket_order`, `place_oco_order`, `cancel_order`,
+  `exit_position` and `subscribe_order_updates`. Four doc claims were wrong and are
+  corrected: the handle types named `connect()` as their constructor rather than
+  `get_handle()`; `connect()` documented an error it cannot return under
+  `ConnectStrategy::Retry`, which loops until it connects rather than failing;
+  `place_order`'s example had its call commented out; and `place_oco_order`'s
+  two-leg minimum was documented only in a source comment. No API changed.
 
 ### Fixed
 
