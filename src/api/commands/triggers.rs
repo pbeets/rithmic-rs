@@ -32,8 +32,7 @@ use crate::{
 pub struct TrailingStop {
     /// Number of ticks to trail behind the market price
     pub trail_by_ticks: i32,
-    /// Rithmic price-id to trail against. Rithmic rejects a trailing stop with
-    /// rp_code 1112 when this is unset.
+    /// Rithmic price-id to trail against. `build()` requires a non-zero id.
     pub trail_by_price_id: i32,
 }
 
@@ -68,9 +67,7 @@ impl TrailingStop {
         }
         if self.trail_by_price_id < 1 {
             return Err(RithmicError::InvalidArgument(
-                "trail_by_price_id must be at least 1; Rithmic rejects a trailing stop \
-                 without one with rp_code 1112"
-                    .to_string(),
+                "trail_by_price_id must be at least 1".to_string(),
             ));
         }
         Ok(self)

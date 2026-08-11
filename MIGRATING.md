@@ -52,8 +52,8 @@ they are given, so a command assembled by field access skips those checks — ca
 `validate()` yourself if you want them.
 
 `TrailingStop` and `RithmicIfTouchedTrigger` follow the same pattern, and neither
-implements `Default`. `TrailingStop` now requires `trail_by_price_id`; Rithmic
-rejects a zero id with rp_code 1112, so `build()` refuses it first.
+implements `Default`. `TrailingStop` now requires `trail_by_price_id`, and
+`build()` refuses a zero id.
 
 ```rust
 let stop = TrailingStop::new().trail_by_ticks(15).trail_by_price_id(7).build()?;

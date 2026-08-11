@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [3.0.0] - 2026-08-09
+## [3.0.0]
 
 Order commands are now built with `::new()` and chained setters, the generated
 protobuf enums are replaced by crate-owned ones, and every order call takes a
@@ -129,7 +129,7 @@ account.
   setters and `build()`** — they have no separate `validate()` — and neither
   implements `Default`; `TrailingStop` had one at 2.0.0.
   `TrailingStop` gains a required `trail_by_price_id: i32`; `build()` refuses a
-  zero id (Rithmic rejects it with rp_code 1112) and a `trail_by_ticks` below one.
+  zero id and a `trail_by_ticks` below one.
   `RithmicIfTouchedTrigger::price` is `Option<f64>` and its `build()` requires a
   symbol, an exchange and the price. An unset price is omitted rather than sent as
   `0.0`, which the default `GreaterThanEqualTo`/`TradePrice` condition would fire
@@ -414,8 +414,8 @@ account.
   fallback to the order's own price covered only the two stop types; it now covers
   the same four types `validate()` requires a trigger for.
 
-- **Single-order trailing stops omitted `trail_by_price_id`**, which Rithmic
-  rejected with rp_code 1112.
+- **Single-order trailing stops omitted `trail_by_price_id`**, so the trailing
+  stop was sent without the price-id it trails against.
 
 - **Bracket target/stop adjustments omitted the `level` field**, so on a multi-leg
   bracket every adjustment landed on the server's default leg and the other legs

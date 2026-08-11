@@ -1488,13 +1488,32 @@ impl RithmicOrderPlantHandle {
         await_first_response(rx).await
     }
 
-    /// Request a list of all open orders
+    /// Ask Rithmic to replay the account's open orders onto the update stream.
     ///
-    /// The response is a `ResponseShowOrders`, which has no field for the
-    /// orders themselves.
+    /// The returned `RithmicResponse` is only an acknowledgement —
+    /// `ResponseShowOrders` carries a response code and nothing else. Each open
+    /// order arrives separately as a
+    /// [`RithmicMessage::RithmicOrderNotification`] or
+    /// [`RithmicMessage::ExchangeOrderNotification`] on the subscription stream,
+    /// so subscribe before calling this or the orders are missed.
     ///
-    /// # Returns
-    /// The order list response or an error message
+    /// The crate surfaces no end-of-list signal, so the replayed orders are
+    /// indistinguishable from live activity on the stream.
+    ///
+    /// ```no_run
+    /// # use rithmic_rs::{rti::messages::RithmicMessage, RithmicOrderPlantHandle};
+    /// # async fn example(handle: RithmicOrderPlantHandle) -> Result<(), Box<dyn std::error::Error>> {
+    /// let mut updates = handle.subscription_receiver.resubscribe();
+    /// handle.show_orders().await?;
+    ///
+    /// while let Ok(response) = updates.recv().await {
+    ///     if let RithmicMessage::RithmicOrderNotification(order) = response.message {
+    ///         println!("{:?} {:?}", order.symbol, order.status);
+    ///     }
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn show_orders(&self) -> Result<RithmicResponse, RithmicError> {
         let (tx, rx) = oneshot::channel::<Result<Vec<RithmicResponse>, RithmicError>>();
 
