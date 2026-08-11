@@ -9,15 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Order commands are now built with `::new()` and chained setters, the generated
 protobuf enums are replaced by crate-owned ones, and every order call takes a
-command struct. This ships as a major release.
+command struct.
 
-**[MIGRATING.md](MIGRATING.md) walks through the upgrade** with before/after code
-for each change below.
+**[MIGRATING.md](MIGRATING.md) has before/after code for every change below.**
 
-### Changes that compile but alter live order flow
+### Behavior changes the compiler will not catch
 
-These need no code change, so the compiler will not point at them. Read this list
-before the first run against a live account.
+Nothing here needs a code change. Read it before the first run against a live
+account.
 
 - **Orders route off the exchange's published trade route** instead of a hardcoded
   `"globex"`/`"simulator"`. With no route published and none set on the command,
@@ -26,7 +25,7 @@ before the first run against a live account.
   `.manual_or_auto(ManualOrAutoEntry::Manual)` to keep the old attribution.
 - **A target-only bracket now sends `TARGET_ONLY_STATIC`** rather than
   `TargetAndStopStatic`, which 2.x sent whatever legs you supplied.
-- **`get_account_list` and `get_account_rms_info` may return fewer accounts,** now
+- **`get_account_list` and `get_account_rms_info` may return fewer accounts**, now
   that requests are scoped with the real login info instead of a hardcoded `Trader`
   user type.
 - **Market orders no longer go out priced at `0.0`** — an unset price is omitted.
@@ -36,39 +35,49 @@ before the first run against a live account.
 
 - **The three replay senders take a request struct.**
   `SenderApi::request_tick_bar_replay`, `request_time_bar_replay` and
-  `request_volume_profile_minute_bars` each took seven or eight positional
-  arguments; they now take a single `&TickBarReplayRequest`,
-  `&TimeBarReplayRequest` or `&VolumeProfileMinuteBarsRequest`. The history
-  plant's `load_*` methods are unchanged — they build the request for you.
+  `request_volume_profile_minute_bars` take a single `&TickBarReplayRequest`,
+  `&TimeBarReplayRequest` or `&VolumeProfileMinuteBarsRequest` instead of
+  positional arguments. The history handle's `load_*` methods are unchanged —
+  they build the request for you.
 
 - **The `load_*` replay methods validate before sending.** A missing symbol or
   exchange, a `bar_length` or `bar_type_period` below 1, a non-positive
-  timestamp, or an `end_time_sec` before `start_time_sec` now returns
-  `RithmicError::InvalidArgument` without a round trip. Previously only a zero
-  `bar_length` was caught.
+  timestamp, or an `end_time_sec` before `start_time_sec` returns
+  `RithmicError::InvalidArgument` without a round trip.
 
 - **Order command types are their own builders and are `#[non_exhaustive]`.**
   `..Default::default()` no longer compiles on them outside this crate. `new()`
   takes no arguments, every field has a setter of the same name, and `build()`
-  runs `validate()` and returns `Result<_, RithmicError>`. The fields stay public,
-  so direct assignment still works — but the handles send what they are given, so a
-  command that skips `build()` skips validation and the derived `bracket_type`.
+  runs `validate()` and returns `Result<_, RithmicError>`.
+
+  ```rust
+  let order = RithmicOrder::new()
+      .symbol("ESM6")
+      .exchange("CME")
+      .quantity(1)
+      .transaction_type(OrderSide::Buy)
+      .price_type(OrderType::Limit)
+      .price(5000.0)
+      .build()?;
+  ```
+
+  Fields stay public, so direct assignment still works — but the handles send what
+  they are given, so a command that skips `build()` skips validation and the
+  derived `bracket_type`.
 
 - **`RithmicConfig`, `RithmicAccount`, `LoginConfig`, `InstrumentInfo`,
   `InstrumentInfoError`, `RithmicEnv`, `TrailingStop`, `RithmicIfTouchedTrigger`
-  and all 246 generated protobuf types are `#[non_exhaustive]`.** Rithmic added
-  fields to existing messages in 24 of its 35 template releases, so without this
-  every proto refresh would be a major bump here. Struct literals stop compiling
-  downstream, and matches on generated enums need a `_` arm.
+  and all 246 generated protobuf types are `#[non_exhaustive]`.** Struct literals
+  stop compiling downstream. Use the builder where there is one, `Default::default()`
+  plus field assignment on the generated types, and a `_` arm on matches over
+  generated enums.
 
 - **Fourteen generated enum re-exports leave the crate root, replaced by
-  crate-owned enums.** The per-request generated enums named the same concepts but
-  were mutually incompatible, so one order could not be expressed against two
-  request types. Variant names are unchanged, so the arms port over — but the
-  crate-owned enums are `#[non_exhaustive]`, so every `match` needs a `_` arm it
-  did not need before, and `OrderType` carries six variants where `OcoPriceType`
-  had four. The prost-specific surface (`as i32`, `try_from`, `from_str_name`,
-  derived `Ord`) does not carry over; `as_str_name` does.
+  crate-owned enums.** Variant names are unchanged, so the arms port over as
+  written. Two things do not: the crate-owned enums are `#[non_exhaustive]`, so
+  every `match` needs a `_` arm, and `OrderType` carries six variants where
+  `OcoPriceType` had four. The prost-specific surface (`as i32`, `try_from`,
+  `from_str_name`, derived `Ord`) does not carry over; `as_str_name` does.
 
   | removed | use instead |
   |---|---|
@@ -80,8 +89,7 @@ before the first run against a live account.
 
   `BracketType` and `EasyToBorrowRequest` keep their names but now resolve to
   crate-owned enums rather than `rti::request_bracket_order::BracketType` and
-  `rti::request_easy_to_borrow_list::Request` — the last raw generated types on the
-  curated surface, so a proto refresh can no longer change this crate's API.
+  `rti::request_easy_to_borrow_list::Request`.
 
 - **Seven handle method names change, covering ten methods** (`list_system_info`
   exists on all four plants). Each is now named after the request it sends.
@@ -118,19 +126,24 @@ before the first run against a live account.
   the command as a `.manual_or_auto(..)` field, defaulting to `Auto`.
 
 - **`adjust_target`/`adjust_stop` take a `RithmicBracketLevelAdjustment`** instead
-  of `(id, ticks)`, adding a `level` field that selects which bracket leg to
-  adjust — `level: None` keeps the old behavior. **`load_volume_profile_minute_bars`
-  takes a `VolumeProfileMinuteBarsRequest`** instead of seven positional arguments;
-  see [MIGRATING.md](MIGRATING.md) §6 for the call.
+  of `(id, ticks)`. The new `level` field selects which bracket leg to adjust;
+  `level: None` keeps the old behavior.
+
+- **`load_volume_profile_minute_bars` takes a `VolumeProfileMinuteBarsRequest`**
+  instead of seven positional arguments. See [MIGRATING.md](MIGRATING.md) §6.
 
 - **`TrailingStop` and `RithmicIfTouchedTrigger` are built like the order
-  commands,** and neither implements `Default` — `TrailingStop` had one at 2.0.0.
+  commands**, and neither implements `Default` — `TrailingStop` had one at 2.0.0.
   `TrailingStop` gains a required `trail_by_price_id: i32`; `build()` refuses a
   zero id (Rithmic rejects it with rp_code 1112) and a `trail_by_ticks` below one.
-  `RithmicIfTouchedTrigger::price` is `Option<f64>`, its `build()` requires a
-  symbol, an exchange and the price, and an unset price is omitted rather than sent
-  as `0.0` — which the default `GreaterThanEqualTo`/`TradePrice` condition would
-  have fired on immediately.
+  `RithmicIfTouchedTrigger::price` is `Option<f64>` and its `build()` requires a
+  symbol, an exchange and the price. An unset price is omitted rather than sent as
+  `0.0`, which the default `GreaterThanEqualTo`/`TradePrice` condition would fire
+  on immediately.
+
+  ```rust
+  let stop = TrailingStop::new().trail_by_ticks(15).trail_by_price_id(7).build()?;
+  ```
 
 - **`RithmicConfig` gains a required `request_timeout: Duration`.** Build it with
   `RithmicConfig::builder(env)` or `RithmicConfigBuilder::from_env(env)` — the type
@@ -149,8 +162,7 @@ before the first run against a live account.
   stays at the crate root: spell `rithmic_rs::ws::ConnectStrategy` as
   `rithmic_rs::ConnectStrategy`.
 
-- **Smaller changes.** The first four are mechanical; the last two change what the
-  server sees and are repeated at the top of this section.
+- **Smaller changes.** All mechanical.
 
   | change | what to do |
   |---|---|
@@ -158,16 +170,21 @@ before the first run against a live account.
   | `RithmicOrder::duration` is `TimeInForce`, not `Option<TimeInForce>` | unwrap; `None` already sent `Day`, so the wire is unchanged |
   | `ConfigError::InvalidValue` is `#[non_exhaustive]` at the variant | destructuring `{ var, reason }` needs a `..` |
   | new `Option` fields on the command types | leave `None` to keep old behavior |
-  | `cancel_all_orders` is attributed `Auto`, not `Manual` | set `.manual_or_auto(ManualOrAutoEntry::Manual)` to keep the old attribution |
-  | an empty `user_tag` echoes back as `None`, not `Some("")` | the field is no longer sent as `""` |
 
 ### Added
 
+#### New calls
+
 - **`show_fill_history(range, max_record_count)`** on the order handle — the
-  account's fill history (templates 3512/3513, new in 5.42), one response per fill.
-  `FillHistoryRange` takes either format the request accepts: `ssboe(start, finish)`
-  or `trade_date(start, finish)`. A `max_record_count` above 10,000 is refused with
-  `RithmicError::InvalidArgument`, since Rithmic rejects it.
+  account's fill history (templates 3512/3513), one response per fill. Pass a range
+  in either format the request accepts, and `None` for an uncapped count; above
+  10,000 is refused with `RithmicError::InvalidArgument`.
+
+  ```rust
+  let fills = handle
+      .show_fill_history(FillHistoryRange::trade_date(20260801, 20260809), None)
+      .await?;
+  ```
 
 - **`get_user_info(user)`** on the order handle — a user's profile, entitlement
   status and session limits (templates 3510/3511); pass `None` for the logged-in
@@ -176,71 +193,19 @@ before the first run against a live account.
   `ProtocolError`.
 
 - **`load_ticks_all`, `load_tick_bars_all` and `load_time_bars_all`** — replay
-  loaders that return the whole window instead of the first 10,000 records.
-  A plain replay stops at 10,000 and says nothing about it: the closing response
-  of a truncated replay is byte-identical to a complete one's. These loaders set
-  `resume_bars` on the request, which lifts the cap, so one request covers the
-  window. The whole window is buffered before it returns, so a full 23-hour ES
-  session is roughly 800,000 records in memory.
+  loaders that return the whole window. The plain loaders stop at 10,000 records
+  and give no sign they did, so prefer these unless you want the cap.
 
-- **`TickBarReplayRequest` and `TimeBarReplayRequest`**, the replay counterparts
-  of `VolumeProfileMinuteBarsRequest`. Same shape as the order commands: `new()`,
-  chained setters, `validate()` and `build()`. They carry `user_max_count` and
-  `resume_bars`, so a caller building requests directly can cap or uncap a replay
-  themselves.
+  ```rust
+  let bars = handle
+      .load_time_bars_all(symbol, exchange, TimeBarType::MinuteBar, 5, start, end)
+      .await?;
+  ```
 
-- **`TimeBarType`**, an alias for the generated `request_time_bar_replay::BarType`
-  under a name that reads better on a request.
+  The window is buffered before the call returns — a 23-hour ES session is roughly
+  800,000 records in memory.
 
-- **Per-order trade routes.** The new `trade_route` field on `RithmicOrder`,
-  `RithmicBracketOrder` and `RithmicOcoOrderLeg` overrides the route the plant
-  would pick, including one the server never published. **`trade_route_for(exchange)`**
-  reports the route an order would take now, **`record_trade_route(update)`** applies
-  a `TradeRoute` update to the cache, and **`RithmicError::NoTradeRoute`** is
-  returned when no route exists and the order set none.
-
-- **`validate()` on every command type that has something to check**, public as
-  well as called by `build()`. `Limit`, `StopLimit` and `LimitIfTouched` need a
-  price; the stop and if-touched types need a trigger; `Market` needs neither. It
-  also requires a symbol, an exchange and a positive quantity — and the basket id on
-  `RithmicModifyOrder`. It returns `RithmicError::InvalidArgument`. Market rules
-  beyond this are deliberately not enforced: Rithmic is the authority on what it
-  accepts.
-
-- **`RithmicExitPosition` can flatten the whole account.** Its `symbol` and
-  `exchange` are `Option<String>` and come as a pair — both set exits one
-  instrument, neither set sends the fields absent, which template 3504 reads as
-  every position on the account. The crate previously always sent them.
-
-- **Multi-leg OCO orders.** A `RithmicOcoOrder` now carries two or more legs
-  instead of a fixed pair, and each leg can carry its own trailing stop. Fewer than
-  two legs is rejected, since Rithmic has nothing to cancel a lone leg against.
-
-- **`RithmicBracketOrder::operation_type` and the `BracketOperationType` enum** —
-  the `order_operation_type` field Rithmic added in 5.37, selecting which event on
-  one order of the bracket cancels the rest. Leave it unset and it stays off the
-  wire, as before — async_rithmic, the Python client for the same API, tried
-  defaulting it to `OCA` and reverted after it broke bracket orders.
-
-- **`RithmicMessage::UnknownTemplate(UnknownTemplateMessage)`** — a frame whose
-  `template_id` has no definition here, body kept as received, with
-  **`decode_as<M>()`, `payload_hex()` and `from_payload_hex()`** to decode it into
-  your own `prost` type or capture it for replay. `Ok` from `decode_as` is not
-  proof the type was guessed right. **`RithmicMessage::RequestHeartbeat`**
-  (template 18) is now mapped too; the library does not reply to it.
-
-- **Request timeouts.** `rithmic_rs::DEFAULT_REQUEST_TIMEOUT` (30 seconds),
-  `RithmicConfigBuilder::request_timeout` and the `RITHMIC_REQUEST_TIMEOUT_SECS`
-  environment variable control how long a request waits before failing with the new
-  `RithmicError::RequestTimeout`.
-
-- **Crate-owned `ManualOrAutoEntry`, `OrderCondition`, `OrderPriceField` and
-  `RmsUpdateBits`** at the crate root, joining `OrderSide`, `OrderType` and
-  `TimeInForce`. `ManualOrAutoEntry` is new outright — origination was never
-  exposed before — defaults to `Auto` on every command, and converts into all seven
-  per-request `OrderPlacement` enums, which have no `Default` of their own.
-  `OrderCondition` defaults to `GreaterThanEqualTo` and `OrderPriceField` to
-  `TradePrice`, the values an unconfigured `RithmicIfTouchedTrigger` sends.
+#### Command types and fields
 
 - **`RithmicCancelAllOrders`, `RithmicExitPosition`, `RithmicLinkOrders`,
   `RithmicModifyOrderReferenceData` and `RithmicBracketLevelAdjustment`** — command
@@ -256,37 +221,107 @@ before the first run against a live account.
   `window_name` is all-or-none across legs like `user_tag`: set it on one leg and
   every leg gets a slot.
 
-- **RMS auto-liquidation streaming** — pass `RmsUpdateBits::AutoLiqThresholdCurrentValue`
-  to `subscribe_account_rms_updates`. An empty `Vec` omits `update_bits` rather
-  than sending `0`.
+- **`validate()` on every command type that has something to check**, public as
+  well as called by `build()`. Every command needs a symbol, an exchange and a
+  positive quantity — plus the basket id on `RithmicModifyOrder`. On top of that,
+  `Limit`, `StopLimit` and `LimitIfTouched` need a price, and the stop and
+  if-touched types need a trigger; `Market` needs neither. Failures return
+  `RithmicError::InvalidArgument`. Nothing beyond this is checked locally.
 
-- **`serde` derives on every order command type** behind the `serde` feature, so a
-  strategy can persist and replay any command.
+- **`RithmicExitPosition` can flatten the whole account.** `symbol` and `exchange`
+  are `Option<String>` and come as a pair: set both to exit one instrument, set
+  neither to exit every position on the account.
+
+  ```rust
+  handle.exit_position(RithmicExitPosition::new().build()?).await?; // flatten all
+  ```
+
+- **Multi-leg OCO orders.** A `RithmicOcoOrder` takes two or more legs instead of a
+  fixed pair, each able to carry its own trailing stop. Fewer than two legs is
+  rejected.
+
+- **`RithmicBracketOrder::operation_type` and the `BracketOperationType` enum** —
+  the `order_operation_type` field added in 5.37, selecting which event on one
+  order of the bracket cancels the rest. Left unset it stays off the wire.
+
+- **Per-order trade routes.** The new `trade_route` field on `RithmicOrder`,
+  `RithmicBracketOrder` and `RithmicOcoOrderLeg` overrides the route the crate
+  would pick, including one the server never published. On the order handle,
+  `trade_route_for(exchange)` reports the route an order would take now and
+  `record_trade_route(update)` applies a `TradeRoute` update to the cache.
+  `RithmicError::NoTradeRoute` comes back when no route exists and the order set
+  none.
+
+  ```rust
+  let route = handle.trade_route_for("CME").await?;      // what an order would use
+  let order = RithmicOrder::new().trade_route("globex"); // or pick one yourself
+  ```
+
+#### Types and re-exports
+
+- **Crate-owned `ManualOrAutoEntry`, `OrderCondition`, `OrderPriceField` and
+  `RmsUpdateBits`** at the crate root, joining `OrderSide`, `OrderType` and
+  `TimeInForce`. `ManualOrAutoEntry` sets order origination and defaults to `Auto`
+  on every command. `OrderCondition` defaults to `GreaterThanEqualTo` and
+  `OrderPriceField` to `TradePrice` — what an unconfigured `RithmicIfTouchedTrigger`
+  sends.
+
+- **`TickBarReplayRequest` and `TimeBarReplayRequest`**, the replay counterparts
+  of `VolumeProfileMinuteBarsRequest`. Same shape as the order commands: `new()`,
+  chained setters, `validate()` and `build()`. Set `user_max_count` to cap a
+  replay or `resume_bars` to uncap it.
+
+- **`TimeBarType`**, an alias for the generated `request_time_bar_replay::BarType`.
+
+- **`RithmicMessage::UnknownTemplate(UnknownTemplateMessage)`** — a frame whose
+  `template_id` has no definition here, body kept as received, with
+  **`decode_as<M>()`, `payload_hex()` and `from_payload_hex()`** to decode it into
+  your own `prost` type or capture it for replay. `Ok` from `decode_as` is not
+  proof the type was guessed right. **`RithmicMessage::RequestHeartbeat`**
+  (template 18) is now mapped too; the library does not reply to it.
+
+- **Trait impls and re-exports.**
+  - `Clone` on the order and PnL handles (ticker and history already had it). A
+    clone's `subscription_receiver` starts at the clone and does not replay
+    earlier updates.
+  - `PartialEq` on the command types and on `RithmicMessage`, `RithmicResponse`,
+    `LoginConfig` and `ConfigError`.
+  - `#[must_use]` on the command, trigger and request types.
+  - `SubscriptionFilter`, `rithmic_rs::prost` and the new order enums at the
+    crate root.
+
+- **The generated types pick up the fields Rithmic added through 5.42.**
+
+  | type | new fields |
+  |---|---|
+  | `ResponseLoginInfo` | contact, address, `order_copy_status`, per-plant session counts |
+  | `ResponseAccountList` | `loss_limit`, creation timestamps |
+  | `ExchangeOrderNotification` | `source_*` |
+  | `ResponseListExchangePermissions` | `level_1_market_data`, `level_2_market_data` (`entitlement_flag` now `#[deprecated]`) |
+  | `TickBar`, `ResponseTickBarReplay` | `data_bar_seq_num` |
+
+#### Connection and config
+
+- **Request timeouts.** `rithmic_rs::DEFAULT_REQUEST_TIMEOUT` (30 seconds),
+  `RithmicConfigBuilder::request_timeout` and the `RITHMIC_REQUEST_TIMEOUT_SECS`
+  environment variable control how long a request waits before failing with the new
+  `RithmicError::RequestTimeout`.
+
+- **`RithmicConfigBuilder::from_env(env)`** — a construction path for a type that
+  lost struct-literal syntax, pre-filled from the same environment variables
+  `RithmicConfig::from_env` reads so a single field can be overridden.
 
 - **Reconnect backoff is jittered** by a random factor in `[0.5, 1.5)`, applied
   after the cap, so plants that lost the same connection no longer retry in
   lockstep. The schedule is otherwise unchanged — 500 ms more per attempt, capped
   at 60 seconds — giving 30–90 s delays at the cap.
 
-- **`RithmicConfigBuilder::from_env(env)`** — a construction path for a type that
-  lost struct-literal syntax, pre-filled from the same environment variables
-  `RithmicConfig::from_env` reads so a single field can be overridden.
+- **RMS auto-liquidation streaming** — pass `RmsUpdateBits::AutoLiqThresholdCurrentValue`
+  to `subscribe_account_rms_updates`. An empty `Vec` omits `update_bits` rather
+  than sending `0`.
 
-- **Trait impls and re-exports.** `Clone` on the order and PnL handles (the ticker
-  and history handles already had it) — a clone's `subscription_receiver` starts at
-  the moment of the clone and does not replay earlier updates. `PartialEq` on the
-  command types and on `RithmicMessage`, `RithmicResponse`, `LoginConfig` and
-  `ConfigError`; `#[must_use]` on the command, trigger and request types; and
-  `SubscriptionFilter`, `rithmic_rs::prost` and the new order enums re-exported at
-  the crate root.
-
-- **The generated types pick up the fields Rithmic added through 5.42,** including
-  contact,
-  address, `order_copy_status` and per-plant session counts on `ResponseLoginInfo`;
-  `loss_limit` and creation timestamps on `ResponseAccountList`; `source_*` on
-  `ExchangeOrderNotification`; `level_1_market_data`/`level_2_market_data` on
-  `ResponseListExchangePermissions` (with `entitlement_flag` now `#[deprecated]`);
-  and `data_bar_seq_num` on `TickBar` and `ResponseTickBarReplay`.
+- **`serde` derives on every order command type** behind the `serde` feature, so a
+  strategy can persist and replay any command.
 
 ### Changed
 
@@ -296,7 +331,7 @@ before the first run against a live account.
   `RithmicMessage::Unknown` still compiles but no longer sees these frames —
   `Unknown` now means only that a frame failed to decode.
 
-- **A `Reject` is always surfaced as a rejection,** with `rp_code` passed through
+- **A `Reject` is always surfaced as a rejection**, with `rp_code` passed through
   element for element, so codes like `["0"]` no longer make a rejected request look
   like a success. An unsolicited `Reject` — one echoing no `user_msg` — is logged
   at `warn` and dropped instead of reaching the request handler.
@@ -308,26 +343,23 @@ before the first run against a live account.
 
 ### Fixed
 
-- **Login declared template version `5.30`,** the version of the 0.84.0.0 protos
-  the crate used to bundle, while the bundled protos are now 0.89.0.0 / template
-  5.42. It declares `5.42`. The field is a client declaration rather than a
-  negotiation — Rithmic's own samples send `3.9`, and the server answers with its
-  own version whatever you send (`5.54` at the time of writing) — so this changes
-  no server behavior. It just stops the login misreporting what the crate speaks.
+- **Login declared template version `5.30`** while the bundled protos were 5.42.
+  It declares `5.42`. Nothing about the session changes — the field is a client
+  declaration, not a negotiation.
 
-- **Market orders were sent with `price = 0.0`,** and multi-leg OCO orders
+- **Market orders were sent with `price = 0.0`**, and multi-leg OCO orders
   zero-filled `price` and `trigger_price`. Both now follow the all-or-none rule the
   trailing-stop fields already used: absent when no leg carries one, index-aligned
   once any leg does.
 
-- **Every order went out on `"globex"` or `"simulator"` regardless of exchange,**
+- **Every order went out on `"globex"` or `"simulator"` regardless of exchange**,
   ignoring the routes the server publishes. The plant now uses the published route
   for the order's exchange, preferring one marked default, read once at `login()`.
 
-- **Requests carried a hardcoded `Trader` user type,** and the account list request
+- **Requests carried a hardcoded `Trader` user type**, and the account list request
   carried no `fcm_id`/`ib_id`, so FCM and IB logins saw no accounts. `login()` now
   scopes requests with the real login info. As a result, **`get_account_list` and
-  `get_account_rms_info` may return fewer accounts than before,** including for
+  `get_account_rms_info` may return fewer accounts than before**, including for
   `Trader` logins.
 
 - **Requests could wait forever.** A request whose response never arrives now fails
@@ -343,43 +375,43 @@ before the first run against a live account.
   `request_modify_order_reference_data` still sends what it is given — an empty tag
   there is how a tag is cleared.
 
-- **A frame that fails to decode is no longer discarded.** The echoed `user_msg` is
-  read off the wire even when the body will not decode, so the failure resolves the
-  matching request with `ProtocolError` instead of leaving its caller waiting.
+- **A frame that failed to decode was discarded, leaving its caller waiting.** The
+  echoed `user_msg` is now read off the wire even when the body will not decode, so
+  the failure resolves the matching request with `ProtocolError`.
 
 - **A response that ended a request without being marked `multi_response` leaked
   the parts accumulated under its id.** They were kept for the life of the
   connection and prepended to a later request that reused the id.
 
-- **The order and PnL plants now reject queued commands once a disconnect is in
-  flight.** An order submitted from a cloned handle alongside `disconnect()` could
-  still reach Rithmic while its caller saw `ConnectionClosed` — a failure on record
-  for an order that was live at the exchange.
+- **An order sent from a cloned handle alongside `disconnect()` could reach Rithmic
+  while its caller saw `ConnectionClosed`** — a recorded failure for an order that
+  was live at the exchange. The order and PnL plants now reject queued commands once
+  a disconnect is in flight.
 
-- **`disconnect()` sends `Close` even when the logout fails.** It used to return
-  early, leaving the actor with `close_requested` set: no heartbeats, every later
-  command dropped, pending requests never drained.
+- **A failed logout made `disconnect()` return early without sending `Close`**,
+  leaving the actor with `close_requested` set: no heartbeats, every later command
+  dropped, pending requests never drained. It now always sends `Close`.
 
-- **A server `ForcedLogout` (template 77) now stops the plant actor,** failing
-  pending requests with `ConnectionClosed`. The plant used to keep heartbeating a
-  session the server had already ended.
+- **A server `ForcedLogout` (template 77) left the plant heartbeating a session the
+  server had already ended.** It now stops the actor and fails pending requests with
+  `ConnectionClosed`.
 
-- **The `heartbeat_interval` from the login response is now used as the heartbeat
-  period.** Plants used `hb.max(60)`, so a server asking for a heartbeat every 30
-  seconds got one every 60 and dropped the connection as idle.
+- **Plants clamped the heartbeat period with `hb.max(60)`**, so a server asking for
+  a heartbeat every 30 seconds got one every 60 and dropped the connection as idle.
+  The `heartbeat_interval` from the login response is now used as sent.
 
 - **A `MarketIfTouched` or `LimitIfTouched` modify omitted `trigger_price`.** The
   fallback to the order's own price covered only the two stop types; it now covers
   the same four types `validate()` requires a trigger for.
 
-- **Single-order trailing stops omitted `trail_by_price_id`,** which Rithmic
+- **Single-order trailing stops omitted `trail_by_price_id`**, which Rithmic
   rejected with rp_code 1112.
 
-- **Bracket target/stop adjustments omitted the `level` field,** so on a multi-leg
+- **Bracket target/stop adjustments omitted the `level` field**, so on a multi-leg
   bracket every adjustment landed on the server's default leg and the other legs
   were unreachable.
 
-- **`request_account_rms_updates` sent `update_bits: None`,** so
+- **`request_account_rms_updates` sent `update_bits: None`**, so
   `auto_liq_threshold_current_value` never streamed even when subscribed.
 
 - **Example fixes.** `examples/bracket_order.rs` no longer exits its listener on a
