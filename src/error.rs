@@ -115,7 +115,14 @@ pub enum RithmicError {
     SendFailed,
     /// Server returned an empty response where at least one was expected.
     EmptyResponse,
-    /// The request was sent but no response came back in time.
+    /// No longer produced. The library does not time out requests; a caller
+    /// that wants a deadline wraps the call in [`tokio::time::timeout`], which
+    /// reports expiry through its own `Elapsed` rather than this variant.
+    /// Removed in 4.0.0.
+    #[deprecated(
+        since = "3.1.0",
+        note = "the library no longer times out requests; wrap the call in tokio::time::timeout"
+    )]
     RequestTimeout,
     /// The server turned the request down, with the code and message it gave.
     /// Request-level only — not a reason to reconnect.
@@ -172,6 +179,7 @@ impl RithmicError {
 }
 
 impl fmt::Display for RithmicError {
+    #[allow(deprecated)]
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             RithmicError::ConnectionFailed(msg) => write!(f, "connection failed: {msg}"),
@@ -225,6 +233,7 @@ impl std::error::Error for RithmicError {
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use std::error::Error;
 

@@ -60,7 +60,7 @@ pub(crate) async fn core_with_wire(source: &str) -> (PlantCore, TcpStream) {
     let (subscription_sender, _sub_rx) = broadcast::channel(16);
     let rithmic_sender_api = RithmicSenderApi::new(&config);
 
-    let request_handler = RithmicRequestHandler::new(config.request_timeout);
+    let request_handler = RithmicRequestHandler::new();
 
     let core = PlantCore {
         config,

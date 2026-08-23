@@ -255,19 +255,11 @@ without a round trip. Only a zero `bar_length` was caught before, so a call that
 appeared to work and came back empty may now surface as an error — which is the
 point.
 
-## 8. Config gains a required `request_timeout`
+## 8. Build `RithmicConfig` through the builder
 
-`RithmicConfig` has a required `request_timeout: Duration`. Build it with
-`RithmicConfig::builder(env)` or `RithmicConfigBuilder::from_env(env)`, which
+Use `RithmicConfig::builder(env)` or `RithmicConfigBuilder::from_env(env)`, which
 pre-fills from the same environment variables `RithmicConfig::from_env` reads so a
 single field can be overridden.
-
-The default is `DEFAULT_REQUEST_TIMEOUT`, 30 seconds, and
-`RITHMIC_REQUEST_TIMEOUT_SECS` sets it from the environment (plain digits only).
-
-A request whose response never arrives now fails with `RithmicError::RequestTimeout`
-instead of blocking its caller forever. Reconcile a timed-out order rather than
-re-sending it.
 
 ## 9. Field and module changes
 
@@ -332,9 +324,9 @@ generated `UpdateType`/`AccessType` enums no longer exist.
 - [ ] Convert loose-argument order calls to command structs
 - [ ] Pass a request struct to the `RithmicSenderApi::request_*_replay` methods
 - [ ] Switch replays to `load_ticks_all` / `load_tick_bars_all` / `load_time_bars_all` (section 7)
-- [ ] Build `RithmicConfig` through the builder; pick a `request_timeout`
+- [ ] Build `RithmicConfig` through the builder
 - [ ] Add a `_` arm to matches on generated enums
-- [ ] Handle `RithmicError::NoTradeRoute` and `RithmicError::RequestTimeout`
+- [ ] Handle `RithmicError::NoTradeRoute`
 - [ ] Re-check account lists if you rely on `get_account_list` returning everything
 - [ ] Decide whether `cancel_all_orders` should stay `Manual` — it is now `Auto`
 - [ ] Check target-only brackets: they now send `TARGET_ONLY_STATIC`

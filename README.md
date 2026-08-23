@@ -92,7 +92,7 @@ The headline changes:
 | Every order call takes a command struct | `cancel_all_orders`, `exit_position`, `adjust_target`/`adjust_stop` no longer take loose arguments |
 | Prices are `Option<f64>` | Wrap in `Some(..)`; pass `None` for market orders |
 | Seven handle methods renamed | Each is now named after the request it sends |
-| `RithmicConfig` requires a `request_timeout` | Build it through `RithmicConfig::builder(env)` or `RithmicConfigBuilder::from_env(env)` |
+| `RithmicConfig` gains fields | Build it through `RithmicConfig::builder(env)` or `RithmicConfigBuilder::from_env(env)` rather than a struct literal |
 
 The compiler finds all of the above. **It will not find these**, which compile
 untouched and change what reaches the exchange:

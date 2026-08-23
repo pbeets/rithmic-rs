@@ -111,7 +111,7 @@ impl PlantCore<WsSink> {
             logged_in: false,
             ping_interval,
             ping_manager,
-            request_handler: RithmicRequestHandler::new(config.request_timeout),
+            request_handler: RithmicRequestHandler::new(),
             rithmic_reader,
             rithmic_receiver_api,
             rithmic_sender,
@@ -199,13 +199,11 @@ where
         let ping_interval = &mut self.ping_interval;
         let ping_manager = &mut self.ping_manager;
         let reader = &mut self.rithmic_reader;
-        let request_handler = &mut self.request_handler;
 
         tokio::select! {
             _ = interval.tick()      => SelectResult::HeartbeatFired,
             _ = ping_interval.tick() => SelectResult::PingFired,
             _ = ping_manager.timed_out() => SelectResult::PingTimeout,
-            _ = request_handler.fail_timed_out() => unreachable!(),
             Some(cmd) = receiver.recv() => SelectResult::Command(cmd),
             msg = reader.next() => match msg {
                 Some(m) => SelectResult::RithmicMessage(m),
@@ -652,10 +650,7 @@ mod tests {
     };
 
     use futures_util::StreamExt;
-    use tokio::{
-        sync::{broadcast, oneshot},
-        time::Instant,
-    };
+    use tokio::sync::{broadcast, oneshot};
     use tokio_tungstenite::tungstenite::{Error, Message, error::ProtocolError};
 
     use super::*;
@@ -841,7 +836,7 @@ mod tests {
             source: "test".to_string(),
         };
 
-        let request_handler = RithmicRequestHandler::new(config.request_timeout);
+        let request_handler = RithmicRequestHandler::new();
 
         let core = PlantCore {
             config,
@@ -1065,60 +1060,20 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn the_configured_request_timeout_is_the_one_applied() {
-        let config = RithmicConfig::builder(RithmicEnv::Demo)
-            .user("u")
-            .password("p")
-            .url("ws://localhost:9999")
-            .beta_url("ws://localhost:9998")
-            .app_name("a")
-            .app_version("1")
-            .request_timeout(Duration::from_secs(5))
-            .build()
-            .unwrap();
-
+    async fn next_event_never_fails_a_request_that_is_still_waiting() {
+        // Ten 60s interval ticks of simulated time — far past the 30s timeout
+        // the loop used to enforce. Nothing may resolve the request but a
+        // response, a failure, or a disconnect.
         let (reader, _peer) = make_open_ws_reader().await;
-        let (mut core, _sub_rx) =
-            make_test_core_with_config(MockMessageSink::ready(), reader, config);
+        let (mut core, _sub_rx) = make_test_core(MockMessageSink::ready(), reader);
         let mut rx = register_request(&mut core, "req-1");
         let (_cmd_tx, mut cmd_rx) = mpsc::channel::<()>(1);
 
-        let started = Instant::now();
+        for _ in 0..10 {
+            core.next_event(&mut cmd_rx).await;
+        }
 
-        // Race the caller against the loop: the request must fail at 5s, well
-        // before the 60s tick that would otherwise end next_event.
-        let elapsed = tokio::select! {
-            _ = core.next_event(&mut cmd_rx) => panic!("returned before the timeout"),
-            received = &mut rx => {
-                assert_eq!(received.unwrap().unwrap_err(), RithmicError::RequestTimeout);
-                Instant::now() - started
-            }
-        };
-
-        assert_eq!(elapsed, Duration::from_secs(5));
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn next_event_times_out_a_request_while_waiting() {
-        // The only plant-level fact worth asserting: next_event polls the
-        // timeout loop. Timing semantics are covered in request_handler.
-        let (reader, _peer) = make_open_ws_reader().await;
-        let (mut core, mut sub_rx) = make_test_core(MockMessageSink::ready(), reader);
-        let mut rx = register_request(&mut core, "req-1");
-        let (_cmd_tx, mut cmd_rx) = mpsc::channel::<()>(1);
-
-        // The return is ignored on purpose: both 60s intervals come ready at
-        // the same instant, so which one `select!` reports is random.
-        core.next_event(&mut cmd_rx).await;
-
-        assert_eq!(
-            rx.try_recv().unwrap().unwrap_err(),
-            RithmicError::RequestTimeout
-        );
-        assert!(
-            sub_rx.try_recv().is_err(),
-            "timing a request out is not a connection-health event"
-        );
+        assert!(rx.try_recv().is_err(), "the request must still be waiting");
     }
 
     #[tokio::test]

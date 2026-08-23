@@ -24,6 +24,7 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
+#[allow(deprecated)]
 use crate::request_handler::DEFAULT_REQUEST_TIMEOUT;
 use std::{env, fmt, str::FromStr, time::Duration};
 
@@ -274,12 +275,18 @@ pub struct RithmicConfig {
     pub app_name: String,
     /// Application version string.
     pub app_version: String,
-    /// How long to wait for a response before a request times out.
-    /// A zero duration selects [`DEFAULT_REQUEST_TIMEOUT`].
+    /// No longer used. The library does not time out requests; wrap the call
+    /// in [`tokio::time::timeout`] to set a deadline of your own. Still
+    /// readable so existing code keeps compiling; removed in 4.0.0.
+    #[deprecated(
+        since = "3.1.0",
+        note = "the library no longer times out requests; wrap the call in tokio::time::timeout"
+    )]
     pub request_timeout: Duration,
 }
 
 impl fmt::Debug for RithmicConfig {
+    #[allow(deprecated)]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("RithmicConfig")
             .field("url", &self.url)
@@ -331,8 +338,8 @@ impl RithmicConfig {
     ///   to. Defaults to "Rithmic Paper Trading" (Demo), "Rithmic 01" (Live),
     ///   or "Rithmic Test" (Test). Set it on Live to select another provider,
     ///   e.g. Thrive Trading.
-    /// - `RITHMIC_REQUEST_TIMEOUT_SECS`: Seconds a request waits for a
-    ///   response (default 30; 0 selects the default)
+    /// - `RITHMIC_REQUEST_TIMEOUT_SECS`: no longer used. Still read and still
+    ///   rejected if it is not plain digits, then ignored.
     ///
     /// # Example
     /// ```no_run
@@ -344,6 +351,7 @@ impl RithmicConfig {
     /// let account = RithmicAccount::from_env(RithmicEnv::Demo)?;
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
+    #[allow(deprecated)]
     pub fn from_env(env: RithmicEnv) -> Result<Self, ConfigError> {
         let prefix = env.var_prefix();
 
@@ -443,6 +451,7 @@ impl RithmicConfigBuilder {
     ///     .build()?;
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
+    #[allow(deprecated)]
     pub fn from_env(env: RithmicEnv) -> Result<Self, ConfigError> {
         let config = RithmicConfig::from_env(env)?;
 
@@ -460,6 +469,7 @@ impl RithmicConfigBuilder {
     }
 
     /// Create a new builder for the specified environment.
+    #[allow(deprecated)]
     pub fn new(env: RithmicEnv) -> Self {
         let system_name = env.default_system_name().to_string();
 
@@ -512,10 +522,14 @@ impl RithmicConfigBuilder {
         self
     }
 
-    /// Set how long to wait for a response before a request times out.
-    ///
-    /// A zero duration selects the default,
-    /// [`DEFAULT_REQUEST_TIMEOUT`].
+    /// No longer used. The library does not time out requests; wrap the call
+    /// in [`tokio::time::timeout`] to set a deadline of your own. The value is
+    /// still recorded on the config and still ignored; removed in 4.0.0.
+    #[deprecated(
+        since = "3.1.0",
+        note = "the library no longer times out requests; wrap the call in tokio::time::timeout"
+    )]
+    #[allow(deprecated)]
     pub fn request_timeout(mut self, request_timeout: Duration) -> Self {
         self.request_timeout = if request_timeout.is_zero() {
             DEFAULT_REQUEST_TIMEOUT
@@ -534,6 +548,7 @@ impl RithmicConfigBuilder {
     /// Build the configuration.
     ///
     /// Returns an error if any required fields are missing.
+    #[allow(deprecated)]
     pub fn build(self) -> Result<RithmicConfig, ConfigError> {
         Ok(RithmicConfig {
             env: self.env,
@@ -564,6 +579,7 @@ impl RithmicConfigBuilder {
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
 
     use super::*;

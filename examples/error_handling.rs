@@ -58,7 +58,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     match handle.get_front_month_contract("ES", "CME", false).await {
         Ok(resp) => info!("front month: {:?}", resp.message),
-        Err(RithmicError::RequestTimeout) => warn!("front month: no response"),
         Err(e) => error!("front month: {e}"),
     }
 

@@ -5,6 +5,43 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.0]
+
+### Requests no longer time out
+
+The library used to give up on a request after 30 seconds and hand back a
+`RequestTimeout` error. It no longer does. A request finishes when Rithmic
+answers it, or when the connection drops.
+
+The old timeout caused a problem it could not fix. Giving up on our side does
+not tell Rithmic to stop — the request was already sent, and the answer still
+turns up later. By then we had told you the call failed and thrown away the
+record needed to match the answer to it, so the answer went nowhere.
+
+If you want a time limit, set it yourself with `tokio::time::timeout`. You know
+what each call is worth waiting for and the library does not. See
+`examples/request_timeout.rs`.
+
+### Deprecated
+
+These still compile and are still accepted, but the library ignores them.
+They go away in 4.0.0.
+
+- `RithmicConfig::request_timeout`
+- `RithmicConfigBuilder::request_timeout()`
+- `DEFAULT_REQUEST_TIMEOUT`
+- `RithmicError::RequestTimeout` — never returned any more
+- `RITHMIC_REQUEST_TIMEOUT_SECS` — still checked for a bad value, then ignored
+
+### Added
+
+- `examples/request_timeout.rs` — how to put your own time limit on a request.
+
+### Fixed
+
+- When part of a multi-part response arrives for a request that is no longer
+  waiting, it is now logged. It used to be thrown away silently.
+
 ## [3.0.0]
 
 Order commands are now built with `::new()` and chained setters, the generated
