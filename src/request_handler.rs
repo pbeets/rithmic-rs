@@ -207,6 +207,72 @@ impl RithmicRequestHandler {
     }
 }
 
+/// Capture of emitted log lines, so a test can assert a diagnostic really
+/// reaches production logs instead of trusting that the call is there.
+#[cfg(test)]
+pub(crate) mod log_capture {
+    use std::{cell::RefCell, io, sync::OnceLock};
+
+    use tracing_subscriber::fmt::MakeWriter;
+
+    thread_local! {
+        /// `Some` only while this thread is inside `capture`; events emitted on
+        /// any other thread are written nowhere.
+        static BUFFER: RefCell<Option<Vec<u8>>> = const { RefCell::new(None) };
+    }
+
+    struct Writer;
+
+    impl io::Write for Writer {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            BUFFER.with_borrow_mut(|buffer| {
+                if let Some(buffer) = buffer {
+                    buffer.extend_from_slice(buf);
+                }
+            });
+
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    struct PerThread;
+
+    impl<'a> MakeWriter<'a> for PerThread {
+        type Writer = Writer;
+
+        fn make_writer(&'a self) -> Writer {
+            Writer
+        }
+    }
+
+    /// Run `f` and return what it logged. Capped at INFO, because a diagnostic
+    /// that only appears at debug is filtered out in production. The subscriber
+    /// is global: `tracing` caches a callsite's interest on first resolve.
+    pub(crate) fn capture<T>(f: impl FnOnce() -> T) -> (T, String) {
+        static INSTALLED: OnceLock<()> = OnceLock::new();
+
+        INSTALLED.get_or_init(|| {
+            let subscriber = tracing_subscriber::fmt()
+                .with_writer(PerThread)
+                .with_max_level(tracing::Level::INFO)
+                .finish();
+
+            tracing::subscriber::set_global_default(subscriber)
+                .expect("nothing else installs a global subscriber in the test binary");
+        });
+
+        BUFFER.set(Some(Vec::new()));
+        let out = f();
+        let logged = BUFFER.take().unwrap_or_default();
+
+        (out, String::from_utf8(logged).unwrap())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

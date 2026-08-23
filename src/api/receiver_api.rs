@@ -113,7 +113,24 @@ impl RithmicReceiverApi {
         }
 
         self.decode_body(data.slice(4..), parsed_message.template_id)
-            .map_err(|response| route_decode_failure(payload, response))
+            .map_err(|response| {
+                let response = route_decode_failure(payload, response);
+
+                error!(
+                    "{}: template {} failed to decode: {:?}; recovered request_id {:?}, routing it {}",
+                    self.source,
+                    parsed_message.template_id,
+                    response.error,
+                    response.request_id,
+                    if response.is_update {
+                        "onto the subscription"
+                    } else {
+                        "to the request waiting on it"
+                    }
+                );
+
+                response
+            })
     }
 
     /// Decode the body against the message type its `template_id` selects.
@@ -1571,8 +1588,6 @@ fn has_multiple(rq_handler_rp_code: &[String]) -> bool {
 }
 
 fn decode_error(source: &str, e: prost::DecodeError, is_update: bool) -> RithmicResponse {
-    error!("Failed to decode protobuf message: {}", e);
-
     RithmicResponse {
         request_id: "".to_string(),
         message: RithmicMessage::Unknown,
@@ -1865,6 +1880,45 @@ mod tests {
         ));
         assert!(!response.is_update);
         assert_eq!(response.request_id, "req-7");
+    }
+
+    #[test]
+    fn a_correlated_decode_failure_names_the_request_in_the_log() {
+        let api = RithmicReceiverApi {
+            source: "test".to_string(),
+        };
+
+        let (_, logged) = crate::request_handler::log_capture::capture(|| {
+            let _ = api.buf_to_message(encode_with_header(&malformed_response_login(&["req-7"])));
+        });
+
+        assert!(logged.contains("template 11 failed to decode"), "{logged}");
+        assert!(
+            logged.contains(r#"recovered request_id "req-7""#),
+            "{logged}"
+        );
+        assert!(
+            logged.contains("routing it to the request waiting on it"),
+            "{logged}"
+        );
+    }
+
+    #[test]
+    fn an_uncorrelatable_decode_failure_says_so_in_the_log() {
+        let api = RithmicReceiverApi {
+            source: "test".to_string(),
+        };
+
+        let (_, logged) = crate::request_handler::log_capture::capture(|| {
+            let _ = api.buf_to_message(encode_with_header(&malformed_response_login(&[])));
+        });
+
+        assert!(logged.contains("template 11 failed to decode"), "{logged}");
+        assert!(logged.contains(r#"recovered request_id """#), "{logged}");
+        assert!(
+            logged.contains("routing it onto the subscription"),
+            "{logged}"
+        );
     }
 
     #[test]
