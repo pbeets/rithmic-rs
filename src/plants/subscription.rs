@@ -97,6 +97,7 @@ mod tests {
             has_more: false,
             multi_response: false,
             source: "test".to_string(),
+            orphaned: false,
         }
     }
 

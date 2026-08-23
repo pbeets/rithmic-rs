@@ -46,6 +46,10 @@ pub struct RithmicResponse {
     pub error: Option<RithmicError>,
     /// Name of the plant that sent this response (e.g., "ticker_plant").
     pub source: String,
+    /// `true` if this response carried a request id that no longer had a caller
+    /// waiting on it, so it was routed onto the subscription broadcast instead
+    /// of being dropped. Always `false` on a normal request reply or update.
+    pub orphaned: bool,
 }
 
 impl RithmicResponse {
@@ -173,6 +177,7 @@ mod tests {
             multi_response: false,
             error: None,
             source: "test".to_string(),
+            orphaned: false,
         }
     }
 

@@ -227,6 +227,7 @@ mod tests {
             multi_response: false,
             error,
             source: "order_plant".to_string(),
+            orphaned: false,
         }
     }
 

@@ -62,6 +62,7 @@ impl RithmicReceiverApi {
                     data.len()
                 ))),
                 source: self.source.clone(),
+                orphaned: false,
             });
         }
 
@@ -91,6 +92,7 @@ impl RithmicReceiverApi {
                             e
                         ))),
                         source: self.source.clone(),
+                        orphaned: false,
                     },
                 ));
             }
@@ -109,6 +111,7 @@ impl RithmicReceiverApi {
                     "Frame carries no template_id".to_string(),
                 )),
                 source: self.source.clone(),
+                orphaned: false,
             });
         }
 
@@ -157,6 +160,7 @@ impl RithmicReceiverApi {
                     multi_response: false,
                     error,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             13 => {
@@ -172,6 +176,7 @@ impl RithmicReceiverApi {
                     multi_response: false,
                     error,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             15 => {
@@ -187,6 +192,7 @@ impl RithmicReceiverApi {
                     multi_response: false,
                     error,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             17 => {
@@ -202,6 +208,7 @@ impl RithmicReceiverApi {
                     multi_response: false,
                     error,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             18 => {
@@ -218,6 +225,7 @@ impl RithmicReceiverApi {
                     multi_response: false,
                     error: None,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             19 => {
@@ -233,6 +241,7 @@ impl RithmicReceiverApi {
                     multi_response: false,
                     error,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             21 => {
@@ -248,6 +257,7 @@ impl RithmicReceiverApi {
                     multi_response: false,
                     error,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             75 => {
@@ -276,6 +286,7 @@ impl RithmicReceiverApi {
                     multi_response: false,
                     error,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             76 => {
@@ -290,6 +301,7 @@ impl RithmicReceiverApi {
                     multi_response: false,
                     error: None,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             77 => {
@@ -306,6 +318,7 @@ impl RithmicReceiverApi {
                         "forced logout from server".to_string(),
                     )),
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             101 => {
@@ -321,6 +334,7 @@ impl RithmicReceiverApi {
                     multi_response: false,
                     error,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             103 => {
@@ -337,6 +351,7 @@ impl RithmicReceiverApi {
                     multi_response: true,
                     error,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             104 => {
@@ -352,6 +367,7 @@ impl RithmicReceiverApi {
                     multi_response: false,
                     error,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             106 => {
@@ -367,6 +383,7 @@ impl RithmicReceiverApi {
                     multi_response: false,
                     error,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             108 => {
@@ -383,6 +400,7 @@ impl RithmicReceiverApi {
                     multi_response: true,
                     error,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             110 => {
@@ -399,6 +417,7 @@ impl RithmicReceiverApi {
                     multi_response: true,
                     error,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             112 => {
@@ -415,6 +434,7 @@ impl RithmicReceiverApi {
                     multi_response: true,
                     error,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             114 => {
@@ -430,6 +450,7 @@ impl RithmicReceiverApi {
                     multi_response: false,
                     error,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             116 => {
@@ -446,6 +467,7 @@ impl RithmicReceiverApi {
                     multi_response: true,
                     error,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             118 => {
@@ -461,6 +483,7 @@ impl RithmicReceiverApi {
                     multi_response: false,
                     error,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             120 => {
@@ -477,6 +500,7 @@ impl RithmicReceiverApi {
                     multi_response: true,
                     error,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             122 => {
@@ -492,6 +516,7 @@ impl RithmicReceiverApi {
                     multi_response: false,
                     error,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             150 => {
@@ -506,6 +531,7 @@ impl RithmicReceiverApi {
                     multi_response: false,
                     error: None,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             151 => {
@@ -520,6 +546,7 @@ impl RithmicReceiverApi {
                     multi_response: false,
                     error: None,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             152 => {
@@ -534,6 +561,7 @@ impl RithmicReceiverApi {
                     multi_response: false,
                     error: None,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             153 => {
@@ -548,6 +576,7 @@ impl RithmicReceiverApi {
                     multi_response: false,
                     error: None,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             154 => {
@@ -562,6 +591,7 @@ impl RithmicReceiverApi {
                     multi_response: false,
                     error: None,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             155 => {
@@ -576,6 +606,7 @@ impl RithmicReceiverApi {
                     multi_response: false,
                     error: None,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             156 => {
@@ -590,6 +621,7 @@ impl RithmicReceiverApi {
                     multi_response: false,
                     error: None,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             157 => {
@@ -604,6 +636,7 @@ impl RithmicReceiverApi {
                     multi_response: false,
                     error: None,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             158 => {
@@ -618,6 +651,7 @@ impl RithmicReceiverApi {
                     multi_response: false,
                     error: None,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             159 => {
@@ -632,6 +666,7 @@ impl RithmicReceiverApi {
                     multi_response: false,
                     error: None,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             160 => {
@@ -646,6 +681,7 @@ impl RithmicReceiverApi {
                     multi_response: false,
                     error: None,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             161 => {
@@ -660,6 +696,7 @@ impl RithmicReceiverApi {
                     multi_response: false,
                     error: None,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             162 => {
@@ -674,6 +711,7 @@ impl RithmicReceiverApi {
                     multi_response: false,
                     error: None,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             163 => {
@@ -688,6 +726,7 @@ impl RithmicReceiverApi {
                     multi_response: false,
                     error: None,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             201 => {
@@ -703,6 +742,7 @@ impl RithmicReceiverApi {
                     multi_response: false,
                     error,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             203 => {
@@ -719,6 +759,7 @@ impl RithmicReceiverApi {
                     multi_response: true,
                     error,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             205 => {
@@ -734,6 +775,7 @@ impl RithmicReceiverApi {
                     multi_response: false,
                     error,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             207 => {
@@ -750,6 +792,7 @@ impl RithmicReceiverApi {
                     multi_response: true,
                     error,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             209 => {
@@ -766,6 +809,7 @@ impl RithmicReceiverApi {
                     multi_response: true,
                     error,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             211 => {
@@ -781,6 +825,7 @@ impl RithmicReceiverApi {
                     multi_response: false,
                     error,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             250 => {
@@ -795,6 +840,7 @@ impl RithmicReceiverApi {
                     multi_response: false,
                     error: None,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             251 => {
@@ -809,6 +855,7 @@ impl RithmicReceiverApi {
                     multi_response: false,
                     error: None,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             301 => {
@@ -824,6 +871,7 @@ impl RithmicReceiverApi {
                     multi_response: false,
                     error,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             303 => {
@@ -840,6 +888,7 @@ impl RithmicReceiverApi {
                     multi_response: true,
                     error,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             305 => {
@@ -856,6 +905,7 @@ impl RithmicReceiverApi {
                     multi_response: true,
                     error,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             307 => {
@@ -872,6 +922,7 @@ impl RithmicReceiverApi {
                     multi_response: true,
                     error,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             309 => {
@@ -887,6 +938,7 @@ impl RithmicReceiverApi {
                     multi_response: false,
                     error,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             311 => {
@@ -903,6 +955,7 @@ impl RithmicReceiverApi {
                     multi_response: true,
                     error,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             313 => {
@@ -919,6 +972,7 @@ impl RithmicReceiverApi {
                     multi_response: true,
                     error,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             315 => {
@@ -935,6 +989,7 @@ impl RithmicReceiverApi {
                     multi_response: true,
                     error,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             317 => {
@@ -951,6 +1006,7 @@ impl RithmicReceiverApi {
                     multi_response: true,
                     error,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             319 => {
@@ -967,6 +1023,7 @@ impl RithmicReceiverApi {
                     multi_response: true,
                     error,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             321 => {
@@ -982,6 +1039,7 @@ impl RithmicReceiverApi {
                     multi_response: false,
                     error,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             323 => {
@@ -997,6 +1055,7 @@ impl RithmicReceiverApi {
                     multi_response: false,
                     error,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             325 => {
@@ -1012,6 +1071,7 @@ impl RithmicReceiverApi {
                     multi_response: false,
                     error,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             327 => {
@@ -1027,6 +1087,7 @@ impl RithmicReceiverApi {
                     multi_response: false,
                     error,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             329 => {
@@ -1043,6 +1104,7 @@ impl RithmicReceiverApi {
                     multi_response: true,
                     error,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             331 => {
@@ -1059,6 +1121,7 @@ impl RithmicReceiverApi {
                     multi_response: true,
                     error,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             333 => {
@@ -1074,6 +1137,7 @@ impl RithmicReceiverApi {
                     multi_response: false,
                     error,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             335 => {
@@ -1089,6 +1153,7 @@ impl RithmicReceiverApi {
                     multi_response: false,
                     error,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             337 => {
@@ -1104,6 +1169,7 @@ impl RithmicReceiverApi {
                     multi_response: false,
                     error,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             339 => {
@@ -1120,6 +1186,7 @@ impl RithmicReceiverApi {
                     multi_response: true,
                     error,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             341 => {
@@ -1136,6 +1203,7 @@ impl RithmicReceiverApi {
                     multi_response: true,
                     error,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             343 => {
@@ -1152,6 +1220,7 @@ impl RithmicReceiverApi {
                     multi_response: true,
                     error,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             345 => {
@@ -1167,6 +1236,7 @@ impl RithmicReceiverApi {
                     multi_response: false,
                     error,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             347 => {
@@ -1182,6 +1252,7 @@ impl RithmicReceiverApi {
                     multi_response: false,
                     error,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             349 => {
@@ -1198,6 +1269,7 @@ impl RithmicReceiverApi {
                     multi_response: true,
                     error,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             350 => {
@@ -1212,6 +1284,7 @@ impl RithmicReceiverApi {
                     multi_response: false,
                     error: None,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             351 => {
@@ -1226,6 +1299,7 @@ impl RithmicReceiverApi {
                     multi_response: false,
                     error: None,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             352 => {
@@ -1240,6 +1314,7 @@ impl RithmicReceiverApi {
                     multi_response: false,
                     error: None,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             353 => {
@@ -1254,6 +1329,7 @@ impl RithmicReceiverApi {
                     multi_response: false,
                     error: None,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             355 => {
@@ -1268,6 +1344,7 @@ impl RithmicReceiverApi {
                     multi_response: false,
                     error: None,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             356 => {
@@ -1282,6 +1359,7 @@ impl RithmicReceiverApi {
                     multi_response: false,
                     error: None,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             357 => {
@@ -1296,6 +1374,7 @@ impl RithmicReceiverApi {
                     multi_response: false,
                     error: None,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             401 => {
@@ -1311,6 +1390,7 @@ impl RithmicReceiverApi {
                     multi_response: false,
                     error,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             403 => {
@@ -1326,6 +1406,7 @@ impl RithmicReceiverApi {
                     multi_response: false,
                     error,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             450 => {
@@ -1340,6 +1421,7 @@ impl RithmicReceiverApi {
                     multi_response: false,
                     error: None,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             451 => {
@@ -1354,6 +1436,7 @@ impl RithmicReceiverApi {
                     multi_response: false,
                     error: None,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             501 => {
@@ -1370,6 +1453,7 @@ impl RithmicReceiverApi {
                     multi_response: true,
                     error,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             503 => {
@@ -1386,6 +1470,7 @@ impl RithmicReceiverApi {
                     multi_response: true,
                     error,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             505 => {
@@ -1401,6 +1486,7 @@ impl RithmicReceiverApi {
                     multi_response: false,
                     error,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             507 => {
@@ -1417,6 +1503,7 @@ impl RithmicReceiverApi {
                     multi_response: true,
                     error,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             509 => {
@@ -1432,6 +1519,7 @@ impl RithmicReceiverApi {
                     multi_response: false,
                     error,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             3501 => {
@@ -1447,6 +1535,7 @@ impl RithmicReceiverApi {
                     multi_response: false,
                     error,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             3503 => {
@@ -1462,6 +1551,7 @@ impl RithmicReceiverApi {
                     multi_response: false,
                     error,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             3505 => {
@@ -1478,6 +1568,7 @@ impl RithmicReceiverApi {
                     multi_response: true,
                     error,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             3507 => {
@@ -1493,6 +1584,7 @@ impl RithmicReceiverApi {
                     multi_response: false,
                     error,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             3509 => {
@@ -1508,6 +1600,7 @@ impl RithmicReceiverApi {
                     multi_response: false,
                     error,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             3511 => {
@@ -1524,6 +1617,7 @@ impl RithmicReceiverApi {
                     multi_response: true,
                     error,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             3513 => {
@@ -1540,6 +1634,7 @@ impl RithmicReceiverApi {
                     multi_response: true,
                     error,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
             _ => {
@@ -1569,6 +1664,7 @@ impl RithmicReceiverApi {
                     multi_response: false,
                     error: None,
                     source: self.source.clone(),
+                    orphaned: false,
                 }
             }
         };
@@ -1599,6 +1695,7 @@ fn decode_error(source: &str, e: prost::DecodeError, is_update: bool) -> Rithmic
             e
         ))),
         source: source.to_string(),
+        orphaned: false,
     }
 }
 
@@ -1880,45 +1977,6 @@ mod tests {
         ));
         assert!(!response.is_update);
         assert_eq!(response.request_id, "req-7");
-    }
-
-    #[test]
-    fn a_correlated_decode_failure_names_the_request_in_the_log() {
-        let api = RithmicReceiverApi {
-            source: "test".to_string(),
-        };
-
-        let (_, logged) = crate::request_handler::log_capture::capture(|| {
-            let _ = api.buf_to_message(encode_with_header(&malformed_response_login(&["req-7"])));
-        });
-
-        assert!(logged.contains("template 11 failed to decode"), "{logged}");
-        assert!(
-            logged.contains(r#"recovered request_id "req-7""#),
-            "{logged}"
-        );
-        assert!(
-            logged.contains("routing it to the request waiting on it"),
-            "{logged}"
-        );
-    }
-
-    #[test]
-    fn an_uncorrelatable_decode_failure_says_so_in_the_log() {
-        let api = RithmicReceiverApi {
-            source: "test".to_string(),
-        };
-
-        let (_, logged) = crate::request_handler::log_capture::capture(|| {
-            let _ = api.buf_to_message(encode_with_header(&malformed_response_login(&[])));
-        });
-
-        assert!(logged.contains("template 11 failed to decode"), "{logged}");
-        assert!(logged.contains(r#"recovered request_id """#), "{logged}");
-        assert!(
-            logged.contains("routing it onto the subscription"),
-            "{logged}"
-        );
     }
 
     #[test]

@@ -1,4 +1,4 @@
-use std::{collections::HashMap, convert::Infallible, time::Duration};
+use std::{collections::HashMap, time::Duration};
 use tracing::{error, warn};
 
 use tokio::{
@@ -16,6 +16,14 @@ use crate::{
 /// Set [`RithmicConfigBuilder::request_timeout`](crate::RithmicConfigBuilder::request_timeout)
 /// to change it for a connection.
 pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Flag a response as having no caller waiting on it any more. Only `orphaned`
+/// changes: `has_more` and `multi_response` are left alone so a consumer can
+/// still see the reply was truncated.
+fn mark_orphaned(mut response: RithmicResponse) -> RithmicResponse {
+    response.orphaned = true;
+    response
+}
 
 #[derive(Debug)]
 pub struct RithmicRequest {
@@ -71,14 +79,12 @@ impl RithmicRequestHandler {
         );
     }
 
-    /// Fail requests as they time out, forever.
+    /// Fail requests as they time out, returning the parts they had accumulated,
+    /// flagged [`RithmicResponse::orphaned`], for the caller to broadcast. The
+    /// responder still gets an error; a timed-out request stays failed.
     ///
-    /// This never resolves — drive it from a `select!` arm. Dropping it loses
-    /// nothing, since the timeouts live in `self`.
-    ///
-    /// Waking on the soonest timeout and then failing everything already timed
-    /// out means each pass removes at least that request, so this cannot stall.
-    pub async fn fail_timed_out(&mut self) -> Infallible {
+    /// Cancel-safe: the timeouts live in `self`, so dropping this loses nothing.
+    pub async fn fail_timed_out(&mut self) -> Vec<RithmicResponse> {
         loop {
             let Some(soonest) = self.handle_map.values().map(|p| p.timeout_at).min() else {
                 std::future::pending::<()>().await;
@@ -94,14 +100,18 @@ impl RithmicRequestHandler {
                 .map(|(request_id, _)| request_id.clone())
                 .collect::<Vec<_>>();
 
+            let mut orphans = Vec::new();
+
             for request_id in &timed_out {
                 warn!(
                     "No response for request_id {} within {:?}: failing it as timed out",
                     request_id, self.request_timeout
                 );
 
-                self.fail_request(request_id, RithmicError::RequestTimeout);
+                orphans.extend(self.fail_request(request_id, RithmicError::RequestTimeout));
             }
+
+            return orphans;
         }
     }
 
@@ -126,21 +136,38 @@ impl RithmicRequestHandler {
 
     /// Remove a pending request and send an error through its oneshot channel.
     ///
-    /// Also removes any partially-accumulated multi-part responses for the same
-    /// request ID so that `response_vec_map` does not retain stale data.
-    ///
-    /// Returns `true` if the request was found and the error was sent.
-    pub fn fail_request(&mut self, request_id: &str, error: RithmicError) -> bool {
-        self.response_vec_map.remove(request_id);
+    /// Returns the parts already accumulated under that id, flagged
+    /// [`RithmicResponse::orphaned`], for the caller to broadcast; dropping them
+    /// would lose the part of a reply that arrived inside the deadline.
+    pub fn fail_request(&mut self, request_id: &str, error: RithmicError) -> Vec<RithmicResponse> {
+        let orphans = self.take_orphaned_parts(request_id);
+
         if let Some(pending) = self.handle_map.remove(request_id) {
             let _ = pending.responder.send(Err(error));
-            true
-        } else {
-            false
         }
+
+        orphans
     }
 
-    pub fn handle_response(&mut self, response: RithmicResponse) {
+    /// Take the parts accumulated under `request_id`, flagged orphaned.
+    fn take_orphaned_parts(&mut self, request_id: &str) -> Vec<RithmicResponse> {
+        let Some(parts) = self.response_vec_map.remove(request_id) else {
+            return Vec::new();
+        };
+
+        warn!(
+            "Flushing {} buffered part(s) for failed request_id {} to the orphan broadcast",
+            parts.len(),
+            request_id
+        );
+
+        parts.into_iter().map(mark_orphaned).collect()
+    }
+
+    /// Deliver a response to the caller waiting on its request id. Returns what
+    /// no longer has a caller — a late reply, or parts a single frame ended
+    /// early — flagged [`RithmicResponse::orphaned`] for the caller to broadcast.
+    pub fn handle_response(&mut self, response: RithmicResponse) -> Vec<RithmicResponse> {
         match response.message {
             RithmicMessage::ResponseHeartbeat(_) => {
                 // Handle heartbeat response if a callback is registered
@@ -150,16 +177,32 @@ impl RithmicRequestHandler {
             }
             _ => {
                 if !response.multi_response {
-                    // Clear any parts already accumulated under this id: a
-                    // decode failure correlated by user_msg can end a
-                    // multi-part response early and lands here.
-                    self.response_vec_map.remove(&response.request_id);
+                    let mut orphans = Vec::new();
+
+                    // A single frame can end a multi-part reply early — a decode
+                    // failure correlated by user_msg, say. The responder below
+                    // gets that frame only, so the parts already in would be lost.
+                    if let Some(discarded) = self.response_vec_map.remove(&response.request_id) {
+                        warn!(
+                            "Routing {} buffered part(s) for request_id {} to the subscription \
+                             broadcast as orphans: a single-frame response (template {:?}) ended \
+                             the multi-part reply early",
+                            discarded.len(),
+                            response.request_id,
+                            response.message.template_id()
+                        );
+
+                        orphans.extend(discarded.into_iter().map(mark_orphaned));
+                    }
 
                     if let Some(pending) = self.handle_map.remove(&response.request_id) {
                         self.send_to_responder(pending.responder, vec![response]);
                     } else {
                         error!("No responder found for response: {:#?}", response);
+                        orphans.push(mark_orphaned(response));
                     }
+
+                    return orphans;
                 } else {
                     // If response has more, we store it in a vector and wait for more messages
                     if response.has_more {
@@ -173,6 +216,13 @@ impl RithmicRequestHandler {
                                 .entry(response.request_id.clone())
                                 .or_default()
                                 .push(response);
+                        } else {
+                            warn!(
+                                "No responder found for part of request_id {}: routing it as orphaned",
+                                response.request_id
+                            );
+
+                            return vec![mark_orphaned(response)];
                         }
                     } else if let Some(pending) = self.handle_map.remove(&response.request_id) {
                         let response_vec = match self.response_vec_map.remove(&response.request_id)
@@ -188,10 +238,14 @@ impl RithmicRequestHandler {
                         self.send_to_responder(pending.responder, response_vec);
                     } else {
                         error!("No responder found for response: {:#?}", response);
+
+                        return vec![mark_orphaned(response)];
                     }
                 }
             }
         }
+
+        Vec::new()
     }
 
     /// Send [`RithmicError::ConnectionClosed`] to all pending request responders, then clear
@@ -199,11 +253,29 @@ impl RithmicRequestHandler {
     ///
     /// Call this during an unclean shutdown (e.g., abort) to unblock any tasks that are
     /// waiting for a response that will never arrive.
-    pub fn drain_and_drop(&mut self) {
+    ///
+    /// Returns any accumulated parts, flagged [`RithmicResponse::orphaned`], for
+    /// the caller to broadcast. Parts keep their arrival order within a request;
+    /// order between requests is arbitrary and means nothing.
+    pub fn drain_and_drop(&mut self) -> Vec<RithmicResponse> {
         for (_, pending) in self.handle_map.drain() {
             let _ = pending.responder.send(Err(RithmicError::ConnectionClosed));
         }
-        self.response_vec_map.clear();
+
+        let mut orphans = Vec::new();
+
+        for (request_id, parts) in self.response_vec_map.drain() {
+            warn!(
+                "Connection drained: flushing {} buffered part(s) for request_id {} to the \
+                 orphan broadcast",
+                parts.len(),
+                request_id
+            );
+
+            orphans.extend(parts.into_iter().map(mark_orphaned));
+        }
+
+        orphans
     }
 }
 
@@ -287,6 +359,7 @@ mod tests {
             multi_response: false,
             error: None,
             source: "test".to_string(),
+            orphaned: false,
         }
     }
 
@@ -424,7 +497,7 @@ mod tests {
     // =========================================================================
 
     #[test]
-    fn fail_request_sends_error_and_returns_true() {
+    fn fail_request_sends_error_to_the_responder() {
         let mut handler = RithmicRequestHandler::new(DEFAULT_REQUEST_TIMEOUT);
         let (tx, mut rx) = oneshot::channel();
 
@@ -433,16 +506,159 @@ mod tests {
             responder: tx,
         });
 
-        assert!(handler.fail_request("fail", RithmicError::SendFailed));
+        assert!(
+            handler
+                .fail_request("fail", RithmicError::SendFailed)
+                .is_empty()
+        );
 
         let result = rx.try_recv().unwrap();
         assert!(result.is_err());
     }
 
     #[test]
-    fn fail_request_returns_false_for_unknown_id() {
+    fn fail_request_for_an_unknown_id_flushes_nothing() {
         let mut handler = RithmicRequestHandler::new(DEFAULT_REQUEST_TIMEOUT);
-        assert!(!handler.fail_request("unknown", RithmicError::SendFailed));
+
+        assert!(
+            handler
+                .fail_request("unknown", RithmicError::SendFailed)
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn fail_request_flushes_accumulated_parts_as_orphans() {
+        // The part that carries the payload of a multi-frame reply — a
+        // bracket's basket id, say — usually arrives before the terminal one.
+        // Failing the request used to destroy it.
+        let mut handler = RithmicRequestHandler::new(DEFAULT_REQUEST_TIMEOUT);
+        let _rx = register(&mut handler, "bracket");
+
+        for _ in 0..2 {
+            handler.handle_response(intermediate_part("bracket"));
+        }
+
+        let flushed = handler.fail_request("bracket", RithmicError::RequestTimeout);
+
+        assert_eq!(flushed.len(), 2, "both parts must survive the failure");
+        assert!(flushed.iter().all(|part| part.orphaned));
+        assert!(
+            flushed
+                .iter()
+                .all(|part| part.has_more && part.multi_response),
+            "flags must be left alone so a consumer can see the reply was truncated"
+        );
+        assert!(handler.response_vec_map.is_empty());
+    }
+
+    #[test]
+    fn fail_request_flushes_nothing_when_no_parts_accumulated() {
+        // The common case. An empty vec means the caller broadcasts nothing,
+        // rather than putting a placeholder on the wire.
+        let mut handler = RithmicRequestHandler::new(DEFAULT_REQUEST_TIMEOUT);
+        let _rx = register(&mut handler, "quiet");
+
+        assert!(
+            handler
+                .fail_request("quiet", RithmicError::RequestTimeout)
+                .is_empty()
+        );
+    }
+
+    // =========================================================================
+    // Orphaned responses
+    // =========================================================================
+
+    #[test]
+    fn a_response_after_fail_request_is_returned_as_orphaned() {
+        let mut handler = RithmicRequestHandler::new(DEFAULT_REQUEST_TIMEOUT);
+        let rx = register(&mut handler, "late");
+
+        handler.fail_request("late", RithmicError::RequestTimeout);
+        drop(rx);
+
+        let orphans = handler.handle_response(make_response("late", login_message()));
+
+        assert_eq!(
+            orphans.len(),
+            1,
+            "a reply for a failed request must be handed back, not dropped"
+        );
+
+        let orphan = &orphans[0];
+
+        assert!(orphan.orphaned);
+        assert_eq!(orphan.request_id, "late");
+    }
+
+    #[test]
+    fn an_intermediate_part_after_fail_request_is_returned_as_orphaned() {
+        // The part carrying the interesting payload of a multi-part reply is
+        // usually not the terminal one, and this arm used to drop it silently.
+        let mut handler = RithmicRequestHandler::new(DEFAULT_REQUEST_TIMEOUT);
+        let rx = register(&mut handler, "stream");
+
+        handler.fail_request("stream", RithmicError::RequestTimeout);
+        drop(rx);
+
+        let mut part = make_response("stream", ref_data_message());
+        part.multi_response = true;
+        part.has_more = true;
+
+        let orphans = handler.handle_response(part);
+
+        assert_eq!(
+            orphans.len(),
+            1,
+            "an intermediate part for a failed request must be handed back"
+        );
+
+        let orphan = &orphans[0];
+
+        assert!(orphan.orphaned);
+        assert!(orphan.has_more);
+        assert!(
+            handler.response_vec_map.is_empty(),
+            "routing the part must not re-create the partial buffer"
+        );
+    }
+
+    #[test]
+    fn a_terminal_part_after_fail_request_is_returned_as_orphaned() {
+        let mut handler = RithmicRequestHandler::new(DEFAULT_REQUEST_TIMEOUT);
+        let rx = register(&mut handler, "stream");
+
+        handler.fail_request("stream", RithmicError::RequestTimeout);
+        drop(rx);
+
+        let mut terminal = make_response("stream", ref_data_message());
+        terminal.multi_response = true;
+        terminal.has_more = false;
+
+        let orphans = handler.handle_response(terminal);
+
+        assert_eq!(
+            orphans.len(),
+            1,
+            "a terminal part for a failed request must be handed back"
+        );
+        assert!(orphans[0].orphaned);
+    }
+
+    #[test]
+    fn a_delivered_response_is_not_orphaned() {
+        let mut handler = RithmicRequestHandler::new(DEFAULT_REQUEST_TIMEOUT);
+        let mut rx = register(&mut handler, "ok");
+
+        assert!(
+            handler
+                .handle_response(make_response("ok", login_message()))
+                .is_empty()
+        );
+
+        let delivered = rx.try_recv().unwrap().unwrap();
+        assert!(!delivered[0].orphaned);
     }
 
     // =========================================================================
@@ -516,6 +732,39 @@ mod tests {
         );
     }
 
+    #[test]
+    fn drain_and_drop_flushes_accumulated_parts_as_orphans() {
+        // A disconnect destroys partial replies the same way a timeout does,
+        // and is the more common way to hit it.
+        let mut handler = RithmicRequestHandler::new(DEFAULT_REQUEST_TIMEOUT);
+        let _rx = register(&mut handler, "bracket");
+
+        handler.handle_response(intermediate_part_named("bracket", "first"));
+        handler.handle_response(intermediate_part_named("bracket", "second"));
+
+        let flushed = handler.drain_and_drop();
+
+        assert_eq!(
+            flushed.iter().map(symbol_of).collect::<Vec<_>>(),
+            ["first", "second"],
+            "arrival order within a request is preserved"
+        );
+        assert!(
+            flushed
+                .iter()
+                .all(|part| part.orphaned && part.has_more && part.multi_response)
+        );
+        assert!(handler.response_vec_map.is_empty());
+    }
+
+    #[test]
+    fn drain_and_drop_flushes_nothing_when_no_parts_accumulated() {
+        let mut handler = RithmicRequestHandler::new(DEFAULT_REQUEST_TIMEOUT);
+        let _rx = register(&mut handler, "quiet");
+
+        assert!(handler.drain_and_drop().is_empty());
+    }
+
     // =========================================================================
     // fail_timed_out
     // =========================================================================
@@ -538,18 +787,46 @@ mod tests {
         rx
     }
 
-    /// Run the timeout loop until `rx` resolves. Time is paused, so the elapsed
-    /// figure is exactly what a caller would have waited.
+    /// A non-terminal frame of a multi-part reply.
+    fn intermediate_part(id: &str) -> RithmicResponse {
+        let mut part = make_response(id, ref_data_message());
+        part.multi_response = true;
+        part.has_more = true;
+        part
+    }
+
+    /// An intermediate part tagged with `symbol`, so a test can tell frames of
+    /// the same request apart by arrival order.
+    fn intermediate_part_named(id: &str, symbol: &str) -> RithmicResponse {
+        let mut part = intermediate_part(id);
+
+        part.message = RithmicMessage::ResponseReferenceData(ResponseReferenceData {
+            symbol: Some(symbol.to_string()),
+            ..Default::default()
+        });
+
+        part
+    }
+
+    fn symbol_of(response: &RithmicResponse) -> String {
+        match &response.message {
+            RithmicMessage::ResponseReferenceData(data) => data.symbol.clone().unwrap_or_default(),
+            other => panic!("expected reference data, got {other:?}"),
+        }
+    }
+
+    /// Run the timeout loop until it fires, then read the error it sent `rx`.
+    /// Time is paused, so the elapsed figure is exact. Flushed parts are
+    /// discarded; tests that care about them call `fail_timed_out` directly.
     async fn time_out_until(
         handler: &mut RithmicRequestHandler,
-        rx: oneshot::Receiver<Result<Vec<RithmicResponse>, RithmicError>>,
+        mut rx: oneshot::Receiver<Result<Vec<RithmicResponse>, RithmicError>>,
     ) -> (RithmicError, Duration) {
         let started = Instant::now();
 
-        let err = tokio::select! {
-            _ = handler.fail_timed_out() => unreachable!(),
-            received = rx => received.unwrap().unwrap_err(),
-        };
+        handler.fail_timed_out().await;
+
+        let err = rx.try_recv().unwrap().unwrap_err();
 
         (err, Instant::now() - started)
     }
@@ -661,7 +938,11 @@ mod tests {
         time_out_until(&mut handler, rx).await;
 
         assert!(handler.handle_map.is_empty());
-        assert!(!handler.fail_request("late", RithmicError::SendFailed));
+        assert!(
+            handler
+                .fail_request("late", RithmicError::SendFailed)
+                .is_empty()
+        );
     }
 
     #[tokio::test(start_paused = true)]
@@ -723,6 +1004,59 @@ mod tests {
         handler.handle_response(probe);
 
         assert_eq!(rx2.try_recv().unwrap().unwrap().len(), 1);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_timeout_flushes_accumulated_parts_as_orphans() {
+        let mut handler = timeout_handler();
+        let _rx = register(&mut handler, "bracket");
+
+        handler.handle_response(intermediate_part("bracket"));
+        handler.handle_response(intermediate_part("bracket"));
+
+        let flushed = handler.fail_timed_out().await;
+
+        assert_eq!(flushed.len(), 2, "both parts must survive the timeout");
+        assert!(
+            flushed
+                .iter()
+                .all(|part| part.orphaned && part.has_more && part.multi_response)
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_timeout_with_no_accumulated_parts_flushes_nothing() {
+        // The common case: an empty vec means the caller broadcasts nothing,
+        // rather than putting a placeholder on the wire.
+        let mut handler = timeout_handler();
+        let _rx = register(&mut handler, "quiet");
+
+        assert!(handler.fail_timed_out().await.is_empty());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn flushed_parts_come_before_the_late_terminal_part() {
+        // The incident shape: the parts carrying the payload land inside the
+        // deadline and the terminal frame lands after it. A consumer must see
+        // all of them, in arrival order, flagged orphaned.
+        let mut handler = timeout_handler();
+        let _rx = register(&mut handler, "bracket");
+
+        handler.handle_response(intermediate_part_named("bracket", "first"));
+        handler.handle_response(intermediate_part_named("bracket", "second"));
+
+        let mut broadcast = handler.fail_timed_out().await;
+
+        let mut terminal = intermediate_part_named("bracket", "terminal");
+        terminal.has_more = false;
+
+        broadcast.extend(handler.handle_response(terminal));
+
+        assert_eq!(
+            broadcast.iter().map(symbol_of).collect::<Vec<_>>(),
+            ["first", "second", "terminal"]
+        );
+        assert!(broadcast.iter().all(|part| part.orphaned));
     }
 
     #[tokio::test(start_paused = true)]
@@ -841,7 +1175,14 @@ mod tests {
 
         let mut failure = make_response("m", RithmicMessage::Unknown);
         failure.error = Some(crate::error::RithmicError::ProtocolError("bad".to_string()));
-        handler.handle_response(failure);
+        let orphans = handler.handle_response(failure);
+
+        assert_eq!(
+            orphans.len(),
+            1,
+            "the buffered part must come back for the orphan broadcast, not be destroyed"
+        );
+        assert!(orphans[0].orphaned);
 
         let result = rx.try_recv().unwrap().unwrap();
         assert_eq!(result.len(), 1, "only the terminating frame is delivered");
@@ -864,5 +1205,156 @@ mod tests {
             result[0].message,
             RithmicMessage::ResponseLogin(_)
         ));
+    }
+
+    #[test]
+    fn a_single_frame_orphans_the_buffered_parts_and_still_answers_the_caller() {
+        // The responder is owed exactly the frame that ended the reply. The
+        // parts that arrived before it have nowhere else to go, so they come
+        // back for the subscription broadcast instead of being destroyed.
+        let mut handler = RithmicRequestHandler::new(DEFAULT_REQUEST_TIMEOUT);
+        let mut rx = register(&mut handler, "bracket");
+
+        handler.handle_response(intermediate_part_named("bracket", "first"));
+        handler.handle_response(intermediate_part_named("bracket", "second"));
+
+        let orphans = handler.handle_response(make_response("bracket", login_message()));
+
+        let delivered = rx.try_recv().unwrap().unwrap();
+        assert_eq!(
+            delivered.len(),
+            1,
+            "the responder gets the single frame only"
+        );
+        assert!(matches!(
+            delivered[0].message,
+            RithmicMessage::ResponseLogin(_)
+        ));
+        assert!(!delivered[0].orphaned);
+
+        assert_eq!(
+            orphans.iter().map(symbol_of).collect::<Vec<_>>(),
+            ["first", "second"],
+            "both buffered parts come back, in arrival order"
+        );
+        assert!(orphans.iter().all(|part| part.orphaned));
+        assert!(handler.response_vec_map.is_empty());
+    }
+
+    #[test]
+    fn a_single_frame_with_no_responder_orphans_the_parts_before_the_frame() {
+        // No production path leaves parts buffered with no responder today, so
+        // the state is built by hand. What is pinned is the order: a consumer
+        // must see the parts before the frame that ended them.
+        let mut handler = RithmicRequestHandler::new(DEFAULT_REQUEST_TIMEOUT);
+        let _rx = register(&mut handler, "bracket");
+
+        handler.handle_response(intermediate_part_named("bracket", "first"));
+        handler.handle_response(intermediate_part_named("bracket", "second"));
+
+        handler
+            .handle_map
+            .remove("bracket")
+            .expect("the request was registered");
+
+        // Single-frame: the arm under test is the one that ends a multi-part
+        // reply early.
+        let mut frame = intermediate_part_named("bracket", "frame");
+        frame.multi_response = false;
+        frame.has_more = false;
+
+        let orphans = handler.handle_response(frame);
+
+        assert_eq!(
+            orphans.iter().map(symbol_of).collect::<Vec<_>>(),
+            ["first", "second", "frame"]
+        );
+        assert!(orphans.iter().all(|part| part.orphaned));
+        assert!(handler.response_vec_map.is_empty());
+    }
+
+    // =========================================================================
+    // Diagnostics
+    //
+    // A request that buffered parts and then failed must not read in the logs
+    // like one that was never answered. Every assertion runs under an
+    // INFO-capped subscriber, so a debug-only line fails the test.
+    // =========================================================================
+
+    fn part_with_template(id: &str, template_id: i32) -> RithmicResponse {
+        let mut part = intermediate_part(id);
+
+        part.message = RithmicMessage::ResponseReferenceData(ResponseReferenceData {
+            template_id,
+            ..Default::default()
+        });
+
+        part
+    }
+
+    #[test]
+    fn flushing_at_fail_time_is_logged_with_the_request_id() {
+        let (flushed, logged) = log_capture::capture(|| {
+            let mut handler = RithmicRequestHandler::new(DEFAULT_REQUEST_TIMEOUT);
+            let _rx = register(&mut handler, "1243");
+
+            handler.handle_response(part_with_template("1243", 15));
+
+            handler.fail_request("1243", RithmicError::RequestTimeout)
+        });
+
+        assert_eq!(flushed.len(), 1);
+        assert!(
+            logged.contains("Flushing 1 buffered part(s) for failed request_id 1243"),
+            "{logged}"
+        );
+    }
+
+    #[test]
+    fn drain_and_drop_logs_the_flush_for_each_request() {
+        let (flushed, logged) = log_capture::capture(|| {
+            let mut handler = RithmicRequestHandler::new(DEFAULT_REQUEST_TIMEOUT);
+            let _a = register(&mut handler, "1243");
+            let _b = register(&mut handler, "1244");
+
+            handler.handle_response(part_with_template("1243", 15));
+            handler.handle_response(part_with_template("1244", 15));
+
+            handler.drain_and_drop()
+        });
+
+        assert_eq!(flushed.len(), 2);
+
+        for request_id in ["1243", "1244"] {
+            assert!(
+                logged.contains(&format!(
+                    "flushing 1 buffered part(s) for request_id {request_id}"
+                )),
+                "every drained request must be named: {logged}"
+            );
+        }
+    }
+
+    #[test]
+    fn routing_parts_on_a_single_frame_response_is_logged() {
+        // A rejection landing mid-stream ends the reply early. The parts that
+        // did arrive are routed to the orphan broadcast; left silent, that
+        // reads exactly like an ack that never came.
+        let (orphans, logged) = log_capture::capture(|| {
+            let mut handler = RithmicRequestHandler::new(DEFAULT_REQUEST_TIMEOUT);
+            let _rx = register(&mut handler, "1243");
+
+            handler.handle_response(part_with_template("1243", 15));
+            handler.handle_response(make_response("1243", login_message()))
+        });
+
+        assert_eq!(orphans.len(), 1);
+        assert!(
+            logged.contains(
+                "Routing 1 buffered part(s) for request_id 1243 to the subscription broadcast \
+                 as orphans"
+            ),
+            "{logged}"
+        );
     }
 }

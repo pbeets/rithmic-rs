@@ -34,6 +34,27 @@ use crate::{
     },
 };
 
+/// Put response parts that no longer have a caller waiting on them on the
+/// subscription broadcast. Best effort: with no subscribers there is nowhere
+/// to route them, which during a disconnect is expected, not an error.
+fn send_orphans(
+    sender: &broadcast::Sender<RithmicResponse>,
+    source: &str,
+    orphans: Vec<RithmicResponse>,
+) {
+    for orphan in orphans {
+        let request_id = orphan.request_id.clone();
+        let template_id = orphan.message.template_id();
+
+        if sender.send(orphan).is_err() {
+            warn!(
+                "{source}: orphaned part for request_id {request_id} (template {template_id:?}) \
+                 had no subscriber to route it to"
+            );
+        }
+    }
+}
+
 pub(crate) type WsStream = WebSocketStream<MaybeTlsStream<TcpStream>>;
 pub(crate) type WsSink = SplitSink<WsStream, Message>;
 pub(crate) type WsReader = SplitStream<WsStream>;
@@ -136,14 +157,26 @@ where
             multi_response: false,
             error: Some(error),
             source: self.rithmic_receiver_api.source.clone(),
+            orphaned: false,
         };
 
         let _ = self.subscription_sender.send(error_response);
     }
 
+    /// See [`send_orphans`].
+    pub(crate) fn broadcast_orphans(&self, orphans: Vec<RithmicResponse>) {
+        send_orphans(
+            &self.subscription_sender,
+            &self.rithmic_receiver_api.source,
+            orphans,
+        );
+    }
+
     pub(crate) fn fail_connection_and_drain(&mut self, request_id: &str, error: RithmicError) {
         self.emit_connection_health_event(request_id, error);
-        self.request_handler.drain_and_drop();
+
+        let orphans = self.request_handler.drain_and_drop();
+        self.broadcast_orphans(orphans);
     }
 
     pub(crate) async fn send_or_fail(&mut self, msg: Message, request_id: &str) {
@@ -164,8 +197,10 @@ where
                 // promptly through the reader (e.g. Error::ConnectionClosed),
                 // which drains remaining requests and emits the connection-health
                 // event from a path that can stop the actor loop.
-                self.request_handler
+                let orphans = self
+                    .request_handler
                     .fail_request(request_id, RithmicError::SendFailed);
+                self.broadcast_orphans(orphans);
             }
             Err(WebSocketSendError::Timeout) => {
                 error!(
@@ -195,22 +230,32 @@ where
         &mut self,
         receiver: &mut mpsc::Receiver<C>,
     ) -> SelectResult<C> {
-        let interval = &mut self.interval;
-        let ping_interval = &mut self.ping_interval;
-        let ping_manager = &mut self.ping_manager;
-        let reader = &mut self.rithmic_reader;
-        let request_handler = &mut self.request_handler;
+        loop {
+            let interval = &mut self.interval;
+            let ping_interval = &mut self.ping_interval;
+            let ping_manager = &mut self.ping_manager;
+            let reader = &mut self.rithmic_reader;
+            let request_handler = &mut self.request_handler;
+            let subscription_sender = &self.subscription_sender;
+            let source = &self.rithmic_receiver_api.source;
 
-        tokio::select! {
-            _ = interval.tick()      => SelectResult::HeartbeatFired,
-            _ = ping_interval.tick() => SelectResult::PingFired,
-            _ = ping_manager.timed_out() => SelectResult::PingTimeout,
-            _ = request_handler.fail_timed_out() => unreachable!(),
-            Some(cmd) = receiver.recv() => SelectResult::Command(cmd),
-            msg = reader.next() => match msg {
-                Some(m) => SelectResult::RithmicMessage(m),
-                None => SelectResult::StreamClosed,
-            },
+            return tokio::select! {
+                _ = interval.tick()      => SelectResult::HeartbeatFired,
+                _ = ping_interval.tick() => SelectResult::PingFired,
+                _ = ping_manager.timed_out() => SelectResult::PingTimeout,
+                orphans = request_handler.fail_timed_out() => {
+                    // A timed-out request takes any parts it accumulated with it,
+                    // onto the broadcast rather than destroyed. Not worth its own
+                    // SelectResult variant, and every other arm is cancel-safe.
+                    send_orphans(subscription_sender, source, orphans);
+                    continue;
+                }
+                Some(cmd) = receiver.recv() => SelectResult::Command(cmd),
+                msg = reader.next() => match msg {
+                    Some(m) => SelectResult::RithmicMessage(m),
+                    None => SelectResult::StreamClosed,
+                },
+            };
         }
     }
 
@@ -333,9 +378,11 @@ where
 
     /// Send a response where it belongs: updates go out on the subscription
     /// broadcast, replies go to the per-request responder. Responses that
-    /// failed to decode take the same paths. Heartbeats are the one special
-    /// case: a failed heartbeat is also broadcast as `HeartbeatTimeout`, while
-    /// the original frame still resolves any request waiting on it.
+    /// failed to decode take the same paths. A reply whose request is no longer
+    /// waiting goes out on the subscription broadcast too, flagged orphaned.
+    /// Heartbeats are the one special case: a failed heartbeat is also
+    /// broadcast as `HeartbeatTimeout`, while the original frame still resolves
+    /// any request waiting on it.
     fn forward_response(&mut self, response: RithmicResponse) {
         // A failed heartbeat is broadcast as a synthetic HeartbeatTimeout, but
         // handle_response must get the original ResponseHeartbeat, not the
@@ -351,11 +398,14 @@ where
                     multi_response: false,
                     error: response.error.clone(),
                     source: self.rithmic_receiver_api.source.clone(),
+                    orphaned: false,
                 };
 
                 let _ = self.subscription_sender.send(synthetic);
             }
 
+            // An unmatched heartbeat reply is not routed onward; its return
+            // value is always empty.
             self.request_handler.handle_response(response);
 
             return;
@@ -363,6 +413,12 @@ where
 
         // An unsolicited reject echoes no request id, so nothing is waiting on it.
         if response.request_id.is_empty() && matches!(response.message, RithmicMessage::Reject(_)) {
+            warn!(
+                "{}: dropping a Reject that echoes no request id (template {:?})",
+                self.rithmic_receiver_api.source,
+                response.message.template_id()
+            );
+
             return;
         }
 
@@ -374,7 +430,11 @@ where
                 );
             }
         } else {
-            self.request_handler.handle_response(response);
+            // Nothing is waiting on what comes back — a late reply, or the
+            // parts a single frame ended early. It goes on the subscription
+            // broadcast tagged orphaned instead of being dropped here.
+            let orphans = self.request_handler.handle_response(response);
+            self.broadcast_orphans(orphans);
         }
     }
 
@@ -390,7 +450,8 @@ where
                 );
 
                 if self.close_requested {
-                    self.request_handler.drain_and_drop();
+                    let orphans = self.request_handler.drain_and_drop();
+                    self.broadcast_orphans(orphans);
                 } else {
                     self.fail_connection_and_drain("", RithmicError::ConnectionClosed);
                 }
@@ -515,7 +576,8 @@ where
             self.rithmic_receiver_api.source
         );
         // Drain first: the loop is about to stop, so nothing else will resolve these.
-        self.request_handler.drain_and_drop();
+        let orphans = self.request_handler.drain_and_drop();
+        self.broadcast_orphans(orphans);
         self.emit_connection_health_event("", RithmicError::ConnectionClosed);
         self.close_requested = true;
 
@@ -543,7 +605,9 @@ where
                 "{}: ping timed out while waiting for server close echo — terminating",
                 self.rithmic_receiver_api.source
             );
-            self.request_handler.drain_and_drop();
+
+            let orphans = self.request_handler.drain_and_drop();
+            self.broadcast_orphans(orphans);
         } else {
             self.fail_connection_and_drain(
                 "websocket_ping_timeout",
@@ -585,7 +649,8 @@ where
         self.close_requested = true;
         // Drain pending requests immediately so callers are not left waiting for
         // a server close-echo that may never arrive (e.g. on network drop).
-        self.request_handler.drain_and_drop();
+        let orphans = self.request_handler.drain_and_drop();
+        self.broadcast_orphans(orphans);
         self.send_close_best_effort().await;
     }
 
@@ -908,6 +973,194 @@ mod tests {
         assert!(matches!(
             broadcast_msg.message,
             RithmicMessage::ConnectionError
+        ));
+    }
+
+    /// An accumulated, non-terminal part of a multi-frame reply to `request_id`.
+    fn accumulate_bracket_part(core: &mut PlantCore<MockMessageSink>, request_id: &str) {
+        let mut part = bracket_reply(request_id, "basket-9");
+        part.multi_response = true;
+        part.has_more = true;
+
+        core.forward_response(part);
+    }
+
+    fn assert_is_stranded_bracket_part(response: &RithmicResponse) {
+        assert!(response.orphaned);
+        assert!(
+            response.has_more && response.multi_response,
+            "flags must be left alone so a consumer can see the reply was truncated"
+        );
+        assert!(matches!(
+            &response.message,
+            RithmicMessage::ResponseBracketOrder(m) if m.basket_id.as_deref() == Some("basket-9")
+        ));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_timed_out_request_broadcasts_its_accumulated_parts() {
+        // No plant reacts to a timeout, so next_event keeps waiting rather than
+        // surfacing one — but the parts it was holding must still get out.
+        let (reader, _socket) = make_open_ws_reader().await;
+        let (mut core, mut sub_rx) = make_test_core(MockMessageSink::ready(), reader);
+        let _rx = register_request(&mut core, "req-1");
+
+        accumulate_bracket_part(&mut core, "req-1");
+
+        let (_cmd_tx, mut cmd_rx) = mpsc::channel::<()>(1);
+
+        // The request times out at 30s; the heartbeat and ping are 60s away, so
+        // nothing else can win this race.
+        tokio::select! {
+            _ = core.next_event(&mut cmd_rx) => panic!("a timeout must not surface as an event"),
+            _ = tokio::time::sleep(Duration::from_secs(45)) => {}
+        }
+
+        assert_is_stranded_bracket_part(&sub_rx.try_recv().unwrap());
+    }
+
+    #[tokio::test]
+    async fn a_reject_with_no_request_id_is_logged_rather_than_dropped_silently() {
+        // A reject that echoes no request id leaves the request it belongs to
+        // to time out. Dropped silently, that is indistinguishable in the logs
+        // from an ack that never came.
+        use crate::rti::Reject;
+
+        let reader = make_dormant_ws_reader().await;
+        let (mut core, mut sub_rx) = make_test_core(MockMessageSink::ready(), reader);
+
+        let (_, logged) = crate::request_handler::log_capture::capture(|| {
+            core.forward_response(RithmicResponse {
+                request_id: String::new(),
+                message: RithmicMessage::Reject(Reject {
+                    template_id: 75,
+                    ..Default::default()
+                }),
+                is_update: false,
+                has_more: false,
+                multi_response: false,
+                error: None,
+                source: "test".to_string(),
+                orphaned: false,
+            });
+        });
+
+        assert!(
+            logged.contains("dropping a Reject that echoes no request id (template Some(75))"),
+            "{logged}"
+        );
+        assert!(
+            sub_rx.try_recv().is_err(),
+            "still not broadcast — nothing can correlate it"
+        );
+    }
+
+    fn bracket_reply(request_id: &str, basket_id: &str) -> RithmicResponse {
+        use crate::rti::ResponseBracketOrder;
+
+        RithmicResponse {
+            request_id: request_id.to_string(),
+            message: RithmicMessage::ResponseBracketOrder(ResponseBracketOrder {
+                basket_id: Some(basket_id.to_string()),
+                ..Default::default()
+            }),
+            is_update: false,
+            has_more: false,
+            multi_response: false,
+            error: None,
+            source: "test".to_string(),
+            orphaned: false,
+        }
+    }
+
+    #[tokio::test]
+    async fn a_single_frame_that_ends_a_reply_early_broadcasts_the_buffered_parts() {
+        // A rejection or decode failure correlated to the same request ends a
+        // multi-part reply. The parts that arrived before it used to be dropped
+        // here, taking the basket id with them.
+        let reader = make_dormant_ws_reader().await;
+        let (mut core, mut sub_rx) = make_test_core(MockMessageSink::ready(), reader);
+        let mut rx = register_request(&mut core, "req-1");
+
+        accumulate_bracket_part(&mut core, "req-1");
+
+        // Single-frame: multi_response stays false, so this is the arm that
+        // terminates the buffered reply.
+        core.forward_response(bracket_reply("req-1", "basket-final"));
+
+        assert_is_stranded_bracket_part(&sub_rx.try_recv().unwrap());
+        assert!(
+            sub_rx.try_recv().is_err(),
+            "the frame the caller is waiting on must not also be broadcast"
+        );
+
+        let delivered = rx
+            .try_recv()
+            .expect("the caller must still be answered")
+            .unwrap();
+
+        assert_eq!(delivered.len(), 1, "the caller gets the single frame only");
+        assert!(!delivered[0].orphaned);
+    }
+
+    #[tokio::test]
+    async fn an_intermediate_frame_after_a_failed_request_reaches_subscribers_as_orphaned() {
+        // The frame carrying a bracket's basket id is an intermediate one, and
+        // that arm dropped it without a log once the request had been failed.
+        let reader = make_dormant_ws_reader().await;
+        let (mut core, mut sub_rx) = make_test_core(MockMessageSink::ready(), reader);
+        let rx = register_request(&mut core, "req-1");
+
+        core.request_handler
+            .fail_request("req-1", RithmicError::RequestTimeout);
+        drop(rx);
+
+        let mut late = bracket_reply("req-1", "basket-9");
+        late.multi_response = true;
+        late.has_more = true;
+        core.forward_response(late);
+
+        let broadcast_msg = sub_rx.try_recv().unwrap();
+
+        assert!(broadcast_msg.orphaned);
+        assert_eq!(broadcast_msg.request_id, "req-1");
+        assert!(matches!(
+            &broadcast_msg.message,
+            RithmicMessage::ResponseBracketOrder(m) if m.basket_id.as_deref() == Some("basket-9")
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_final_frame_after_a_failed_request_reaches_subscribers_as_orphaned() {
+        let reader = make_dormant_ws_reader().await;
+        let (mut core, mut sub_rx) = make_test_core(MockMessageSink::ready(), reader);
+        let rx = register_request(&mut core, "req-1");
+
+        core.request_handler
+            .fail_request("req-1", RithmicError::RequestTimeout);
+        drop(rx);
+
+        core.forward_response(bracket_reply("req-1", "basket-9"));
+
+        let broadcast_msg = sub_rx.try_recv().unwrap();
+
+        assert!(broadcast_msg.orphaned);
+        assert_eq!(broadcast_msg.request_id, "req-1");
+    }
+
+    #[tokio::test]
+    async fn a_delivered_reply_is_not_broadcast_as_orphaned() {
+        let reader = make_dormant_ws_reader().await;
+        let (mut core, mut sub_rx) = make_test_core(MockMessageSink::ready(), reader);
+        let mut rx = register_request(&mut core, "req-1");
+
+        core.forward_response(bracket_reply("req-1", "basket-9"));
+
+        let delivered = rx.try_recv().unwrap().unwrap();
+        assert!(!delivered[0].orphaned);
+        assert!(matches!(
+            sub_rx.try_recv(),
+            Err(broadcast::error::TryRecvError::Empty)
         ));
     }
 
@@ -1835,6 +2088,57 @@ mod tests {
         assert!(matches!(result[0].message, RithmicMessage::Unknown));
         assert!(matches!(
             &result[0].error,
+            Some(RithmicError::ProtocolError(_))
+        ));
+    }
+
+    /// A frame whose envelope decodes but names no message type. Nothing on it
+    /// identifies a request, so nothing can be waiting on it.
+    #[derive(Clone, PartialEq, ::prost::Message)]
+    struct UntypedFrame {
+        #[prost(int32, required, tag = "154467")]
+        template_id: i32,
+    }
+
+    fn frame_with_no_template_id() -> Message {
+        use prost::Message as _;
+
+        let mut payload = Vec::new();
+
+        UntypedFrame { template_id: 0 }
+            .encode(&mut payload)
+            .unwrap();
+
+        let mut framed = (payload.len() as u32).to_be_bytes().to_vec();
+
+        framed.extend(payload);
+
+        Message::Binary(framed.into())
+    }
+
+    #[tokio::test]
+    async fn a_frame_with_no_template_id_reaches_the_subscription_channel() {
+        // Built as a reply, not an update, so it goes through the request
+        // handler and comes back flagged orphaned. Otherwise it stops at the
+        // no-responder branch and the ProtocolError never reaches the caller.
+        let reader = make_dormant_ws_reader().await;
+        let (mut core, mut sub_rx) = make_test_core(MockMessageSink::ready(), reader);
+
+        let stop = core
+            .handle_rithmic_message(Ok(frame_with_no_template_id()))
+            .await;
+
+        assert!(!stop, "a frame with no template_id must not stop the actor");
+
+        let broadcast_msg = sub_rx
+            .try_recv()
+            .expect("an uncorrelatable frame must reach the subscription channel");
+
+        assert!(broadcast_msg.orphaned);
+        assert!(matches!(broadcast_msg.message, RithmicMessage::Unknown));
+        assert_eq!(broadcast_msg.request_id, "");
+        assert!(matches!(
+            &broadcast_msg.error,
             Some(RithmicError::ProtocolError(_))
         ));
     }

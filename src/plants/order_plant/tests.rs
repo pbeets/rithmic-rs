@@ -313,6 +313,7 @@ fn login_response() -> RithmicResponse {
         multi_response: false,
         error: None,
         source: "order_plant".to_string(),
+        orphaned: false,
     }
 }
 
@@ -356,6 +357,7 @@ fn login_info_response(error: Option<RithmicError>) -> RithmicResponse {
         multi_response: false,
         error,
         source: "order_plant".to_string(),
+        orphaned: false,
     }
 }
 
@@ -415,6 +417,7 @@ fn trade_route_response(exchange: &str, trade_route: &str) -> RithmicResponse {
         multi_response: true,
         error: None,
         source: "order_plant".to_string(),
+        orphaned: false,
     }
 }
 
