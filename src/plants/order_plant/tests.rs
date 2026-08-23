@@ -16,9 +16,21 @@ use crate::{
 };
 
 fn test_handle() -> (RithmicOrderPlantHandle, mpsc::Receiver<OrderPlantCommand>) {
+    let (handle, command_receiver, _) = subscribed_test_handle();
+
+    (handle, command_receiver)
+}
+
+/// A handle whose subscription broadcast is kept alive, so a test can push
+/// updates onto it the way the plant actor would.
+fn subscribed_test_handle() -> (
+    RithmicOrderPlantHandle,
+    mpsc::Receiver<OrderPlantCommand>,
+    broadcast::Sender<RithmicResponse>,
+) {
     let account = test_account();
     let (sender, command_receiver) = mpsc::channel(4);
-    let (_, subscription_receiver) = broadcast::channel(4);
+    let (subscription_sender, subscription_receiver) = broadcast::channel(SUBSCRIPTION_CAPACITY);
 
     let handle = RithmicOrderPlantHandle {
         account: account.clone(),
@@ -27,7 +39,7 @@ fn test_handle() -> (RithmicOrderPlantHandle, mpsc::Receiver<OrderPlantCommand>)
         subscription_receiver: SubscriptionFilter::new(account, subscription_receiver),
     };
 
-    (handle, command_receiver)
+    (handle, command_receiver, subscription_sender)
 }
 
 fn adjustment(id: &str, ticks: i32, level: Option<i32>) -> RithmicBracketLevelAdjustment {
@@ -1310,4 +1322,278 @@ async fn exit_position_encodes_auto_placement_by_default() {
         request.manual_or_auto,
         Some(crate::rti::request_exit_position::OrderPlacement::Auto as i32)
     );
+}
+
+// =========================================================================
+// open_orders
+// =========================================================================
+
+/// Small enough that a test can overflow it on purpose.
+const SUBSCRIPTION_CAPACITY: usize = 4;
+
+fn order_notification(basket_id: &str, account_id: &str) -> RithmicResponse {
+    subscription_update(RithmicMessage::RithmicOrderNotification(
+        RithmicOrderNotification {
+            template_id: 351,
+            account_id: Some(account_id.to_string()),
+            basket_id: Some(basket_id.to_string()),
+            ..RithmicOrderNotification::default()
+        },
+    ))
+}
+
+fn exchange_notification(basket_id: &str, account_id: &str) -> RithmicResponse {
+    subscription_update(RithmicMessage::ExchangeOrderNotification(
+        ExchangeOrderNotification {
+            template_id: 352,
+            account_id: Some(account_id.to_string()),
+            basket_id: Some(basket_id.to_string()),
+            ..ExchangeOrderNotification::default()
+        },
+    ))
+}
+
+fn subscription_update(message: RithmicMessage) -> RithmicResponse {
+    RithmicResponse {
+        request_id: String::new(),
+        message,
+        is_update: true,
+        has_more: false,
+        multi_response: false,
+        error: None,
+        source: "order_plant".to_string(),
+    }
+}
+
+/// The shape a notification that would not decode arrives in: no message to
+/// read, the decode failure in `error`, still flagged as an update.
+fn undecodable_update() -> RithmicResponse {
+    RithmicResponse {
+        error: Some(RithmicError::ProtocolError("decode failed".to_string())),
+        ..subscription_update(RithmicMessage::Unknown)
+    }
+}
+
+fn show_orders_ack(error: Option<RithmicError>) -> RithmicResponse {
+    RithmicResponse {
+        request_id: "1".to_string(),
+        message: RithmicMessage::ResponseShowOrders(crate::rti::ResponseShowOrders {
+            template_id: 321,
+            rp_code: vec!["0".to_string()],
+            ..crate::rti::ResponseShowOrders::default()
+        }),
+        is_update: false,
+        has_more: false,
+        multi_response: false,
+        error,
+        source: "order_plant".to_string(),
+    }
+}
+
+/// Takes the `ShowOrders` the call under test sent and hands back its responder,
+/// so the test can replay orders before ending the snapshot.
+async fn take_show_orders(command_receiver: &mut mpsc::Receiver<OrderPlantCommand>) -> Responder {
+    match next_command(command_receiver).await {
+        OrderPlantCommand::ShowOrders {
+            response_sender, ..
+        } => response_sender,
+        _ => panic!("open_orders must send ShowOrders"),
+    }
+}
+
+fn basket_ids(orders: &[RithmicOrderNotification]) -> Vec<&str> {
+    orders
+        .iter()
+        .map(|order| order.basket_id.as_deref().unwrap_or_default())
+        .collect()
+}
+
+fn exchange_basket_ids(orders: &[ExchangeOrderNotification]) -> Vec<&str> {
+    orders
+        .iter()
+        .map(|order| order.basket_id.as_deref().unwrap_or_default())
+        .collect()
+}
+
+#[tokio::test]
+async fn open_orders_collects_the_replay_up_to_the_ack() {
+    let (handle, mut commands, subscription) = subscribed_test_handle();
+
+    let (orders, ()) = tokio::join!(handle.open_orders(), async {
+        let responder = take_show_orders(&mut commands).await;
+
+        subscription
+            .send(order_notification("basket-1", "ACCOUNT_A"))
+            .unwrap();
+        subscription
+            .send(order_notification("basket-2", "ACCOUNT_A"))
+            .unwrap();
+
+        let _ = responder.send(Ok(vec![show_orders_ack(None)]));
+    });
+
+    let (rithmic, exchange) = orders.expect("a completed snapshot is not an error");
+
+    assert_eq!(basket_ids(&rithmic), vec!["basket-1", "basket-2"]);
+    assert!(exchange.is_empty());
+}
+
+/// Rithmic replays two views of an order and the caller gets both, split by
+/// which template carried it. Nothing in the replay window is discarded.
+#[tokio::test]
+async fn open_orders_returns_both_views_of_the_replay() {
+    let (handle, mut commands, subscription) = subscribed_test_handle();
+
+    let (orders, ()) = tokio::join!(handle.open_orders(), async {
+        let responder = take_show_orders(&mut commands).await;
+
+        subscription
+            .send(order_notification("basket-1", "ACCOUNT_A"))
+            .unwrap();
+        subscription
+            .send(exchange_notification("basket-1", "ACCOUNT_A"))
+            .unwrap();
+
+        let _ = responder.send(Ok(vec![show_orders_ack(None)]));
+    });
+
+    let (rithmic, exchange) = orders.expect("a completed snapshot is not an error");
+
+    assert_eq!(basket_ids(&rithmic), vec!["basket-1"]);
+    assert_eq!(exchange_basket_ids(&exchange), vec!["basket-1"]);
+}
+
+#[tokio::test]
+async fn open_orders_returns_an_empty_list_when_the_account_has_none() {
+    // The ack is the end of the list, so an account with nothing open answers
+    // immediately rather than blocking until some unrelated update arrives.
+    let (handle, mut commands, _subscription) = subscribed_test_handle();
+
+    let (orders, ()) = tokio::join!(handle.open_orders(), async {
+        let responder = take_show_orders(&mut commands).await;
+        let _ = responder.send(Ok(vec![show_orders_ack(None)]));
+    });
+
+    let (rithmic, exchange) = orders.expect("an empty snapshot is not an error");
+
+    assert!(rithmic.is_empty());
+    assert!(exchange.is_empty());
+}
+
+#[tokio::test]
+async fn open_orders_ignores_updates_from_before_the_request() {
+    // Live activity that happened before the call is not part of the snapshot.
+    let (handle, mut commands, subscription) = subscribed_test_handle();
+
+    subscription
+        .send(order_notification("earlier", "ACCOUNT_A"))
+        .unwrap();
+
+    let (orders, ()) = tokio::join!(handle.open_orders(), async {
+        let responder = take_show_orders(&mut commands).await;
+        let _ = responder.send(Ok(vec![show_orders_ack(None)]));
+    });
+
+    let (rithmic, exchange) = orders.unwrap();
+
+    assert!(rithmic.is_empty());
+    assert!(exchange.is_empty());
+}
+
+#[tokio::test]
+async fn open_orders_skips_notifications_for_other_accounts() {
+    let (handle, mut commands, subscription) = subscribed_test_handle();
+
+    let (orders, ()) = tokio::join!(handle.open_orders(), async {
+        let responder = take_show_orders(&mut commands).await;
+
+        subscription
+            .send(order_notification("theirs", "ACCOUNT_B"))
+            .unwrap();
+        subscription
+            .send(order_notification("ours", "ACCOUNT_A"))
+            .unwrap();
+
+        let _ = responder.send(Ok(vec![show_orders_ack(None)]));
+    });
+
+    assert_eq!(basket_ids(&orders.unwrap().0), vec!["ours"]);
+}
+
+#[tokio::test]
+async fn open_orders_reports_a_rejected_snapshot_as_an_error() {
+    // A rejection must not look like an account with no open orders.
+    let (handle, mut commands, _subscription) = subscribed_test_handle();
+
+    let rejection = RithmicError::RequestRejected(RithmicRequestError {
+        rp_code: vec!["3".to_string(), "bad request".to_string()],
+        code: Some("3".to_string()),
+        message: Some("bad request".to_string()),
+    });
+
+    let (orders, ()) = tokio::join!(handle.open_orders(), async {
+        let responder = take_show_orders(&mut commands).await;
+        let _ = responder.send(Ok(vec![show_orders_ack(Some(rejection.clone()))]));
+    });
+
+    assert!(matches!(orders, Err(RithmicError::RequestRejected(_))));
+}
+
+/// A notification that would not decode reaches the drain as `Unknown` with the
+/// failure attached. Skipping it would hand back a snapshot quietly missing an
+/// order, so the whole snapshot fails instead.
+#[tokio::test]
+async fn open_orders_fails_on_a_replayed_frame_that_would_not_decode() {
+    let (handle, mut commands, subscription) = subscribed_test_handle();
+
+    let (orders, ()) = tokio::join!(handle.open_orders(), async {
+        let responder = take_show_orders(&mut commands).await;
+
+        subscription
+            .send(order_notification("basket-1", "ACCOUNT_A"))
+            .unwrap();
+        subscription.send(undecodable_update()).unwrap();
+
+        let _ = responder.send(Ok(vec![show_orders_ack(None)]));
+    });
+
+    assert!(matches!(orders, Err(RithmicError::ProtocolError(_))));
+}
+
+#[tokio::test]
+async fn open_orders_fails_when_the_connection_drops_mid_snapshot() {
+    // Half a snapshot is worse than none: the caller would read the missing
+    // orders as closed.
+    let (handle, mut commands, subscription) = subscribed_test_handle();
+
+    let (orders, ()) = tokio::join!(handle.open_orders(), async {
+        let responder = take_show_orders(&mut commands).await;
+
+        subscription
+            .send(order_notification("basket-1", "ACCOUNT_A"))
+            .unwrap();
+
+        drop(responder);
+    });
+
+    assert_eq!(orders, Err(RithmicError::ConnectionClosed));
+}
+
+#[tokio::test]
+async fn open_orders_reports_a_lagged_snapshot_instead_of_a_short_list() {
+    let (handle, mut commands, subscription) = subscribed_test_handle();
+
+    let (orders, ()) = tokio::join!(handle.open_orders(), async {
+        let responder = take_show_orders(&mut commands).await;
+
+        for index in 0..SUBSCRIPTION_CAPACITY + 2 {
+            subscription
+                .send(order_notification(&format!("basket-{index}"), "ACCOUNT_A"))
+                .unwrap();
+        }
+
+        let _ = responder.send(Ok(vec![show_orders_ack(None)]));
+    });
+
+    assert_eq!(orders, Err(RithmicError::SnapshotIncomplete { lost: 2 }));
 }

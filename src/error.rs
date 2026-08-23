@@ -145,6 +145,20 @@ pub enum RithmicError {
         /// The exchanges that do have a route.
         cached: Vec<String>,
     },
+    /// A snapshot was being collected off the subscription broadcast and the
+    /// broadcast overflowed, dropping `lost` messages before they were read.
+    ///
+    /// Returned instead of a short list, because a snapshot that is missing
+    /// orders is worse than no snapshot at all. Nothing changed on the server,
+    /// but the broker state for this account is unknown and has to be re-read.
+    /// `lost` is not a number of missing orders.
+    #[non_exhaustive]
+    SnapshotIncomplete {
+        /// Messages the broadcast dropped, as `tokio::sync::broadcast` counted
+        /// them. Includes messages for other accounts on the same plant, so
+        /// this is a measure of how much was missed, not of how many orders.
+        lost: u64,
+    },
     /// Keep-alive detected the connection is dead.
     HeartbeatTimeout,
     /// Server terminated the session with a reason string.
@@ -214,6 +228,9 @@ impl fmt::Display for RithmicError {
                         write!(f, "; cached: {}", cached.join(", "))
                     }
                 }
+            }
+            RithmicError::SnapshotIncomplete { lost } => {
+                write!(f, "snapshot incomplete: {lost} updates were dropped")
             }
             RithmicError::HeartbeatTimeout => write!(f, "heartbeat timeout"),
             RithmicError::ForcedLogout(reason) => {
@@ -429,6 +446,23 @@ mod tests {
             RithmicError::RequestTimeout.to_string(),
             "request timed out"
         );
+    }
+
+    #[test]
+    fn snapshot_incomplete_display_names_the_loss() {
+        let err = RithmicError::SnapshotIncomplete { lost: 12 };
+
+        assert_eq!(
+            err.to_string(),
+            "snapshot incomplete: 12 updates were dropped"
+        );
+    }
+
+    #[test]
+    fn snapshot_incomplete_is_not_a_connection_issue() {
+        // The connection is fine; the reader fell behind. Reconnecting would
+        // cost the subscriptions and fix nothing.
+        assert!(!RithmicError::SnapshotIncomplete { lost: 1 }.is_connection_issue());
     }
 
     #[test]

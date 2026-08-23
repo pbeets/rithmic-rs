@@ -23,9 +23,30 @@ impl SubscriptionFilter {
     ///
     /// When `RecvError::Lagged(n)` is returned, `n` counts all skipped messages
     /// on the shared broadcast stream, including messages for other accounts.
+    /// The skipped messages are gone — for order updates, re-read the set with
+    /// [`RithmicOrderPlantHandle::open_orders`](crate::RithmicOrderPlantHandle::open_orders).
     pub async fn recv(&mut self) -> Result<RithmicResponse, broadcast::error::RecvError> {
         loop {
             let response = self.receiver.recv().await?;
+            if self.should_forward(&response) {
+                return Ok(response);
+            }
+        }
+    }
+
+    /// Take the next already-buffered update for this account, without waiting.
+    ///
+    /// `TryRecvError::Empty` means nothing more is buffered right now, not that
+    /// the stream has ended. That is what lets a caller drain everything the
+    /// plant has broadcast so far instead of blocking until the next live
+    /// update — see
+    /// [`RithmicOrderPlantHandle::open_orders`](crate::RithmicOrderPlantHandle::open_orders).
+    ///
+    /// `Lagged(n)` counts every skipped message on the shared broadcast stream,
+    /// including messages for other accounts, the same way [`Self::recv`] does.
+    pub fn try_recv(&mut self) -> Result<RithmicResponse, broadcast::error::TryRecvError> {
+        loop {
+            let response = self.receiver.try_recv()?;
             if self.should_forward(&response) {
                 return Ok(response);
             }
@@ -158,6 +179,46 @@ mod tests {
         assert!(matches!(
             response.message,
             RithmicMessage::UpdateEasyToBorrowList(_)
+        ));
+    }
+
+    #[tokio::test]
+    async fn try_recv_takes_buffered_updates_and_then_reports_empty() {
+        // Empty is what ends a snapshot drain, so it has to arrive once the
+        // buffer is done rather than the call blocking for the next live update.
+        let (sender, receiver) = broadcast::channel(16);
+        let mut filter = SubscriptionFilter::new(account("ACCOUNT_A"), receiver);
+
+        sender
+            .send(response(RithmicMessage::AccountPnLPositionUpdate(
+                AccountPnLPositionUpdate {
+                    template_id: 0,
+                    account_id: Some("ACCOUNT_B".to_string()),
+                    ..AccountPnLPositionUpdate::default()
+                },
+            )))
+            .unwrap();
+        sender
+            .send(response(RithmicMessage::AccountPnLPositionUpdate(
+                AccountPnLPositionUpdate {
+                    template_id: 0,
+                    account_id: Some("ACCOUNT_A".to_string()),
+                    ..AccountPnLPositionUpdate::default()
+                },
+            )))
+            .unwrap();
+
+        let response = filter.try_recv().expect("the buffered update is ours");
+        match response.message {
+            RithmicMessage::AccountPnLPositionUpdate(update) => {
+                assert_eq!(update.account_id.as_deref(), Some("ACCOUNT_A"));
+            }
+            other => panic!("unexpected message: {other:?}"),
+        }
+
+        assert!(matches!(
+            filter.try_recv(),
+            Err(broadcast::error::TryRecvError::Empty)
         ));
     }
 

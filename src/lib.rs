@@ -164,6 +164,10 @@
 //!   connection problem rather than retrying in a loop.
 //! - [`ConnectionClosed`](RithmicError::ConnectionClosed) — the plant is gone.
 //!   Reconnect; calling again will not work.
+//! - [`SnapshotIncomplete`](RithmicError::SnapshotIncomplete) — only from
+//!   [`open_orders`](plants::order_plant::RithmicOrderPlantHandle::open_orders).
+//!   The subscription channel overflowed while the snapshot was being read, so
+//!   the list would have been short. Nothing changed on the server; call again.
 //!
 //! When a connection drops, everything in flight fails with `ConnectionClosed`
 //! whatever the real cause was. The cause goes out on the subscription channel,
@@ -172,7 +176,9 @@
 //! A request has no deadline of its own: Rithmic answers it or the connection
 //! drops. Wrap the call in [`tokio::time::timeout`] if you want a ceiling —
 //! see `examples/request_timeout.rs`. Giving up cancels nothing on Rithmic's
-//! side, so reconcile an order rather than re-sending it.
+//! side, so reconcile with
+//! [`open_orders`](plants::order_plant::RithmicOrderPlantHandle::open_orders)
+//! rather than re-sending.
 //!
 //! ([`ConnectionFailed`](RithmicError::ConnectionFailed) comes from `connect()`
 //! rather than a handle method, and only under [`ConnectStrategy::Simple`] —

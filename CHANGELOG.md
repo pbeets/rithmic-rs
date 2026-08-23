@@ -22,6 +22,20 @@ If you want a time limit, set it yourself with `tokio::time::timeout`. You know
 what each call is worth waiting for and the library does not. See
 `examples/request_timeout.rs`.
 
+### A way to check what the broker thinks you have open
+
+`open_orders()` asks Rithmic for the account's open orders and hands them back
+as two lists. `show_orders()` already asked the same question, but the answer
+came back on the update stream mixed in with live activity and nothing marked
+where it ended, so you could not tell the two apart.
+
+This is what to call when you gave up waiting on an order and do not know
+whether it went through. Re-sending it can leave you with two orders; reading
+the open orders back tells you which it was.
+
+If the update stream overflows while the list is being read, you get
+`SnapshotIncomplete` instead of a list that is quietly missing orders.
+
 ### Deprecated
 
 These still compile and are still accepted, but the library ignores them.
@@ -35,6 +49,12 @@ They go away in 4.0.0.
 
 ### Added
 
+- `RithmicOrderPlantHandle::open_orders()` — the account's open orders, as a
+  list of `RithmicOrderNotification` and a list of `ExchangeOrderNotification`.
+- `RithmicError::SnapshotIncomplete` — the update stream overflowed while
+  `open_orders()` was reading, so the list would have been short.
+- `SubscriptionFilter::try_recv()` — takes an update if one is already waiting
+  instead of blocking for the next one.
 - `examples/request_timeout.rs` — how to put your own time limit on a request.
 
 ### Fixed

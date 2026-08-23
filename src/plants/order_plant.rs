@@ -2,7 +2,7 @@ use std::sync::{Arc, OnceLock};
 use tracing::{debug, error, info, warn};
 
 use tokio::{
-    sync::{broadcast, mpsc, oneshot},
+    sync::{broadcast, broadcast::error::TryRecvError, mpsc, oneshot},
     task::JoinHandle,
 };
 
@@ -25,7 +25,10 @@ use crate::{
         subscription::SubscriptionFilter,
         trade_routes::TradeRouteCache,
     },
-    rti::{TradeRoute, messages::RithmicMessage, request_login::SysInfraType},
+    rti::{
+        ExchangeOrderNotification, RithmicOrderNotification, TradeRoute, messages::RithmicMessage,
+        request_login::SysInfraType,
+    },
     types::{EasyToBorrowRequest, FillHistoryRange, RmsUpdateBits},
 };
 
@@ -1498,7 +1501,9 @@ impl RithmicOrderPlantHandle {
     /// so subscribe before calling this or the orders are missed.
     ///
     /// The crate surfaces no end-of-list signal, so the replayed orders are
-    /// indistinguishable from live activity on the stream.
+    /// indistinguishable from live activity on the stream. Use
+    /// [`open_orders`](Self::open_orders) to get them collected into lists
+    /// instead.
     ///
     /// ```no_run
     /// # use rithmic_rs::{rti::messages::RithmicMessage, RithmicOrderPlantHandle};
@@ -1525,6 +1530,152 @@ impl RithmicOrderPlantHandle {
         let _ = self.sender.send(command).await;
 
         await_first_response(rx).await
+    }
+
+    /// Ask the broker what orders it currently holds for this account, and
+    /// return them as two lists.
+    ///
+    /// This is how you answer "does the broker think this order exists?". The
+    /// library does not time out requests, so if you wrapped an order command
+    /// in [`tokio::time::timeout`] and it expired, the outcome is unknown
+    /// rather than failed — the order may be live at the exchange with nothing
+    /// tracking it. Call this rather than re-sending, which can double the
+    /// order.
+    ///
+    /// It is also the recovery path after `RecvError::Lagged` on
+    /// [`subscription_receiver`](Self::subscription_receiver). A lagged
+    /// broadcast gives back a count and nothing else, and the dropped messages
+    /// are exactly the order notifications that carry `basket_id`, so there is
+    /// no way to replay them. Re-read the whole set instead.
+    ///
+    /// # The two lists
+    ///
+    /// Rithmic replays two views of an order: its own, as
+    /// [`RithmicOrderNotification`] (template 351), and the exchange's, as
+    /// [`ExchangeOrderNotification`] (template 352). Both are returned — the
+    /// Rithmic view first, the exchange view second — and nothing seen in the
+    /// replay window is discarded. Both types carry `basket_id`,
+    /// `original_basket_id` and `linked_basket_ids`, so either list can be
+    /// keyed by basket id.
+    ///
+    /// <div class="warning">
+    ///
+    /// Which template(s) `show_orders` actually replays has **not** been
+    /// verified against a live session. The reference Python client
+    /// (`async_rithmic`) collects only `ExchangeOrderNotification` frames with
+    /// `is_snapshot` set, while this crate's tests were written assuming
+    /// `RithmicOrderNotification`. Treat the exact split between the two lists
+    /// as unverified until you have exercised it against a live or paper
+    /// session — read both, and do not assume either one is populated.
+    ///
+    /// </div>
+    ///
+    /// # Completion
+    ///
+    /// Rithmic replays each open order as its own notification and then closes
+    /// the sequence with `ResponseShowOrders`. That closing frame resolves the
+    /// request rather than reaching the subscription broadcast, so this cannot
+    /// watch for it on the stream: it waits for the ack and then takes
+    /// everything the broadcast has buffered. Every replayed notification is
+    /// broadcast before the ack is delivered, so none of them are missed, and
+    /// two empty `Vec`s mean the broker reported no open orders rather than
+    /// that the snapshot is still arriving.
+    ///
+    /// The end of the list is not a hard boundary. A live notification for this
+    /// account arriving between the ack and the end of the collection is taken
+    /// as well. The error runs one way: the lists can carry an order that has
+    /// just closed, and cannot drop an order that was open when the snapshot
+    /// was taken. Read `notify_type` and `status` on each entry rather than
+    /// reading membership as "open" — a closed order says so itself. An order
+    /// placed while the snapshot is in flight may or may not appear; this is a
+    /// point in time, not a live view.
+    ///
+    /// If the connection drops mid-snapshot the pending request is failed and
+    /// this returns [`RithmicError::ConnectionClosed`]; a partial list is never
+    /// returned. A server rejection is an `Err` too, not an empty list. If the
+    /// broadcast overflows while the snapshot is being collected the result is
+    /// [`RithmicError::SnapshotIncomplete`], again rather than a short list.
+    /// And a replayed frame that failed to decode is an `Err` as well: a
+    /// snapshot that might be missing an order fails loudly rather than
+    /// quietly dropping it.
+    ///
+    /// # Caveats
+    ///
+    /// Key each list by `basket_id` rather than assuming one entry per order:
+    /// a replayed order whose live update lands in the same window appears
+    /// twice, and the later entry is the current one. The same order also
+    /// appears in both lists whenever the replay emits both views of it.
+    ///
+    /// ```no_run
+    /// # use rithmic_rs::RithmicOrderPlantHandle;
+    /// # async fn example(handle: RithmicOrderPlantHandle) -> Result<(), Box<dyn std::error::Error>> {
+    /// let (rithmic_view, exchange_view) = handle.open_orders().await?;
+    ///
+    /// for order in &rithmic_view {
+    ///     println!("rithmic {:?} {:?} {:?}", order.basket_id, order.symbol, order.status);
+    /// }
+    /// for order in &exchange_view {
+    ///     println!("exchange {:?} {:?} {:?}", order.basket_id, order.symbol, order.status);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// [`RithmicOrderNotification`]: crate::rti::RithmicOrderNotification
+    /// [`ExchangeOrderNotification`]: crate::rti::ExchangeOrderNotification
+    pub async fn open_orders(
+        &self,
+    ) -> Result<
+        (
+            Vec<RithmicOrderNotification>,
+            Vec<ExchangeOrderNotification>,
+        ),
+        RithmicError,
+    > {
+        // Resubscribe before the request goes out. The replayed orders are
+        // broadcast before the ack that ends them, so a receiver created after
+        // the ack would have missed every one of them.
+        let mut updates = self.subscription_receiver.resubscribe();
+
+        let ack = self.show_orders().await?;
+
+        if let Some(error) = ack.error {
+            return Err(error);
+        }
+
+        let mut rithmic_orders = Vec::new();
+        let mut exchange_orders = Vec::new();
+
+        loop {
+            match updates.try_recv() {
+                Ok(response) => {
+                    // A frame that failed to decode arrives as `Unknown` with
+                    // the error set. Skipping it would hand back a snapshot
+                    // silently missing an order.
+                    if let Some(error) = response.error {
+                        return Err(error);
+                    }
+
+                    match response.message {
+                        RithmicMessage::RithmicOrderNotification(order) => {
+                            rithmic_orders.push(order);
+                        }
+                        RithmicMessage::ExchangeOrderNotification(order) => {
+                            exchange_orders.push(order);
+                        }
+                        _ => {}
+                    }
+                }
+                // Empty means the replay is drained; Closed means the plant is
+                // gone, but the ack already arrived so the replay is drained too.
+                Err(TryRecvError::Empty | TryRecvError::Closed) => {
+                    return Ok((rithmic_orders, exchange_orders));
+                }
+                Err(TryRecvError::Lagged(lost)) => {
+                    return Err(RithmicError::SnapshotIncomplete { lost });
+                }
+            }
+        }
     }
 
     async fn update_heartbeat(&self, seconds: u64) {
