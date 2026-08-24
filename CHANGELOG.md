@@ -9,18 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Requests no longer time out
 
-The library used to give up on a request after 30 seconds and hand back a
-`RequestTimeout` error. It no longer does. A request finishes when Rithmic
-answers it, or when the connection drops.
-
-The old timeout caused a problem it could not fix. Giving up on our side does
-not tell Rithmic to stop — the request was already sent, and the answer still
-turns up later. By then we had told you the call failed and thrown away the
-record needed to match the answer to it, so the answer went nowhere.
-
-If you want a time limit, set it yourself with `tokio::time::timeout`. You know
-what each call is worth waiting for and the library does not. See
-`examples/request_timeout.rs`.
+The library no longer times out requests. A reply can arrive after the timeout
+has passed, and handling that added more complexity. It is up to the consumer
+to add their own timeout logic — see `examples/request_timeout.rs` for one way
+to do it.
 
 ### Deprecated
 
@@ -35,11 +27,13 @@ They go away in 4.0.0.
 
 ### Added
 
-- `examples/request_timeout.rs` — how to put your own time limit on a request
-  without losing the answer when the limit runs out.
+- `examples/request_timeout.rs` — how to add your own timeout to a request.
 
 ### Fixed
 
+- When a frame fails to decode, the log now names the request it belonged to,
+  the template it came from, and where it was routed. It used to log the decode
+  error on its own, which left you unable to tell which call lost its reply.
 - When part of a multi-part response arrives for a request that is no longer
   waiting, it is now logged. It used to be thrown away silently.
 
