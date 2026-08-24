@@ -1,15 +1,18 @@
-//! Example: giving a request a deadline of your own.
+//! Example: adding your own timeout to a request.
 //!
-//! The crate does not time out requests — a call is resolved when Rithmic
-//! answers it or when the connection drops. Wrap it if you want a ceiling.
+//! The crate does not time out requests. This example shows how to add one.
 //!
 //! Run with: cargo run --example request_timeout
 
 use std::time::Duration;
 
+use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 
-use rithmic_rs::{ConnectStrategy, RithmicConfig, RithmicEnv, RithmicTickerPlant};
+use rithmic_rs::{
+    ConnectStrategy, OrderSide, OrderType, RithmicAccount, RithmicBracketOrder, RithmicConfig,
+    RithmicEnv, RithmicError, RithmicOrderPlant, RithmicResponse, TimeInForce,
+};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -17,37 +20,88 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt().init();
 
     let config = RithmicConfig::from_env(RithmicEnv::Demo)?;
-    let plant = RithmicTickerPlant::connect(&config, ConnectStrategy::Retry).await?;
-    let handle = plant.get_handle();
+    let account = RithmicAccount::from_env(RithmicEnv::Demo)?;
+
+    let plant = RithmicOrderPlant::connect(&config, ConnectStrategy::Retry).await?;
+    let handle = plant.get_handle(&account);
 
     handle.login().await?;
+    handle.subscribe_order_updates().await?;
+    handle.subscribe_bracket_updates().await?;
 
-    // Three outcomes, not two: the wrapper adds one the call itself cannot
-    // return.
-    let request = handle.get_front_month_contract("ES", "CME", false);
+    let request = handle.get_account_rms_info();
 
     match tokio::time::timeout(Duration::from_secs(10), request).await {
-        Ok(Ok(resp)) => info!("front month: {:?}", resp.message),
-        Ok(Err(e)) => error!("front month: {e}"),
-        // Nothing was cancelled. The request is still registered, and if the
-        // reply arrives it is dropped, because this future owned the receiver.
-        Err(_elapsed) => warn!("front month: gave up waiting"),
+        Ok(Ok(responses)) => info!("rms info: {} frames", responses.len()),
+        Ok(Err(e)) => error!("rms info: {e}"),
+        Err(_elapsed) => warn!("rms info: gave up; the late reply is discarded"),
     }
 
-    // Pick the number per call. A quote lookup that is slow is worth
-    // abandoning; a login is worth waiting on.
-    let slow = handle.get_front_month_contract("NQ", "CME", false);
+    let worker = handle.clone();
+    let order = build_order("example-timeout-1")?;
+    let mut task = tokio::spawn(async move { worker.place_bracket_order(order).await });
 
-    if let Ok(Ok(resp)) = tokio::time::timeout(Duration::from_millis(50), slow).await {
-        info!("front month: {:?}", resp.message);
-    } else {
-        warn!("front month: not worth 50ms");
+    match tokio::time::timeout(Duration::from_secs(30), &mut task).await {
+        Ok(joined) => match joined? {
+            Ok(responses) => info!("bracket acked in time: {} frames", responses.len()),
+            Err(e) => error!("bracket rejected: {e}"),
+        },
+        Err(_elapsed) => {
+            warn!("bracket: gave up waiting; the task still holds the reply");
+
+            match task.await? {
+                Ok(responses) => info!("bracket acked late: {} frames", responses.len()),
+                Err(e) => error!("bracket failed: {e}"),
+            }
+        }
     }
 
-    // On a write, expiry means the outcome is unknown rather than failed:
-    // Rithmic never learned you gave up, so the order may well be working.
-    // Reconcile it against the order plant instead of sending it again.
+    let (outcomes_tx, mut outcomes) = mpsc::channel::<(String, Outcome)>(64);
+
+    for tag in ["example-timeout-2", "example-timeout-3"] {
+        let worker = handle.clone();
+        let report = outcomes_tx.clone();
+        let order = build_order(tag)?;
+        let tag = tag.to_string();
+
+        tokio::spawn(async move {
+            let outcome = match worker.place_bracket_order(order).await {
+                Ok(responses) => Outcome::Acked(responses),
+                Err(e) => Outcome::Failed(e),
+            };
+            let _ = report.send((tag, outcome)).await;
+        });
+    }
+
+    drop(outcomes_tx);
+
+    while let Some((tag, outcome)) = outcomes.recv().await {
+        match outcome {
+            Outcome::Acked(responses) => info!("{tag}: acked, {} frames", responses.len()),
+            Outcome::Failed(e) => error!("{tag}: {e}"),
+        }
+    }
 
     handle.disconnect().await?;
     Ok(())
+}
+
+enum Outcome {
+    Acked(Vec<RithmicResponse>),
+    Failed(RithmicError),
+}
+
+fn build_order(localid: &str) -> Result<RithmicBracketOrder, Box<dyn std::error::Error>> {
+    Ok(RithmicBracketOrder::new()
+        .symbol("ESU6")
+        .exchange("CME")
+        .quantity(1)
+        .action(OrderSide::Buy)
+        .price_type(OrderType::Limit)
+        .duration(TimeInForce::Day)
+        .localid(localid)
+        .price(5000.00)
+        .target(20)
+        .stop(10)
+        .build()?)
 }

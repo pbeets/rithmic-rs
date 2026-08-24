@@ -35,7 +35,8 @@ They go away in 4.0.0.
 
 ### Added
 
-- `examples/request_timeout.rs` — how to put your own time limit on a request.
+- `examples/request_timeout.rs` — how to put your own time limit on a request
+  without losing the answer when the limit runs out.
 
 ### Fixed
 
@@ -1206,7 +1207,8 @@ Previous stable release. See git history for earlier changes.
 - **0.5.0** (2025-11-16): Major stability and API improvements - Connection strategies, unified config, panic fixes, connection health monitoring
 - **0.4.2** (2025-11-15): Previous stable release
 
-[Unreleased]: https://github.com/pbeets/rithmic-rs/compare/v3.0.0...HEAD
+[Unreleased]: https://github.com/pbeets/rithmic-rs/compare/v3.1.0...HEAD
+[3.1.0]: https://github.com/pbeets/rithmic-rs/compare/v3.0.0...v3.1.0
 [3.0.0]: https://github.com/pbeets/rithmic-rs/compare/v2.0.0...v3.0.0
 [2.0.0]: https://github.com/pbeets/rithmic-rs/compare/v1.0.0...v2.0.0
 [1.0.0]: https://github.com/pbeets/rithmic-rs/compare/v0.7.2...v1.0.0

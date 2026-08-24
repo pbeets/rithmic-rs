@@ -169,10 +169,10 @@
 //! whatever the real cause was. The cause goes out on the subscription channel,
 //! so look there if you need to tell a heartbeat timeout from a dead socket.
 //!
-//! A request has no deadline of its own: Rithmic answers it or the connection
-//! drops. Wrap the call in [`tokio::time::timeout`] if you want a ceiling —
-//! see `examples/request_timeout.rs`. Giving up cancels nothing on Rithmic's
-//! side, so reconcile an order rather than re-sending it.
+//! The crate does not time out requests. A request finishes when Rithmic
+//! answers it or the connection drops. If you need timeout handling, see
+//! `examples/request_timeout.rs`. Timing out on your side does not cancel
+//! anything on Rithmic's, so reconcile an order rather than re-sending it.
 //!
 //! ([`ConnectionFailed`](RithmicError::ConnectionFailed) comes from `connect()`
 //! rather than a handle method, and only under [`ConnectStrategy::Simple`] —
