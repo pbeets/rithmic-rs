@@ -738,6 +738,37 @@ impl RithmicTickerPlantHandle {
         .await
     }
 
+    /// Subscribe only to last-trade updates for a specific symbol.
+    ///
+    /// This sends template 100 with only [`UpdateBits::LastTrade`] set. Use
+    /// [`Self::subscribe`] when both last trades and BBO updates are wanted.
+    pub async fn subscribe_trades(
+        &self,
+        symbol: &str,
+        exchange: &str,
+    ) -> Result<RithmicResponse, RithmicError> {
+        self.request_market_data_update(
+            symbol,
+            exchange,
+            vec![UpdateBits::LastTrade],
+            Request::Subscribe,
+        )
+        .await
+    }
+
+    /// Subscribe only to best-bid-and-offer updates for a specific symbol.
+    ///
+    /// This sends template 100 with only [`UpdateBits::Bbo`] set. Use
+    /// [`Self::subscribe`] when both last trades and BBO updates are wanted.
+    pub async fn subscribe_bbo(
+        &self,
+        symbol: &str,
+        exchange: &str,
+    ) -> Result<RithmicResponse, RithmicError> {
+        self.request_market_data_update(symbol, exchange, vec![UpdateBits::Bbo], Request::Subscribe)
+            .await
+    }
+
     /// Subscribe to order book depth-by-order updates for a specific symbol
     ///
     /// # Arguments
@@ -782,6 +813,40 @@ impl RithmicTickerPlantHandle {
             symbol,
             exchange,
             vec![UpdateBits::LastTrade, UpdateBits::Bbo],
+            Request::Unsubscribe,
+        )
+        .await
+    }
+
+    /// Unsubscribe only from last-trade updates for a specific symbol.
+    ///
+    /// Other update bits, including BBO, are not included in this request.
+    pub async fn unsubscribe_trades(
+        &self,
+        symbol: &str,
+        exchange: &str,
+    ) -> Result<RithmicResponse, RithmicError> {
+        self.request_market_data_update(
+            symbol,
+            exchange,
+            vec![UpdateBits::LastTrade],
+            Request::Unsubscribe,
+        )
+        .await
+    }
+
+    /// Unsubscribe only from best-bid-and-offer updates for a specific symbol.
+    ///
+    /// Other update bits, including last trades, are not included in this request.
+    pub async fn unsubscribe_bbo(
+        &self,
+        symbol: &str,
+        exchange: &str,
+    ) -> Result<RithmicResponse, RithmicError> {
+        self.request_market_data_update(
+            symbol,
+            exchange,
+            vec![UpdateBits::Bbo],
             Request::Unsubscribe,
         )
         .await

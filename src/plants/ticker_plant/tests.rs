@@ -93,6 +93,84 @@ fn test_handle() -> (RithmicTickerPlantHandle, mpsc::Receiver<TickerPlantCommand
     (handle, command_receiver)
 }
 
+async fn assert_selective_request<F, Fut>(
+    call: F,
+    expected_fields: Vec<UpdateBits>,
+    expected_request: Request,
+) where
+    F: FnOnce(RithmicTickerPlantHandle) -> Fut,
+    Fut: std::future::Future<Output = Result<RithmicResponse, RithmicError>> + Send + 'static,
+{
+    let (handle, mut commands) = test_handle();
+    let task = tokio::spawn(call(handle));
+    let command = commands.recv().await.expect("request must reach the actor");
+    let TickerPlantCommand::Subscribe {
+        symbol,
+        exchange,
+        fields,
+        request_type,
+        response_sender,
+    } = command
+    else {
+        panic!("selective helper sent the wrong command")
+    };
+    assert_eq!(symbol, "ESH6");
+    assert_eq!(exchange, "CME");
+    assert_eq!(fields, expected_fields);
+    assert_eq!(request_type, expected_request);
+    let _ = response_sender.send(Err(RithmicError::SendFailed));
+    assert!(matches!(task.await, Ok(Err(RithmicError::SendFailed))));
+}
+
+#[tokio::test]
+async fn selective_trade_helpers_send_only_the_last_trade_bit() {
+    assert_selective_request(
+        |handle| async move { handle.subscribe_trades("ESH6", "CME").await },
+        vec![UpdateBits::LastTrade],
+        Request::Subscribe,
+    )
+    .await;
+    assert_selective_request(
+        |handle| async move { handle.unsubscribe_trades("ESH6", "CME").await },
+        vec![UpdateBits::LastTrade],
+        Request::Unsubscribe,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn selective_bbo_helpers_send_only_the_bbo_bit() {
+    assert_selective_request(
+        |handle| async move { handle.subscribe_bbo("ESH6", "CME").await },
+        vec![UpdateBits::Bbo],
+        Request::Subscribe,
+    )
+    .await;
+    assert_selective_request(
+        |handle| async move { handle.unsubscribe_bbo("ESH6", "CME").await },
+        vec![UpdateBits::Bbo],
+        Request::Unsubscribe,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn combined_helpers_remain_backward_compatible() {
+    let combined = vec![UpdateBits::LastTrade, UpdateBits::Bbo];
+    assert_selective_request(
+        |handle| async move { handle.subscribe("ESH6", "CME").await },
+        combined.clone(),
+        Request::Subscribe,
+    )
+    .await;
+    assert_selective_request(
+        |handle| async move { handle.unsubscribe("ESH6", "CME").await },
+        combined,
+        Request::Unsubscribe,
+    )
+    .await;
+}
+
 #[tokio::test]
 async fn disconnect_sends_close_even_when_logout_fails() {
     let (handle, mut command_receiver) = test_handle();
