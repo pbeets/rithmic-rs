@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `subscribe_trades` / `unsubscribe_trades` and `subscribe_bbo` /
+  `unsubscribe_bbo` expose the ticker protocol's independent last-trade and BBO
+  update bits while preserving the existing combined `subscribe` / `unsubscribe`
+  helpers.
+
 ## [3.1.0]
 
 ### Requests no longer time out

@@ -131,6 +131,12 @@ handle.subscribe("ESM6", "CME").await?;
 // Unsubscribe when done
 handle.unsubscribe("ESM6", "CME").await?;
 
+// Or control last trades and BBO independently
+handle.subscribe_trades("ESM6", "CME").await?;
+handle.subscribe_bbo("ESM6", "CME").await?;
+handle.unsubscribe_trades("ESM6", "CME").await?;
+handle.unsubscribe_bbo("ESM6", "CME").await?;
+
 // Additional market data subscriptions
 handle.subscribe_instrument_status("ESM6", "CME").await?;
 handle.subscribe_open_interest("ESM6", "CME").await?;

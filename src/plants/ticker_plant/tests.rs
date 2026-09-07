@@ -1,12 +1,16 @@
+use prost::Message;
 use tokio::net::TcpStream;
 
 use super::*;
 use crate::{
     plants::test_support::{
         self, Responder, assert_close_still_sent, assert_rejected_after_close,
-        assert_sent_while_open, assert_wire_silent,
+        assert_sent_while_open, assert_wire_silent, read_wire_request,
     },
-    rti::request_market_data_update::{Request, UpdateBits},
+    rti::{
+        RequestMarketDataUpdate,
+        request_market_data_update::{Request, UpdateBits},
+    },
 };
 
 async fn plant_with_wire() -> (TickerPlant, mpsc::Sender<TickerPlantCommand>, TcpStream) {
@@ -93,82 +97,86 @@ fn test_handle() -> (RithmicTickerPlantHandle, mpsc::Receiver<TickerPlantCommand
     (handle, command_receiver)
 }
 
-async fn assert_selective_request<F, Fut>(
-    call: F,
-    expected_fields: Vec<UpdateBits>,
-    expected_request: Request,
-) where
+async fn decoded_public_request<F, Fut>(call: F) -> RequestMarketDataUpdate
+where
     F: FnOnce(RithmicTickerPlantHandle) -> Fut,
     Fut: std::future::Future<Output = Result<RithmicResponse, RithmicError>> + Send + 'static,
 {
-    let (handle, mut commands) = test_handle();
-    let task = tokio::spawn(call(handle));
-    let command = commands.recv().await.expect("request must reach the actor");
-    let TickerPlantCommand::Subscribe {
-        symbol,
-        exchange,
-        fields,
-        request_type,
-        response_sender,
-    } = command
-    else {
-        panic!("selective helper sent the wrong command")
+    let (plant, command_sender, mut client) = plant_with_wire().await;
+    let subscription_sender = plant.core.subscription_sender.clone();
+    let handle = RithmicTickerPlantHandle {
+        sender: command_sender.clone(),
+        subscription_receiver: subscription_sender.subscribe(),
+        subscription_sender: subscription_sender.clone(),
     };
-    assert_eq!(symbol, "ESH6");
-    assert_eq!(exchange, "CME");
-    assert_eq!(fields, expected_fields);
-    assert_eq!(request_type, expected_request);
-    let _ = response_sender.send(Err(RithmicError::SendFailed));
-    assert!(matches!(task.await, Ok(Err(RithmicError::SendFailed))));
+    let stop = RithmicTickerPlantHandle {
+        sender: command_sender,
+        subscription_receiver: subscription_sender.subscribe(),
+        subscription_sender,
+    };
+    let actor = tokio::spawn(async move {
+        let mut plant = plant;
+        plant.run().await;
+    });
+    let task = tokio::spawn(call(handle));
+    let request = RequestMarketDataUpdate::decode(&*read_wire_request(&mut client).await)
+        .expect("the actor serialized a ticker request");
+    stop.abort();
+    let _ = actor.await;
+    assert!(matches!(
+        task.await,
+        Ok(Err(RithmicError::ConnectionClosed))
+    ));
+    request
 }
 
 #[tokio::test]
 async fn selective_trade_helpers_send_only_the_last_trade_bit() {
-    assert_selective_request(
-        |handle| async move { handle.subscribe_trades("ESH6", "CME").await },
-        vec![UpdateBits::LastTrade],
-        Request::Subscribe,
-    )
-    .await;
-    assert_selective_request(
-        |handle| async move { handle.unsubscribe_trades("ESH6", "CME").await },
-        vec![UpdateBits::LastTrade],
-        Request::Unsubscribe,
-    )
-    .await;
+    let subscribe =
+        decoded_public_request(
+            |handle| async move { handle.subscribe_trades("ESH6", "CME").await },
+        )
+        .await;
+    assert_eq!(subscribe.update_bits, Some(UpdateBits::LastTrade as u32));
+    assert_eq!(subscribe.request, Some(Request::Subscribe as i32));
+
+    let unsubscribe =
+        decoded_public_request(
+            |handle| async move { handle.unsubscribe_trades("ESH6", "CME").await },
+        )
+        .await;
+    assert_eq!(unsubscribe.update_bits, Some(UpdateBits::LastTrade as u32));
+    assert_eq!(unsubscribe.request, Some(Request::Unsubscribe as i32));
 }
 
 #[tokio::test]
 async fn selective_bbo_helpers_send_only_the_bbo_bit() {
-    assert_selective_request(
-        |handle| async move { handle.subscribe_bbo("ESH6", "CME").await },
-        vec![UpdateBits::Bbo],
-        Request::Subscribe,
-    )
-    .await;
-    assert_selective_request(
-        |handle| async move { handle.unsubscribe_bbo("ESH6", "CME").await },
-        vec![UpdateBits::Bbo],
-        Request::Unsubscribe,
-    )
-    .await;
+    let subscribe =
+        decoded_public_request(|handle| async move { handle.subscribe_bbo("ESH6", "CME").await })
+            .await;
+    assert_eq!(subscribe.update_bits, Some(UpdateBits::Bbo as u32));
+    assert_eq!(subscribe.request, Some(Request::Subscribe as i32));
+
+    let unsubscribe =
+        decoded_public_request(|handle| async move { handle.unsubscribe_bbo("ESH6", "CME").await })
+            .await;
+    assert_eq!(unsubscribe.update_bits, Some(UpdateBits::Bbo as u32));
+    assert_eq!(unsubscribe.request, Some(Request::Unsubscribe as i32));
 }
 
 #[tokio::test]
 async fn combined_helpers_remain_backward_compatible() {
-    let combined = vec![UpdateBits::LastTrade, UpdateBits::Bbo];
-    assert_selective_request(
-        |handle| async move { handle.subscribe("ESH6", "CME").await },
-        combined.clone(),
-        Request::Subscribe,
-    )
-    .await;
-    assert_selective_request(
-        |handle| async move { handle.unsubscribe("ESH6", "CME").await },
-        combined,
-        Request::Unsubscribe,
-    )
-    .await;
+    let combined = (UpdateBits::LastTrade as u32) | (UpdateBits::Bbo as u32);
+    let subscribe =
+        decoded_public_request(|handle| async move { handle.subscribe("ESH6", "CME").await }).await;
+    assert_eq!(subscribe.update_bits, Some(combined));
+    assert_eq!(subscribe.request, Some(Request::Subscribe as i32));
+
+    let unsubscribe =
+        decoded_public_request(|handle| async move { handle.unsubscribe("ESH6", "CME").await })
+            .await;
+    assert_eq!(unsubscribe.update_bits, Some(combined));
+    assert_eq!(unsubscribe.request, Some(Request::Unsubscribe as i32));
 }
 
 #[tokio::test]
