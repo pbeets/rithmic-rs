@@ -278,7 +278,9 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
-            76 => {
+            // 76 is retained for older gateways; template version 5.42 sends
+            // the same message schema as 358.
+            76 | 358 => {
                 let resp = UserAccountUpdate::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, true))?;
 
@@ -1636,6 +1638,8 @@ fn route_decode_failure(payload: &[u8], mut response: RithmicResponse) -> Rithmi
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeSet;
+
     use crate::error::{RithmicError, RithmicRequestError};
     use crate::rti::{
         Reject, ResponseAccountList, ResponseGetUserInfo, ResponseListAcceptedAgreements,
@@ -1644,6 +1648,109 @@ mod tests {
         UserInfoUpdate, messages::RithmicMessage,
     };
     use prost::{Message, bytes::Bytes};
+
+    // Prost retains the template_id field and its wire tag, but the canonical
+    // value lives outside the .proto schema. Keep that protocol knowledge in
+    // one table, then use it both to exercise the receiver and to audit every
+    // generated server-originated message in src/rti.rs.
+    macro_rules! inbound_templates {
+        ($consumer:ident) => {
+            $consumer! {
+                11 => ResponseLogin,
+                13 => ResponseLogout,
+                15 => ResponseReferenceData,
+                17 => ResponseRithmicSystemInfo,
+                18 => RequestHeartbeat,
+                19 => ResponseHeartbeat,
+                21 => ResponseRithmicSystemGatewayInfo,
+                75 => Reject,
+                77 => ForcedLogout,
+                101 => ResponseMarketDataUpdate,
+                103 => ResponseGetInstrumentByUnderlying,
+                104 => ResponseGetInstrumentByUnderlyingKeys,
+                106 => ResponseMarketDataUpdateByUnderlying,
+                108 => ResponseGiveTickSizeTypeTable,
+                110 => ResponseSearchSymbols,
+                112 => ResponseProductCodes,
+                114 => ResponseFrontMonthContract,
+                116 => ResponseDepthByOrderSnapshot,
+                118 => ResponseDepthByOrderUpdates,
+                120 => ResponseGetVolumeAtPrice,
+                122 => ResponseAuxilliaryReferenceData,
+                150 => LastTrade,
+                151 => BestBidOffer,
+                152 => TradeStatistics,
+                153 => QuoteStatistics,
+                154 => IndicatorPrices,
+                155 => EndOfDayPrices,
+                156 => OrderBook,
+                157 => MarketMode,
+                158 => OpenInterest,
+                159 => FrontMonthContractUpdate,
+                160 => DepthByOrder,
+                161 => DepthByOrderEndEvent,
+                162 => SymbolMarginRate,
+                163 => OrderPriceLimits,
+                201 => ResponseTimeBarUpdate,
+                203 => ResponseTimeBarReplay,
+                205 => ResponseTickBarUpdate,
+                207 => ResponseTickBarReplay,
+                209 => ResponseVolumeProfileMinuteBars,
+                211 => ResponseResumeBars,
+                250 => TimeBar,
+                251 => TickBar,
+                301 => ResponseLoginInfo,
+                303 => ResponseAccountList,
+                305 => ResponseAccountRmsInfo,
+                307 => ResponseProductRmsInfo,
+                309 => ResponseSubscribeForOrderUpdates,
+                311 => ResponseTradeRoutes,
+                313 => ResponseNewOrder,
+                315 => ResponseModifyOrder,
+                317 => ResponseCancelOrder,
+                319 => ResponseShowOrderHistoryDates,
+                321 => ResponseShowOrders,
+                323 => ResponseShowOrderHistory,
+                325 => ResponseShowOrderHistorySummary,
+                327 => ResponseShowOrderHistoryDetail,
+                329 => ResponseOcoOrder,
+                331 => ResponseBracketOrder,
+                333 => ResponseUpdateTargetBracketLevel,
+                335 => ResponseUpdateStopBracketLevel,
+                337 => ResponseSubscribeToBracketUpdates,
+                339 => ResponseShowBrackets,
+                341 => ResponseShowBracketStops,
+                343 => ResponseListExchangePermissions,
+                345 => ResponseLinkOrders,
+                347 => ResponseCancelAllOrders,
+                349 => ResponseEasyToBorrowList,
+                350 => TradeRoute,
+                351 => RithmicOrderNotification,
+                352 => ExchangeOrderNotification,
+                353 => BracketUpdates,
+                355 => UpdateEasyToBorrowList,
+                356 => AccountRmsUpdates,
+                357 => UserInfoUpdate,
+                358 => UserAccountUpdate,
+                401 => ResponsePnLPositionUpdates,
+                403 => ResponsePnLPositionSnapshot,
+                450 => InstrumentPnLPositionUpdate,
+                451 => AccountPnLPositionUpdate,
+                501 => ResponseListUnacceptedAgreements,
+                503 => ResponseListAcceptedAgreements,
+                505 => ResponseAcceptAgreement,
+                507 => ResponseShowAgreement,
+                509 => ResponseSetRithmicMrktDataSelfCertStatus,
+                3501 => ResponseModifyOrderReferenceData,
+                3503 => ResponseOrderSessionConfig,
+                3505 => ResponseExitPosition,
+                3507 => ResponseReplayExecutions,
+                3509 => ResponseAccountRmsUpdates,
+                3511 => ResponseGetUserInfo,
+                3513 => ResponseShowFillHistory,
+            }
+        };
+    }
 
     fn encode_with_header<T: Message>(message: &T) -> Bytes {
         let mut payload = Vec::new();
@@ -1752,13 +1859,13 @@ mod tests {
 
     #[test]
     fn unmapped_template_decodes_as_update_without_error() {
-        // 358 has no decoder here, so the frame must survive as an update
-        // rather than an error.
+        const UNKNOWN_TEMPLATE_ID: i32 = 999_999;
+
         let api = RithmicReceiverApi {
             source: "order_plant".to_string(),
         };
         let notification = RithmicOrderNotification {
-            template_id: 358,
+            template_id: UNKNOWN_TEMPLATE_ID,
             basket_id: Some("9214-2".to_string()),
             symbol: Some("MESU6".to_string()),
             ..RithmicOrderNotification::default()
@@ -1775,10 +1882,78 @@ mod tests {
             panic!("expected UnknownTemplate, got {:?}", response.message);
         };
 
-        assert_eq!(frame.template_id, 358);
+        assert_eq!(frame.template_id, UNKNOWN_TEMPLATE_ID);
 
         // Byte-identical to what was framed, length prefix aside.
         assert_eq!(frame.payload, Bytes::from(notification.encode_to_vec()));
+    }
+
+    #[test]
+    fn every_generated_inbound_template_is_registered_and_decodes() {
+        macro_rules! registered_type_names {
+            ($($template_id:literal => $message:ident,)*) => {
+                BTreeSet::from([$(stringify!($message)),*])
+            };
+        }
+
+        macro_rules! assert_all_decode {
+            ($($template_id:literal => $message:ident,)*) => {
+                $(
+                    let message = crate::rti::$message {
+                        template_id: $template_id,
+                        ..Default::default()
+                    };
+                    let response = decode_with_api(&message);
+
+                    assert!(
+                        !matches!(
+                            response.message,
+                            RithmicMessage::Unknown | RithmicMessage::UnknownTemplate(_)
+                        ),
+                        "template {} ({}) is not decoded by the receiver",
+                        $template_id,
+                        stringify!($message),
+                    );
+                )*
+            };
+        }
+
+        let registered = inbound_templates!(registered_type_names);
+        let generated = generated_template_types();
+        let expected = generated
+            .iter()
+            .copied()
+            .filter(|name| {
+                *name != "MessageType"
+                    && (!name.starts_with("Request") || *name == "RequestHeartbeat")
+            })
+            .collect::<BTreeSet<_>>();
+
+        assert_eq!(
+            registered, expected,
+            "the inbound template registry and generated src/rti.rs messages differ"
+        );
+
+        inbound_templates!(assert_all_decode);
+    }
+
+    fn generated_template_types() -> BTreeSet<&'static str> {
+        let mut template_types = BTreeSet::new();
+        let mut current_struct = None;
+
+        for line in include_str!("../rti.rs").lines() {
+            if let Some(declaration) = line.strip_prefix("pub struct ") {
+                current_struct = declaration.split_whitespace().next();
+            } else if line.trim() == "pub template_id: i32," {
+                if let Some(name) = current_struct {
+                    template_types.insert(name);
+                }
+            } else if line == "}" {
+                current_struct = None;
+            }
+        }
+
+        template_types
     }
 
     #[test]

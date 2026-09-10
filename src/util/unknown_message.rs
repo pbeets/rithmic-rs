@@ -26,9 +26,9 @@ const MAX_RENDERED_BYTES: usize = 32;
 /// use rithmic_rs::prost;
 /// use rithmic_rs::rti::messages::RithmicMessage;
 ///
-/// // Generated in your crate by prost-build, once you know what 358 maps to.
+/// // Generated in your crate by prost-build, once you know what 999999 maps to.
 /// #[derive(Clone, PartialEq, prost::Message)]
-/// pub struct Template358 {
+/// pub struct Template999999 {
 ///     #[prost(string, optional, tag = "110100")]
 ///     pub symbol: Option<String>,
 /// }
@@ -38,11 +38,11 @@ const MAX_RENDERED_BYTES: usize = 32;
 ///         return;
 ///     };
 ///
-///     // template_id=358 (84 bytes) a2e135054d45535536aae13503434d45…+52B
+///     // template_id=999999 (84 bytes) a2e135054d45535536aae13503434d45…+52B
 ///     tracing::warn!(payload = %frame.payload_hex(), "unmapped template: {frame}");
 ///
-///     if frame.template_id == 358 {
-///         if let Ok(decoded) = frame.decode_as::<Template358>() {
+///     if frame.template_id == 999_999 {
+///         if let Ok(decoded) = frame.decode_as::<Template999999>() {
 ///             println!("{:?}", decoded.symbol);
 ///         }
 ///     }
@@ -193,6 +193,8 @@ mod tests {
     use super::*;
     use crate::rti::{RequestCancelAllOrders, RithmicOrderNotification};
 
+    const UNKNOWN_TEMPLATE_ID: i32 = 999_999;
+
     fn frame<M: Message>(template_id: i32, message: &M) -> UnknownTemplateMessage {
         UnknownTemplateMessage {
             template_id,
@@ -202,7 +204,7 @@ mod tests {
 
     fn notification() -> RithmicOrderNotification {
         RithmicOrderNotification {
-            template_id: 358,
+            template_id: UNKNOWN_TEMPLATE_ID,
             basket_id: Some("9214-2".to_string()),
             symbol: Some("MESU6".to_string()),
             price: Some(6412.25),
@@ -214,7 +216,7 @@ mod tests {
     fn decodes_into_a_caller_supplied_type() {
         let original = notification();
 
-        let decoded: RithmicOrderNotification = frame(358, &original)
+        let decoded: RithmicOrderNotification = frame(UNKNOWN_TEMPLATE_ID, &original)
             .decode_as()
             .expect("payload round-trips into the matching type");
 
@@ -229,7 +231,7 @@ mod tests {
         let payload = vec![0x9a, 0xb6, 0x4b, 0x02, b'h', b'i'];
 
         let frame = UnknownTemplateMessage {
-            template_id: 358,
+            template_id: UNKNOWN_TEMPLATE_ID,
             payload: Bytes::from(payload),
         };
 
@@ -240,24 +242,24 @@ mod tests {
     fn decode_as_can_succeed_against_the_wrong_type() {
         // Guards the documented caveat: unknown fields are skipped, so this
         // decodes fine and drops everything but template_id.
-        let decoded = frame(358, &notification())
+        let decoded = frame(UNKNOWN_TEMPLATE_ID, &notification())
             .decode_as::<RequestCancelAllOrders>()
             .expect("unknown fields are skipped, so this decodes");
 
-        assert_eq!(decoded.template_id, 358);
+        assert_eq!(decoded.template_id, UNKNOWN_TEMPLATE_ID);
         assert_eq!(decoded.account_id, None);
     }
 
     #[test]
     fn payload_hex_round_trips_verbatim() {
-        let captured = frame(358, &notification());
+        let captured = frame(UNKNOWN_TEMPLATE_ID, &notification());
         let hex = captured.payload_hex();
 
         // Complete, unlike Display.
         assert_eq!(hex.len(), captured.payload.len() * 2);
         assert!(hex.chars().all(|character| character.is_ascii_hexdigit()));
 
-        let replayed = UnknownTemplateMessage::from_payload_hex(358, &hex)
+        let replayed = UnknownTemplateMessage::from_payload_hex(UNKNOWN_TEMPLATE_ID, &hex)
             .expect("payload_hex output parses back");
 
         assert_eq!(replayed, captured);
@@ -266,7 +268,7 @@ mod tests {
     #[test]
     fn from_payload_hex_tolerates_copy_paste() {
         let expected = UnknownTemplateMessage {
-            template_id: 358,
+            template_id: UNKNOWN_TEMPLATE_ID,
             payload: Bytes::from_static(&[0xde, 0xad, 0xbe, 0xef]),
         };
 
@@ -278,7 +280,7 @@ mod tests {
             "dead\nbeef",
         ] {
             assert_eq!(
-                UnknownTemplateMessage::from_payload_hex(358, input).as_ref(),
+                UnknownTemplateMessage::from_payload_hex(UNKNOWN_TEMPLATE_ID, input).as_ref(),
                 Some(&expected),
                 "{input:?}"
             );
@@ -288,21 +290,27 @@ mod tests {
     #[test]
     fn from_payload_hex_rejects_malformed_input() {
         // Odd digit count, and a non-hex character.
-        assert_eq!(UnknownTemplateMessage::from_payload_hex(358, "abc"), None);
-        assert_eq!(UnknownTemplateMessage::from_payload_hex(358, "zz"), None);
+        assert_eq!(
+            UnknownTemplateMessage::from_payload_hex(UNKNOWN_TEMPLATE_ID, "abc"),
+            None
+        );
+        assert_eq!(
+            UnknownTemplateMessage::from_payload_hex(UNKNOWN_TEMPLATE_ID, "zz"),
+            None
+        );
     }
 
     #[test]
     fn display_elides_a_long_payload() {
         let frame = UnknownTemplateMessage {
-            template_id: 358,
+            template_id: UNKNOWN_TEMPLATE_ID,
             payload: Bytes::from(vec![0xab; MAX_RENDERED_BYTES + 20]),
         };
 
         let rendered = frame.to_string();
 
         assert!(
-            rendered.starts_with("template_id=358 (52 bytes) "),
+            rendered.starts_with("template_id=999999 (52 bytes) "),
             "{rendered}"
         );
         assert!(rendered.ends_with("…+20B"), "{rendered}");
