@@ -32,6 +32,8 @@
 //! - `RESUME_KEY=1`: when a frame carries a `request_key` and no response
 //!   code (the venue's truncation notice), send `RequestResumeBars` (template
 //!   210) with that key as id `probe-2` and record what comes back.
+//!   `RESUME_KEY=all` resumes after every notice until a frame with a
+//!   response code closes the replay, so the whole protocol is on record.
 //! - `SECOND_REQUEST=1`: send a second, small replay (one day of one-minute
 //!   bars, id `probe-2`) the moment the first frame without
 //!   `rq_handler_rp_code` arrives, as a client that took that frame for the
@@ -217,7 +219,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or(150);
     let slow_ms: u64 = var("SLOW_MS").map(|v| v.parse()).transpose()?.unwrap_or(0);
     let second_request = var("SECOND_REQUEST").as_deref() == Some("1");
-    let resume_key = var("RESUME_KEY").as_deref() == Some("1");
+    let resume_key = var("RESUME_KEY");
+    let resume_every = resume_key.as_deref() == Some("all");
+    let resume_key = resume_every || resume_key.as_deref() == Some("1");
     let now = wall_now() as i64;
     let end: i32 = var("END")
         .map(|v| v.parse())
@@ -539,10 +543,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 envelope: envelope.clone(),
                 hex: hex(&data),
             });
-            let resume_with = envelope
-                .request_key
-                .clone()
-                .filter(|_| ordinal == 1 && resume_key && envelope.rp_code.is_empty());
+            let resume_with = envelope.request_key.clone().filter(|_| {
+                (ordinal == 1 || resume_every) && resume_key && envelope.rp_code.is_empty()
+            });
             if let Some(key) = resume_with {
                 let resume = build(|r: &mut RequestResumeBars| {
                     r.template_id = 210;
@@ -575,7 +578,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     sent.elapsed().as_secs_f64()
                 );
             }
-            if ordinal == 1 {
+            if resume_every && envelope.rp_code.is_empty() {
+                // A notice that was just resumed: keep reading, bounded by
+                // the no-reply deadline from here.
+                stop_at = Some(Instant::now() + deadline_without_terminal);
+            } else if resume_every {
+                stop_at = Some(Instant::now() + Duration::from_secs(5));
+            } else if ordinal == 1 {
                 // A refusal with no data streams nothing more; a marker that
                 // closed data may be followed by a continuation, so wait.
                 let refused_empty = watch.data_frames == 0

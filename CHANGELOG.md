@@ -9,12 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `RithmicResponse::is_truncated`: `true` for the frame that closes a replay
-  the server truncated on its output budget — a dataless frame carrying a
-  `request_key` and no response code, on which a multi-part reply resolves.
-  The records before it are a prefix of the window; ask again from the last
-  one. The request handler says so once at `INFO`, with the part count and
-  the key.
+- A replay the server truncates on its output budget is resumed by the plant
+  itself. The server closes such a reply with a truncation notice — a
+  dataless frame carrying a `request_key` and no response code, named by the
+  new `RithmicResponse::is_truncated` — and the plant answers it with
+  `RequestResumeBars` and that key, consumes the acknowledgement, and keeps
+  the caller waiting while the server continues the reply on the same
+  request, until its real end marker. The loaders therefore return the whole
+  window, one round trip per ~7 MB; the notice is never delivered, the cut is
+  said once at `INFO`, and a refused resume delivers the prefix at `WARN`. A
+  notice for a caller that has stopped waiting is counted, not resumed.
 - `examples/replay_frames.rs`: every frame of one replay on the raw socket,
   bypassing the request handler, including what the server sends after a
   truncation. It is how the behaviour below was established.
@@ -29,11 +33,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   "output inhibited"]` on the same id over a minute later. A truncation
   notice opens the count, so the parts after it do not announce themselves.
 - The `_all` loaders' docs no longer claim the whole window: `resume_bars`
-  lifts the 10,000-record cap, not the server's output budget (about 7.4 MB
-  on per-price replays, observed 2026-09-12 on Chicago: the same window cut
-  at the same frame and byte count twice, while a 224 MB one-tick replay
-  came back whole). `resume_key` is documented as the key the truncation
-  notice carries rather than one the server never sends.
+  lifts the 10,000-record cap, not the server's output budget of about 7 MB
+  (observed 2026-09-12 on Chicago: a per-price window cut at the same frame
+  and byte count twice and closed with the notice; a 60-day one-minute window
+  cut at 53,190 bars, 7.5 days short, and closed with a complete end marker;
+  a 224 MB one-tick replay whole). `resume_key` is documented as the key the
+  truncation notice carries rather than one the server never sends.
 - A caller that drops its receiver mid-reply no longer has the rest of the reply
   held until the terminal; the next part releases it and says so once at `INFO`,
   and the terminal is one `INFO` line rather than a dump of every frame.

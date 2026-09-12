@@ -91,14 +91,19 @@ impl RithmicResponse {
     /// Rithmic's history plant streams a replay it cannot finish inside its
     /// output budget up to that budget, then sends a dataless frame carrying
     /// a `request_key` and **no response code** — neither `rq_handler_rp_code`
-    /// nor `rp_code`. That frame resolves the reply here and is the last
-    /// frame delivered; the records before it are a prefix of the window, not
-    /// the window. The server keeps streaming the request briefly afterwards
-    /// and sends its real final response, `rp_code` `["12", "output
-    /// inhibited"]`, on the same id over a minute later; the request handler
-    /// counts both and logs them once, delivering neither. See the truncation
-    /// notes on [`load_ticks_all`](crate::RithmicHistoryPlantHandle::load_ticks_all)
-    /// and [`load_volume_profile_minute_bars`](crate::RithmicHistoryPlantHandle::load_volume_profile_minute_bars).
+    /// nor `rp_code`. It is not an end marker, and the request handler does
+    /// not deliver it: while the caller is waiting, the plant sends
+    /// `RequestResumeBars` with the key and the reply goes on, on the same
+    /// request, until its real end marker (see
+    /// [`resume_bars`](crate::RithmicHistoryPlantHandle::resume_bars)). Only
+    /// when the caller has stopped waiting is the notice the reply's last
+    /// frame; the records before it are then a prefix of the window. Left
+    /// alone, the server keeps streaming the request briefly and sends its
+    /// real final response, `rp_code` `["12", "output inhibited"]`, on the
+    /// same id over a minute later; the request handler counts both and logs
+    /// them once. See the truncation notes on
+    /// [`load_ticks_all`](crate::RithmicHistoryPlantHandle::load_ticks_all) and
+    /// [`load_volume_profile_minute_bars`](crate::RithmicHistoryPlantHandle::load_volume_profile_minute_bars).
     ///
     /// A complete replay ends with a frame carrying `rp_code` `["0"]` and no
     /// key; a refused one with a non-zero `rp_code` and [`error`](Self::error)

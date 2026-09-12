@@ -270,18 +270,23 @@ identical to a complete one's. The `_all` variants set `resume_bars`, which
 lifts the cap. `load_ticks`, `load_tick_bars` and `load_time_bars` leave the cap
 in place; reach for them only when you want at most 10,000 records.
 
-**Check the last frame.** The server can also close a reply on an output budget
-of its own, whatever the flag says — per-price minute replays were cut at about
-7.4 MB, while a 224 MB one-tick replay came back whole. A reply cut there is
-closed with a truncation notice — a dataless frame carrying a `request_key` and
-no response code — and the `_all` call returns the records streamed so far with
-`is_truncated()` true on its last frame. Ask again from the last record:
+**Compare the last record with your window.** The server can also close a reply
+on an output budget of its own, about 7 MB of frames, whatever the flag says.
+When it does so with its truncation notice — a dataless frame carrying a
+`request_key` and no response code — the plant resumes the reply itself
+(`RequestResumeBars` with that key; the server continues on the same request)
+until the real end marker arrives, so the `_all` call still returns the whole
+window, one round trip per 7 MB. A time bar reply has also been seen cut with a
+complete end marker and nothing else: a 60-day one-minute window came back as
+53,190 bars ending 7.5 days short, under `rp_code ["0"]`. So compare the last
+record with the window you asked for, and ask again from it when it falls
+short:
 
 ```rust
 let mut bars = handle
     .load_time_bars_all(symbol.clone(), exchange.clone(), TimeBarType::MinuteBar, 1, start, end)
     .await?;
-while bars.last().is_some_and(|last| last.is_truncated()) {
+loop {
     // The newest bar's close is where the next page starts; the bar closing
     // there may be sent again, so keep the first copy.
     let newest = bars.iter().rev().find_map(|r| match &r.message {
@@ -289,19 +294,25 @@ while bars.last().is_some_and(|last| last.is_truncated()) {
         _ => None,
     });
     let Some(from) = newest else { break };
-    bars.pop(); // the notice
+    if from + 60 > end {
+        break; // the window is covered
+    }
     let rest = handle
         .load_time_bars_all(symbol.clone(), exchange.clone(), TimeBarType::MinuteBar, 1, from, end)
         .await?;
+    if rest.iter().all(|r| r.rp_code().is_some_and(|c| !c.is_empty())) {
+        break; // nothing newer came back
+    }
+    bars.pop(); // the end marker of the page before
     bars.extend(rest);
 }
 ```
 
-The server keeps streaming a truncated request for a moment and sends its real
-final response, `rp_code ["12", "output inhibited"]`, over a minute later; both
-are counted and logged once, never delivered, and a request sent in the meantime
-is served at once. [`examples/replay_frames.rs`](examples/replay_frames.rs)
-records every frame of one replay on the raw socket, which is how this was
+Left alone, a truncated request keeps streaming for a moment and then draws
+`rp_code ["12", "output inhibited"]` over a minute later; both are counted and
+logged once, never delivered, and a request sent in the meantime is served at
+once. [`examples/replay_frames.rs`](examples/replay_frames.rs) records every
+frame of one replay on the raw socket, which is how all of this was
 established.
 
 The whole window is buffered before the call returns. A full 23-hour ES session

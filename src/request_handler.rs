@@ -1,6 +1,6 @@
 use std::collections::hash_map::Entry;
 use std::{collections::HashMap, time::Duration};
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use tokio::sync::oneshot;
 
@@ -26,6 +26,19 @@ pub struct RithmicRequest {
 
 type Responder = oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>;
 
+/// What the plant must send after a truncation notice: `RequestResumeBars`
+/// with the key the notice carried, so the venue continues `request_id`'s
+/// reply on that same id. Returned by [`RithmicRequestHandler::handle_response`];
+/// the plant registers the resume request's own id with
+/// [`RithmicRequestHandler::register_resume`] before or after sending it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Resume {
+    /// The replay whose reply is to be continued.
+    pub(crate) request_id: String,
+    /// The `request_key` the notice carried.
+    pub(crate) key: String,
+}
+
 /// Matches Rithmic responses to the callers waiting on them.
 ///
 /// A registered request is resolved by a response carrying its id, by
@@ -48,14 +61,23 @@ pub struct RithmicRequestHandler {
     /// counted here and reported once, when that final response arrives,
     /// instead of one warning per frame.
     ///
-    /// An id is inserted by the truncation notice that resolved its reply, or
-    /// by a part that finds no responder, and removed by the frame that ends
-    /// the continuation, so the map holds only the ids a continuation is in
-    /// progress on. It is bounded by the venue's behaviour,
+    /// An id is inserted by a truncation notice whose caller had stopped
+    /// waiting, or by a part that finds no responder, and removed by the
+    /// frame that ends the continuation, so the map holds only the ids a
+    /// continuation is in progress on. A notice whose caller is still
+    /// waiting is resumed instead ([`Resume`]). It is bounded by the venue's
+    /// behaviour,
     /// not by a constant, and carries no size cap: each entry is an id and a
     /// counter, a continuation the venue never terminates leaves exactly one,
     /// and [`Self::drain_and_drop`] clears the map when the connection goes.
     late_continuations: HashMap<String, u64>,
+
+    /// Resume requests in flight, by their own id, mapped to the replay they
+    /// continue. The venue answers a resume with `ResponseResumeBars` on the
+    /// resume's id and streams the continuation on the replay's id; the
+    /// acknowledgement is consumed here, a refusal resolves the replay with
+    /// what it has, and nothing is delivered on the resume's id.
+    resumes: HashMap<String, String>,
 }
 
 impl RithmicRequestHandler {
@@ -68,6 +90,12 @@ impl RithmicRequestHandler {
     pub fn register_request(&mut self, request: RithmicRequest) {
         self.handle_map
             .insert(request.request_id, request.responder);
+    }
+
+    /// Record that `resume_id` is the `RequestResumeBars` sent to continue
+    /// `request_id`'s reply, so its acknowledgement is matched to that reply.
+    pub(crate) fn register_resume(&mut self, resume_id: String, request_id: String) {
+        self.resumes.insert(resume_id, request_id);
     }
 
     /// Hand the reply to its caller. A caller that stopped waiting — its own
@@ -102,6 +130,7 @@ impl RithmicRequestHandler {
     /// Returns `true` if the request was found and the error was sent.
     pub fn fail_request(&mut self, request_id: &str, error: RithmicError) -> bool {
         self.response_vec_map.remove(request_id);
+        self.resumes.retain(|_, replay| replay != request_id);
         if let Some(responder) = self.handle_map.remove(request_id) {
             let _ = responder.send(Err(error));
             true
@@ -110,13 +139,21 @@ impl RithmicRequestHandler {
         }
     }
 
-    pub fn handle_response(&mut self, response: RithmicResponse) {
+    /// Route one response. Returns the resume the plant must send when the
+    /// response is the notice that closes a truncated replay somebody is
+    /// still waiting on; `None` otherwise.
+    pub(crate) fn handle_response(&mut self, response: RithmicResponse) -> Option<Resume> {
         match response.message {
             RithmicMessage::ResponseHeartbeat(_) => {
                 // Handle heartbeat response if a callback is registered
                 if let Some(responder) = self.handle_map.remove(&response.request_id) {
                     self.send_to_responder(responder, vec![response]);
                 }
+            }
+            RithmicMessage::ResponseResumeBars(_)
+                if self.resumes.contains_key(&response.request_id) =>
+            {
+                self.handle_resume_ack(response);
             }
             _ => {
                 if !response.multi_response {
@@ -150,6 +187,16 @@ impl RithmicRequestHandler {
                             }
                             None => self.count_late_part(&response.request_id),
                         }
+                    } else if response.is_truncated()
+                        && self
+                            .handle_map
+                            .get(&response.request_id)
+                            .is_some_and(|responder| !responder.is_closed())
+                    {
+                        // The venue cut the reply and handed out the key to
+                        // continue it: the caller keeps waiting, the parts
+                        // stay, and the plant asks the venue to go on.
+                        return Some(self.ask_to_resume(&response));
                     } else if let Some(responder) = self.handle_map.remove(&response.request_id) {
                         let request_id = response.request_id.clone();
                         let truncated = response.is_truncated();
@@ -163,6 +210,8 @@ impl RithmicRequestHandler {
                             }
                         };
                         if truncated {
+                            // The caller stopped waiting: what the venue still
+                            // sends for the id is counted, not resumed.
                             self.note_truncation(&request_id, &response_vec);
                         }
                         self.send_to_responder(responder, response_vec);
@@ -171,6 +220,65 @@ impl RithmicRequestHandler {
                     }
                 }
             }
+        }
+
+        None
+    }
+
+    /// The venue's answer to a resume the plant sent: consumed here, since
+    /// the continuation itself arrives on the replay's id. A refusal ends
+    /// the wait — the replay resolves with the parts streamed before the
+    /// notice, which are a prefix of the window, said at WARN.
+    fn handle_resume_ack(&mut self, ack: RithmicResponse) {
+        let Some(replay) = self.resumes.remove(&ack.request_id) else {
+            return;
+        };
+        let rp_code = ack.rp_code().unwrap_or(&[]);
+
+        match ack.error {
+            None => info!(
+                "request_id {}: the venue acknowledged the resume of request_id {} (rp_code {:?})",
+                ack.request_id, replay, rp_code
+            ),
+            Some(error) => {
+                let parts = self.response_vec_map.remove(&replay).unwrap_or_default();
+
+                warn!(
+                    "request_id {}: the venue refused to resume request_id {} ({}); the {} parts \
+                     streamed before the cut are delivered as the reply, a prefix of the window",
+                    ack.request_id,
+                    replay,
+                    error,
+                    parts.len()
+                );
+
+                if let Some(responder) = self.handle_map.remove(&replay) {
+                    self.send_to_responder(responder, parts);
+                }
+            }
+        }
+    }
+
+    /// Say once that the venue truncated a pending reply and is being asked
+    /// to continue it. The notice itself is not kept: it is protocol, not
+    /// data, and the reply the caller gets ends with the venue's real end
+    /// marker.
+    fn ask_to_resume(&self, notice: &RithmicResponse) -> Resume {
+        let key = notice.resume_key().unwrap_or_default().to_string();
+        let parts = self
+            .response_vec_map
+            .get(&notice.request_id)
+            .map_or(0, Vec::len);
+
+        info!(
+            "request_id {}: the venue truncated this reply after {} parts (request_key {:?}); \
+             asking it to resume",
+            notice.request_id, parts, key
+        );
+
+        Resume {
+            request_id: notice.request_id.clone(),
+            key,
         }
     }
 
@@ -272,6 +380,7 @@ impl RithmicRequestHandler {
         }
         self.response_vec_map.clear();
         self.late_continuations.clear();
+        self.resumes.clear();
     }
 }
 
@@ -345,7 +454,8 @@ pub(crate) mod log_capture {
 mod tests {
     use super::*;
     use crate::rti::{
-        ResponseHeartbeat, ResponseLogin, ResponseReferenceData, ResponseVolumeProfileMinuteBars,
+        ResponseHeartbeat, ResponseLogin, ResponseReferenceData, ResponseResumeBars,
+        ResponseVolumeProfileMinuteBars,
     };
 
     fn make_response(id: &str, message: RithmicMessage) -> RithmicResponse {
@@ -1006,28 +1116,124 @@ mod tests {
     // Truncated replays
     // =========================================================================
 
-    /// The venue closes an over-budget replay with a truncation notice. The
-    /// parts and the notice are delivered, the cut is said once with the key,
-    /// the parts the venue still sends do not announce themselves again, and
-    /// the venue's final response reports their count and closes the entry.
+    /// The venue closes an over-budget replay with a truncation notice while
+    /// the caller is waiting: the caller keeps waiting, the parts stay, the
+    /// plant is told to resume with the key, the acknowledgement is consumed,
+    /// the continuation joins the parts, and the venue's real end marker
+    /// resolves the whole reply — without the notice in it.
     #[test]
-    fn a_truncation_notice_resolves_the_reply_and_is_said_once() {
+    fn a_truncation_notice_keeps_the_caller_waiting_and_asks_to_resume() {
         let mut handler = RithmicRequestHandler::new();
         let mut rx = register(&mut handler, "7");
 
-        let (_, logged) = log_capture::capture(|| {
-            handler.handle_response(part("7", volume_profile_message(&[])));
-            handler.handle_response(part("7", volume_profile_message(&[])));
-            handler.handle_response(terminal("7", truncation_notice("0")));
-        });
+        assert_eq!(
+            handler.handle_response(part("7", volume_profile_message(&[]))),
+            None
+        );
+        assert_eq!(
+            handler.handle_response(part("7", volume_profile_message(&[]))),
+            None
+        );
 
-        let reply = rx.try_recv().unwrap().unwrap();
-        assert_eq!(reply.len(), 3, "the parts and the notice are delivered");
-        assert!(reply[2].is_truncated());
+        let (resume, logged) =
+            log_capture::capture(|| handler.handle_response(terminal("7", truncation_notice("0"))));
+        assert_eq!(
+            resume,
+            Some(Resume {
+                request_id: "7".to_string(),
+                key: "0".to_string(),
+            })
+        );
         assert!(
             logged.contains(
-                "request_id 7: the venue truncated this reply after 2 parts (request_key \"0\")"
+                "request_id 7: the venue truncated this reply after 2 parts (request_key \"0\"); \
+                 asking it to resume"
             ),
+            "{logged}"
+        );
+        assert!(rx.try_recv().is_err(), "the caller keeps waiting");
+
+        handler.register_resume("9".to_string(), "7".to_string());
+        let (ack, logged) = log_capture::capture(|| {
+            handler.handle_response(terminal(
+                "9",
+                RithmicMessage::ResponseResumeBars(ResponseResumeBars {
+                    rp_code: vec!["0".to_string()],
+                    ..Default::default()
+                }),
+            ))
+        });
+        assert_eq!(ack, None);
+        assert!(
+            logged.contains("acknowledged the resume of request_id 7"),
+            "{logged}"
+        );
+        assert!(!logged.contains("no caller waiting"), "{logged}");
+
+        handler.handle_response(part("7", volume_profile_message(&[])));
+        handler.handle_response(terminal("7", volume_profile_message(&["0"])));
+
+        let reply = rx.try_recv().unwrap().unwrap();
+        assert_eq!(
+            reply.len(),
+            4,
+            "three parts and the end marker; the notice is not data"
+        );
+        assert!(reply.iter().all(|frame| !frame.is_truncated()));
+        assert!(reply[3].rp_code() == Some(&["0".to_string()][..]));
+        assert!(handler.late_continuations.is_empty());
+        assert!(handler.resumes.is_empty());
+    }
+
+    /// A venue that refuses the resume ends the wait: the caller gets the
+    /// parts streamed before the notice, a prefix of the window, and the
+    /// refusal is said at WARN.
+    #[test]
+    fn a_refused_resume_hands_the_caller_the_prefix() {
+        let mut handler = RithmicRequestHandler::new();
+        let mut rx = register(&mut handler, "7");
+
+        handler.handle_response(part("7", volume_profile_message(&[])));
+        let resume = handler
+            .handle_response(terminal("7", truncation_notice("0")))
+            .expect("a pending truncated reply asks to resume");
+        handler.register_resume("9".to_string(), resume.request_id);
+
+        let mut refusal = terminal(
+            "9",
+            RithmicMessage::ResponseResumeBars(ResponseResumeBars {
+                rp_code: vec!["7".to_string(), "no data".to_string()],
+                ..Default::default()
+            }),
+        );
+        refusal.error = Some(RithmicError::ProtocolError("refused".to_string()));
+        let (_, logged) = log_capture::capture(|| handler.handle_response(refusal));
+
+        let reply = rx.try_recv().unwrap().unwrap();
+        assert_eq!(reply.len(), 1, "the prefix, and nothing invented after it");
+        assert!(
+            logged.contains("refused to resume request_id 7") && logged.contains("1 parts"),
+            "{logged}"
+        );
+        assert!(handler.resumes.is_empty());
+    }
+
+    /// A truncation notice for a caller that stopped waiting is not resumed:
+    /// nobody would get the continuation. The reply is released, the cut is
+    /// said once, and what the venue still sends for the id is counted.
+    #[test]
+    fn a_truncation_notice_for_a_caller_that_stopped_waiting_is_counted_not_resumed() {
+        let mut handler = RithmicRequestHandler::new();
+        let rx = register(&mut handler, "7");
+
+        handler.handle_response(part("7", volume_profile_message(&[])));
+        drop(rx);
+
+        let (resume, logged) =
+            log_capture::capture(|| handler.handle_response(terminal("7", truncation_notice("0"))));
+        assert_eq!(resume, None);
+        assert!(
+            logged.contains("the venue truncated this reply after 1 parts"),
             "{logged}"
         );
 
@@ -1035,22 +1241,12 @@ mod tests {
             for _ in 0..3 {
                 handler.handle_response(part("7", volume_profile_message(&[])));
             }
-        });
-        assert!(
-            !logged.contains("parts are arriving"),
-            "the notice already said the rest is counted: {logged}"
-        );
-        assert!(
-            handler.response_vec_map.is_empty(),
-            "late parts are counted, not kept"
-        );
-
-        let (_, logged) = log_capture::capture(|| {
             handler.handle_response(terminal(
                 "7",
                 volume_profile_message(&["12", "output inhibited"]),
             ));
         });
+        assert!(!logged.contains("parts are arriving"), "{logged}");
         assert!(
             logged.contains("3 more parts") && logged.contains("output inhibited"),
             "{logged}"
