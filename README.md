@@ -271,12 +271,14 @@ lifts the cap. `load_ticks`, `load_tick_bars` and `load_time_bars` leave the cap
 in place; reach for them only when you want at most 10,000 records.
 
 **Compare the last record with your window.** The server can also close a reply
-on an output budget of its own, about 7 MB of frames, whatever the flag says.
-When it does so with its truncation notice — a dataless frame carrying a
-`request_key` and no response code — the plant resumes the reply itself
-(`RequestResumeBars` with that key; the server continues on the same request)
-until the real end marker arrives, so the `_all` call still returns the whole
-window, one round trip per 7 MB. A time bar reply has also been seen cut with a
+on an output budget of its own — about four seconds of streaming, whatever the
+window asked and whatever the flag says. When it does so with its truncation
+notice — a dataless frame carrying a `request_key` and no response code — the
+plant resumes the reply itself (`RequestResumeBars` with that key; the server
+continues on the same request) until the real end marker arrives, so the `_all`
+call still returns the whole window, one round trip per cut; a caller that pages
+replays itself turns that off with `resume_truncated_replays(false)` and gets
+the notice as the reply's last frame. A time bar reply has also been seen cut with a
 complete end marker and nothing else: a 60-day one-minute window came back as
 53,190 bars ending 7.5 days short, under `rp_code ["0"]`. So compare the last
 record with the window you asked for, and ask again from it when it falls

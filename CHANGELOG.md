@@ -16,9 +16,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `RequestResumeBars` and that key, consumes the acknowledgement, and keeps
   the caller waiting while the server continues the reply on the same
   request, until its real end marker. The loaders therefore return the whole
-  window, one round trip per ~7 MB; the notice is never delivered, the cut is
-  said once at `INFO`, and a refused resume delivers the prefix at `WARN`. A
-  notice for a caller that has stopped waiting is counted, not resumed.
+  window, one round trip per cut (about four seconds of streaming each); the
+  notice is never delivered, the cut is said once at `INFO`, and a refused
+  resume delivers the prefix at `WARN`. A notice for a caller that has stopped
+  waiting is counted, not resumed.
+- `RithmicHistoryPlantHandle::resume_truncated_replays(bool)`: turns that off
+  for a caller that pages replays itself and needs every reply back inside its
+  own deadline; the notice is then the reply's last frame
+  (`RithmicResponse::is_truncated`).
 - `examples/replay_frames.rs`: every frame of one replay on the raw socket,
   bypassing the request handler, including what the server sends after a
   truncation. It is how the behaviour below was established.
@@ -33,11 +38,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   "output inhibited"]` on the same id over a minute later. A truncation
   notice opens the count, so the parts after it do not announce themselves.
 - The `_all` loaders' docs no longer claim the whole window: `resume_bars`
-  lifts the 10,000-record cap, not the server's output budget of about 7 MB
-  (observed 2026-09-12 on Chicago: a per-price window cut at the same frame
-  and byte count twice and closed with the notice; a 60-day one-minute window
-  cut at 53,190 bars, 7.5 days short, and closed with a complete end marker;
-  a 224 MB one-tick replay whole). `resume_key` is documented as the key the
+  lifts the 10,000-record cap, not the server's output budget of about four
+  seconds of streaming (observed 2026-09-12 on Chicago: a per-price window
+  cut at the same frame three times over and closed with the notice, and at
+  925 rows when the server streamed slowly; a 60-day one-minute window cut at
+  53,190 bars, 7.5 days short, and closed with a complete end marker; a 224 MB
+  one-tick replay whole in 12.8 s). `resume_key` is documented as the key the
   truncation notice carries rather than one the server never sends.
 - A caller that drops its receiver mid-reply no longer has the rest of the reply
   held until the terminal; the next part releases it and says so once at `INFO`,

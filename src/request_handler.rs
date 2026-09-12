@@ -44,10 +44,15 @@ pub(crate) struct Resume {
 /// A registered request is resolved by a response carrying its id, by
 /// [`Self::fail_request`], or by [`Self::drain_and_drop`] on disconnect. It is
 /// never failed on a clock: the caller owns its own deadline.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct RithmicRequestHandler {
     handle_map: HashMap<String, Responder>,
     response_vec_map: HashMap<String, Vec<RithmicResponse>>,
+
+    /// Whether a truncation notice for a pending replay is answered with a
+    /// resume (`true`, the default) or resolves the reply as it stands, the
+    /// notice as its last frame, for a caller that pages replays itself.
+    resume_truncated: bool,
 
     /// Requests the venue is still streaming after the frame that resolved
     /// them, counted rather than kept.
@@ -80,9 +85,29 @@ pub struct RithmicRequestHandler {
     resumes: HashMap<String, String>,
 }
 
+impl Default for RithmicRequestHandler {
+    fn default() -> Self {
+        Self {
+            handle_map: HashMap::new(),
+            response_vec_map: HashMap::new(),
+            resume_truncated: true,
+            late_continuations: HashMap::new(),
+            resumes: HashMap::new(),
+        }
+    }
+}
+
 impl RithmicRequestHandler {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Choose what a truncation notice does to a pending replay: resume it
+    /// (`true`, the default) or resolve the reply with the notice as its
+    /// last frame, for a caller that pages replays itself. See
+    /// [`RithmicResponse::is_truncated`].
+    pub fn set_resume_truncated(&mut self, resume: bool) {
+        self.resume_truncated = resume;
     }
 
     /// Register a request. It waits until a response carries its id, until it
@@ -188,6 +213,7 @@ impl RithmicRequestHandler {
                             None => self.count_late_part(&response.request_id),
                         }
                     } else if response.is_truncated()
+                        && self.resume_truncated
                         && self
                             .handle_map
                             .get(&response.request_id)
@@ -210,8 +236,9 @@ impl RithmicRequestHandler {
                             }
                         };
                         if truncated {
-                            // The caller stopped waiting: what the venue still
-                            // sends for the id is counted, not resumed.
+                            // Resumption is off, or the caller stopped
+                            // waiting: what the venue still sends for the id
+                            // is counted, not resumed.
                             self.note_truncation(&request_id, &response_vec);
                         }
                         self.send_to_responder(responder, response_vec);
@@ -1234,6 +1261,46 @@ mod tests {
         assert_eq!(resume, None);
         assert!(
             logged.contains("the venue truncated this reply after 1 parts"),
+            "{logged}"
+        );
+
+        let (_, logged) = log_capture::capture(|| {
+            for _ in 0..3 {
+                handler.handle_response(part("7", volume_profile_message(&[])));
+            }
+            handler.handle_response(terminal(
+                "7",
+                volume_profile_message(&["12", "output inhibited"]),
+            ));
+        });
+        assert!(!logged.contains("parts are arriving"), "{logged}");
+        assert!(
+            logged.contains("3 more parts") && logged.contains("output inhibited"),
+            "{logged}"
+        );
+        assert!(handler.late_continuations.is_empty());
+    }
+
+    /// With resumption off — a caller that pages replays itself — the notice
+    /// resolves the reply as its last frame, the cut is said once, and what
+    /// the venue still sends for the id is counted, not resumed.
+    #[test]
+    fn a_truncation_notice_resolves_the_reply_when_resumption_is_off() {
+        let mut handler = RithmicRequestHandler::new();
+        handler.set_resume_truncated(false);
+        let mut rx = register(&mut handler, "7");
+
+        handler.handle_response(part("7", volume_profile_message(&[])));
+        handler.handle_response(part("7", volume_profile_message(&[])));
+        let (resume, logged) =
+            log_capture::capture(|| handler.handle_response(terminal("7", truncation_notice("0"))));
+        assert_eq!(resume, None, "no resume is asked for");
+
+        let reply = rx.try_recv().unwrap().unwrap();
+        assert_eq!(reply.len(), 3, "the parts and the notice are delivered");
+        assert!(reply[2].is_truncated());
+        assert!(
+            logged.contains("the venue truncated this reply after 2 parts"),
             "{logged}"
         );
 
