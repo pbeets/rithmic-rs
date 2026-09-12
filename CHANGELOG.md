@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- A venue that keeps streaming after its own end marker is no longer logged as
+  an error. On 2026-09-12 the history plant answered one
+  `RequestVolumeProfileMinuteBars` (template 208) with thousands of parts, a
+  dataless end marker, ~170 further parts for the same request id within
+  340 ms, and then — 70-85 s later — a final response carrying `rp_code`
+  `["12", "output inhibited"]`, which is how it says the window asked for
+  exceeded its output budget. The request had already been resolved by the end
+  marker, so each of those parts produced a `WARN` ("Dropping part of a
+  multi-part response") and the final response a 40-line `{:#?}` dump at
+  `ERROR`. Parts arriving for a request nothing is waiting on are now counted
+  per request id and logged at `TRACE`, and the frame that ends the
+  continuation reports it once at `INFO` with the number of parts and the
+  `rp_code` it ended with. The part itself is still not delivered: the caller
+  already has its reply, so a truncated window has to be re-fetched — page the
+  window on your side.
+- A caller that stops waiting mid-reply (it dropped the receiver, for example
+  because its own deadline elapsed) no longer has the rest of the reply
+  accumulated for nobody until the terminal frame, and the terminal no longer
+  produces a `{:#?}` dump of every frame at `ERROR`. The next part releases the
+  request and says so once at `INFO` with how many parts were held; the rest is
+  counted as a late continuation, and a terminal that finds its caller gone is
+  one `INFO` line with the frame count and the `rp_code`.
+- A terminal response for a request id nothing is waiting on and with no
+  continuation open is still an `ERROR`, but now one line naming the request
+  id, the message variant and its `rp_code` instead of a `{:#?}` dump of the
+  whole `RithmicResponse`.
+
 ## [3.1.0]
 
 ### Requests no longer time out

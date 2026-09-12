@@ -1,10 +1,12 @@
 use std::{collections::HashMap, time::Duration};
-use tracing::{error, warn};
+use tracing::{error, info, trace};
 
 use tokio::sync::oneshot;
 
 use crate::{
-    api::receiver_api::RithmicResponse, error::RithmicError, rti::messages::RithmicMessage,
+    api::{receiver_api::RithmicResponse, rp_code::response_rp_code_info},
+    error::RithmicError,
+    rti::messages::RithmicMessage,
 };
 
 /// No longer used. The library does not time out requests; wrap the call in
@@ -32,6 +34,24 @@ type Responder = oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>;
 pub struct RithmicRequestHandler {
     handle_map: HashMap<String, Responder>,
     response_vec_map: HashMap<String, Vec<RithmicResponse>>,
+
+    /// Requests the venue is still streaming after the frame that resolved
+    /// them, counted rather than kept.
+    ///
+    /// The history plant ends an over-budget window with a dataless end
+    /// marker, sends a further burst of parts for the same request id, and
+    /// then — up to a minute and a half later — a final response carrying
+    /// `rp_code` `["12", "output inhibited"]`. That is the venue's own
+    /// protocol, so the parts are counted here and reported once, when that
+    /// final response arrives, instead of one warning per frame.
+    ///
+    /// An id is inserted by a part that finds no responder and removed by the
+    /// frame that ends the continuation, so the map holds only the ids a
+    /// continuation is in progress on. It is bounded by the venue's behaviour,
+    /// not by a constant, and carries no size cap: each entry is an id and a
+    /// counter, a continuation the venue never terminates leaves exactly one,
+    /// and [`Self::drain_and_drop`] clears the map when the connection goes.
+    late_continuations: HashMap<String, u64>,
 }
 
 impl RithmicRequestHandler {
@@ -46,21 +66,25 @@ impl RithmicRequestHandler {
             .insert(request.request_id, request.responder);
     }
 
+    /// Hand the reply to its caller. A caller that stopped waiting — the
+    /// adapter's per-page deadline elapsed and dropped its receiver — has
+    /// nowhere for the reply to go; that is said in one line with the frame
+    /// count and the venue's code, never as a dump of every frame.
     fn send_to_responder(
         &self,
         responder: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
         responses: Vec<RithmicResponse>,
     ) {
-        if let Err(e) = responder.send(Ok(responses)) {
-            let request_id = e
-                .as_ref()
-                .ok()
-                .and_then(|r| r.first())
-                .map(|r| r.request_id.as_str())
-                .unwrap_or("");
-            error!(
-                "Failed to send response: receiver dropped for request_id {}: {:#?}",
-                request_id, e
+        if let Err(unsent) = responder.send(Ok(responses)) {
+            let frames = unsent.as_ref().map(Vec::len).unwrap_or(0);
+            let last = unsent.as_ref().ok().and_then(|frames| frames.last());
+            let request_id = last.map(|frame| frame.request_id.as_str()).unwrap_or("");
+            let rp_code = last.and_then(RithmicResponse::rp_code);
+
+            info!(
+                "request {}: the caller stopped waiting before the reply arrived; {} frames \
+                 dropped, final rp_code {:?}",
+                request_id, frames, rp_code
             );
         }
     }
@@ -99,24 +123,27 @@ impl RithmicRequestHandler {
                     if let Some(responder) = self.handle_map.remove(&response.request_id) {
                         self.send_to_responder(responder, vec![response]);
                     } else {
-                        error!("No responder found for response: {:#?}", response);
+                        self.report_unmatched_terminal(&response);
                     }
                 } else {
                     // If response has more, we store it in a vector and wait for more messages
                     if response.has_more {
-                        // Accumulate only while a responder is waiting: parts for
-                        // a gone id would re-create an entry nothing removes.
-                        if self.handle_map.contains_key(&response.request_id) {
-                            self.response_vec_map
-                                .entry(response.request_id.clone())
-                                .or_default()
-                                .push(response);
-                        } else {
-                            warn!(
-                                "Dropping part of a multi-part response: no request waiting on \
-                                 request_id {}",
-                                response.request_id
-                            );
+                        // Accumulate only while a caller is still waiting: parts
+                        // for a gone id would re-create an entry nothing removes,
+                        // and parts for a caller that dropped its receiver would
+                        // be held for nobody until the terminal frame.
+                        match self.handle_map.get(&response.request_id) {
+                            Some(responder) if !responder.is_closed() => {
+                                self.response_vec_map
+                                    .entry(response.request_id.clone())
+                                    .or_default()
+                                    .push(response);
+                            }
+                            Some(_) => {
+                                self.release_abandoned(&response.request_id);
+                                self.count_late_part(&response.request_id);
+                            }
+                            None => self.count_late_part(&response.request_id),
                         }
                     } else if let Some(responder) = self.handle_map.remove(&response.request_id) {
                         let response_vec = match self.response_vec_map.remove(&response.request_id)
@@ -131,10 +158,73 @@ impl RithmicRequestHandler {
                         };
                         self.send_to_responder(responder, response_vec);
                     } else {
-                        error!("No responder found for response: {:#?}", response);
+                        self.report_unmatched_terminal(&response);
                     }
                 }
             }
+        }
+    }
+
+    /// Release a request whose caller stopped waiting mid-reply: drop the
+    /// responder and the parts held for it, and say so once. The rest of the
+    /// reply is then a late continuation like any other.
+    fn release_abandoned(&mut self, request_id: &str) {
+        self.handle_map.remove(request_id);
+        let parts = self
+            .response_vec_map
+            .remove(request_id)
+            .map(|parts| parts.len())
+            .unwrap_or(0);
+
+        info!(
+            "request {}: the caller stopped waiting after {} parts; the rest of this reply is \
+             counted, not kept",
+            request_id, parts
+        );
+    }
+
+    /// Record a part that arrived for an id nothing is waiting on.
+    ///
+    /// The part itself is not kept — the caller has already been given its
+    /// reply, so there is nowhere to deliver it — and it is not warned about:
+    /// a venue that continues past its own end marker is doing something the
+    /// protocol allows, and it does it hundreds of times per request.
+    fn count_late_part(&mut self, request_id: &str) {
+        let parts = self
+            .late_continuations
+            .entry(request_id.to_string())
+            .or_default();
+
+        *parts += 1;
+
+        trace!(
+            "request {}: part {} arrived after the reply was resolved",
+            request_id, parts
+        );
+    }
+
+    /// Report a terminal frame that found no caller waiting.
+    ///
+    /// If the id has a late continuation open, this frame ends it: it is the
+    /// venue finishing what it started, so it is reported once at INFO with
+    /// how many parts it sent and how it ended. Otherwise nothing explains the
+    /// frame and it stays an error — one line naming the request, the message
+    /// and its rp_code, never a dump of the whole response.
+    fn report_unmatched_terminal(&mut self, response: &RithmicResponse) {
+        match self.late_continuations.remove(&response.request_id) {
+            Some(parts) => info!(
+                "request {}: the venue kept streaming after nothing was waiting: {} more parts, \
+                 then a final response with rp_code {:?}",
+                response.request_id,
+                parts,
+                response.rp_code()
+            ),
+            None => error!(
+                "request {}: no caller waiting; message {}, rp_code {:?}",
+                response.request_id,
+                message_name(&response.message),
+                response.rp_code()
+            ),
         }
     }
 
@@ -148,6 +238,28 @@ impl RithmicRequestHandler {
             let _ = responder.send(Err(RithmicError::ConnectionClosed));
         }
         self.response_vec_map.clear();
+        self.late_continuations.clear();
+    }
+}
+
+/// Name a message for a log line, without formatting its payload.
+///
+/// Every message that can answer a request carries an rp_code, and
+/// [`response_rp_code_info`] returns that variant's name alongside it. The
+/// frames the library synthesises itself are named here. What is left are the
+/// subscription updates, which are broadcast rather than routed to a
+/// responder, so none of them reaches this function.
+fn message_name(message: &RithmicMessage) -> &'static str {
+    if let Some((name, _)) = response_rp_code_info(message) {
+        return name;
+    }
+
+    match message {
+        RithmicMessage::Unknown => "Unknown",
+        RithmicMessage::UnknownTemplate(_) => "UnknownTemplate",
+        RithmicMessage::ConnectionError => "ConnectionError",
+        RithmicMessage::HeartbeatTimeout => "HeartbeatTimeout",
+        _ => "<not a request reply>",
     }
 }
 
@@ -220,7 +332,9 @@ pub(crate) mod log_capture {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::rti::{ResponseHeartbeat, ResponseLogin, ResponseReferenceData};
+    use crate::rti::{
+        ResponseHeartbeat, ResponseLogin, ResponseReferenceData, ResponseVolumeProfileMinuteBars,
+    };
 
     fn make_response(id: &str, message: RithmicMessage) -> RithmicResponse {
         RithmicResponse {
@@ -244,6 +358,32 @@ mod tests {
 
     fn ref_data_message() -> RithmicMessage {
         RithmicMessage::ResponseReferenceData(ResponseReferenceData::default())
+    }
+
+    /// The message the history plant answers template 208 with. An empty
+    /// `rp_code` is what a data part carries; `["12", "output inhibited"]` is
+    /// what the venue ends an over-budget window with.
+    fn volume_profile_message(rp_code: &[&str]) -> RithmicMessage {
+        RithmicMessage::ResponseVolumeProfileMinuteBars(ResponseVolumeProfileMinuteBars {
+            rp_code: rp_code.iter().map(|c| c.to_string()).collect(),
+            ..Default::default()
+        })
+    }
+
+    /// A data part of a multi-part reply: `has_more` is set, so the venue is
+    /// saying more is coming.
+    fn part(id: &str, message: RithmicMessage) -> RithmicResponse {
+        let mut response = make_response(id, message);
+        response.multi_response = true;
+        response.has_more = true;
+        response
+    }
+
+    /// The frame that ends a multi-part reply.
+    fn terminal(id: &str, message: RithmicMessage) -> RithmicResponse {
+        let mut response = make_response(id, message);
+        response.multi_response = true;
+        response
     }
 
     // =========================================================================
@@ -530,13 +670,23 @@ mod tests {
             handler.response_vec_map.is_empty(),
             "parts for an unregistered id must not re-create the buffer"
         );
+        assert_eq!(
+            handler.late_continuations.get("42"),
+            Some(&3),
+            "the parts are counted, not accumulated"
+        );
 
-        let mut terminal = make_response("42", ref_data_message());
-        terminal.multi_response = true;
-        terminal.has_more = false;
-        handler.handle_response(terminal);
+        let (_, logged) = log_capture::capture(|| {
+            handler.handle_response(terminal("42", ref_data_message()));
+        });
 
         assert!(handler.response_vec_map.is_empty());
+        assert!(
+            !handler.late_continuations.contains_key("42"),
+            "the terminal frame ends the continuation"
+        );
+        assert!(logged.contains("3 more parts"), "{logged}");
+        assert!(!logged.contains("ERROR"), "{logged}");
     }
 
     #[test]
@@ -557,20 +707,134 @@ mod tests {
     }
 
     #[test]
-    fn a_part_whose_request_is_gone_says_so_in_the_log() {
+    fn a_part_whose_request_is_gone_is_counted_without_a_warning() {
         let mut handler = RithmicRequestHandler::new();
 
         let (_, logged) = log_capture::capture(|| {
-            let mut part = make_response("gone", ref_data_message());
-            part.multi_response = true;
-            part.has_more = true;
-            handler.handle_response(part);
+            handler.handle_response(part("gone", ref_data_message()));
         });
 
+        assert!(!logged.contains("Dropping part"), "{logged}");
+        assert!(!logged.contains("no request waiting"), "{logged}");
         assert!(
-            logged.contains("no request waiting on request_id gone"),
-            "{logged}"
+            logged.is_empty(),
+            "a continuation part is venue behaviour, not a warning: {logged}"
         );
+        assert_eq!(handler.late_continuations.get("gone"), Some(&1));
+    }
+
+    // =========================================================================
+    // The venue continues after its own end marker
+    //
+    // Observed 2026-09-12 on RequestVolumeProfileMinuteBars (template 208): the
+    // history plant sent thousands of parts, then a dataless end marker, then
+    // ~170 more parts for the same request id, then — 70-85s later — a final
+    // response with rp_code ["12", "output inhibited"].
+    // =========================================================================
+
+    #[test]
+    fn late_parts_for_a_resolved_id_are_counted_and_produce_no_warning() {
+        let mut handler = RithmicRequestHandler::new();
+        let mut rx = register(&mut handler, "208");
+
+        // The end marker resolves the request and removes the responder.
+        handler.handle_response(terminal("208", volume_profile_message(&["0"])));
+        assert_eq!(rx.try_recv().unwrap().unwrap().len(), 1);
+
+        let (_, logged) = log_capture::capture(|| {
+            for _ in 0..170 {
+                handler.handle_response(part("208", volume_profile_message(&[])));
+            }
+        });
+
+        assert!(!logged.contains("Dropping part"), "{logged}");
+        assert!(!logged.contains("no request waiting"), "{logged}");
+        assert!(
+            logged.is_empty(),
+            "170 parts must not put 170 lines in the log: {logged}"
+        );
+        assert_eq!(handler.late_continuations.get("208"), Some(&170));
+        assert!(
+            handler.response_vec_map.is_empty(),
+            "a late part is counted, never accumulated"
+        );
+    }
+
+    #[test]
+    fn a_late_terminal_reports_the_continuation_once_at_info_and_clears_it() {
+        let mut handler = RithmicRequestHandler::new();
+        let mut rx = register(&mut handler, "208");
+
+        handler.handle_response(terminal("208", volume_profile_message(&["0"])));
+        let _ = rx.try_recv();
+
+        for _ in 0..170 {
+            handler.handle_response(part("208", volume_profile_message(&[])));
+        }
+
+        let (_, logged) = log_capture::capture(|| {
+            handler.handle_response(terminal(
+                "208",
+                volume_profile_message(&["12", "output inhibited"]),
+            ));
+        });
+
+        assert_eq!(logged.lines().count(), 1, "{logged}");
+        assert!(logged.contains("INFO"), "{logged}");
+        assert!(logged.contains("request 208"), "{logged}");
+        assert!(logged.contains("170 more parts"), "{logged}");
+        assert!(logged.contains("output inhibited"), "{logged}");
+        assert!(logged.contains("\"12\""), "{logged}");
+        assert!(!logged.contains("RithmicResponse {"), "{logged}");
+        assert!(
+            !handler.late_continuations.contains_key("208"),
+            "the final response ends the continuation"
+        );
+
+        // With the entry gone, a further terminal for the same id is once again
+        // the genuinely unexpected case.
+        let (_, second) = log_capture::capture(|| {
+            handler.handle_response(terminal(
+                "208",
+                volume_profile_message(&["12", "output inhibited"]),
+            ));
+        });
+
+        assert!(second.contains("ERROR"), "{second}");
+        assert!(!second.contains("more parts"), "{second}");
+    }
+
+    #[test]
+    fn a_terminal_that_was_never_a_continuation_is_named_not_dumped() {
+        let mut handler = RithmicRequestHandler::new();
+
+        let (_, logged) = log_capture::capture(|| {
+            handler.handle_response(make_response("ghost", login_message()));
+        });
+
+        assert_eq!(logged.lines().count(), 1, "{logged}");
+        assert!(logged.contains("ERROR"), "{logged}");
+        assert!(logged.contains("request ghost"), "{logged}");
+        assert!(
+            logged.contains("ResponseLogin"),
+            "the line names the message variant: {logged}"
+        );
+        assert!(
+            !logged.contains("RithmicResponse {"),
+            "the line must not dump the response: {logged}"
+        );
+    }
+
+    #[test]
+    fn drain_and_drop_clears_late_continuations() {
+        let mut handler = RithmicRequestHandler::new();
+
+        handler.handle_response(part("208", volume_profile_message(&[])));
+        assert!(handler.late_continuations.contains_key("208"));
+
+        handler.drain_and_drop();
+
+        assert!(handler.late_continuations.is_empty());
     }
 
     // =========================================================================
@@ -582,6 +846,79 @@ mod tests {
         let mut handler = RithmicRequestHandler::new();
 
         handler.handle_response(make_response("ghost", login_message()));
+    }
+
+    /// The caller gave up mid-reply — the adapter's per-page deadline
+    /// elapsed and dropped its receiver — while the venue is still
+    /// streaming. The next part frees the responder and the parts held for
+    /// nobody, says so once, and the rest of the reply is counted as a late
+    /// continuation like any other.
+    #[test]
+    fn a_caller_that_stopped_waiting_mid_reply_frees_the_buffer_and_counts_the_rest_as_late() {
+        let mut handler = RithmicRequestHandler::new();
+        let rx = register(&mut handler, "9");
+        handler.handle_response(part("9", volume_profile_message(&[])));
+        handler.handle_response(part("9", volume_profile_message(&[])));
+        drop(rx);
+
+        let (_, logged) = log_capture::capture(|| {
+            handler.handle_response(part("9", volume_profile_message(&[])));
+        });
+
+        assert!(
+            !handler.handle_map.contains_key("9"),
+            "the responder is released"
+        );
+        assert!(
+            handler.response_vec_map.is_empty(),
+            "parts held for nobody are freed"
+        );
+        assert_eq!(handler.late_continuations.get("9"), Some(&1));
+        assert_eq!(logged.lines().count(), 1, "{logged}");
+        assert!(logged.contains("INFO"), "{logged}");
+        assert!(
+            logged.contains("request 9: the caller stopped waiting after 2 parts"),
+            "{logged}"
+        );
+        assert!(!logged.contains("RithmicResponse {"), "{logged}");
+
+        let (_, ended) = log_capture::capture(|| {
+            handler.handle_response(terminal(
+                "9",
+                volume_profile_message(&["12", "output inhibited"]),
+            ));
+        });
+        assert!(ended.contains("1 more part"), "{ended}");
+        assert!(!ended.contains("ERROR"), "{ended}");
+        assert!(handler.late_continuations.is_empty());
+    }
+
+    /// The caller gave up and the very next frame is the terminal: the
+    /// reply has nowhere to go, and that is said in one line with the frame
+    /// count and the venue's code — never as a dump of every frame.
+    #[test]
+    fn a_reply_for_a_caller_that_stopped_waiting_is_one_line_not_a_dump() {
+        let mut handler = RithmicRequestHandler::new();
+        let rx = register(&mut handler, "9");
+        handler.handle_response(part("9", volume_profile_message(&[])));
+        handler.handle_response(part("9", volume_profile_message(&[])));
+        drop(rx);
+
+        let (_, logged) = log_capture::capture(|| {
+            handler.handle_response(terminal("9", volume_profile_message(&["0"])));
+        });
+
+        assert!(handler.handle_map.is_empty() && handler.response_vec_map.is_empty());
+        assert_eq!(logged.lines().count(), 1, "{logged}");
+        assert!(!logged.contains("ERROR"), "{logged}");
+        assert!(
+            logged.contains(
+                "request 9: the caller stopped waiting before the reply arrived; 3 frames dropped"
+            ),
+            "{logged}"
+        );
+        assert!(logged.contains("rp_code Some([\"0\"])"), "{logged}");
+        assert!(!logged.contains("RithmicResponse {"), "{logged}");
     }
 
     #[test]
