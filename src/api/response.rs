@@ -71,8 +71,9 @@ impl RithmicResponse {
     /// Returns `None` when the message is not a bar replay response, or when
     /// the frame carries no key. The server sends a key on exactly one frame:
     /// the notice that closes a replay it truncated (see
-    /// [`is_truncated`](Self::is_truncated)). Data frames and the end marker
-    /// of a complete replay carry none. A replay cut at the 10,000-record
+    /// [`is_truncated`](Self::is_truncated)) — a small counter across the
+    /// session's truncations, `"0"`, `"1"`, `"2"`. Data frames and the end
+    /// marker of a complete replay carry none. A replay cut at the 10,000-record
     /// limit is lifted differently — by setting `resume_bars` on the original
     /// request; see [`load_ticks_all`](crate::RithmicHistoryPlantHandle::load_ticks_all).
     pub fn resume_key(&self) -> Option<&str> {

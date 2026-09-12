@@ -909,8 +909,9 @@ impl RithmicHistoryPlantHandle {
     /// four seconds of streaming: 3,364 minutes of a liquid front-month
     /// contract, 28,907 minutes of a thin back month, and as few as 925 when
     /// the server streams slowly, on 2026-09-12 — is closed there with a
-    /// truncation notice: a dataless frame carrying `request_key` `"0"` and
-    /// no response code. The plant resumes the reply with that key on the
+    /// truncation notice: a dataless frame carrying a `request_key` (a small
+    /// counter across the session's truncations) and no response code. The
+    /// plant resumes the reply with that key on the
     /// caller's behalf, as many times as the window needs, so this call
     /// returns the whole window at about four seconds per cut — unless
     /// [`resume_truncated_replays`](Self::resume_truncated_replays) is off,
@@ -962,7 +963,8 @@ impl RithmicHistoryPlantHandle {
     ///
     /// Rithmic's release notes introduce `RequestResumeBars` as the way to pull
     /// the chunks a truncated replay left out, and that is what it does: the
-    /// server hands out a `request_key` (`"0"`, so far) on the notice that
+    /// server hands out a `request_key` (a small counter across the session's
+    /// truncations) on the notice that
     /// closes a replay it truncated on its output budget, acknowledges this
     /// request with `ResponseResumeBars`, and streams the rest of the reply on
     /// the ORIGINAL request's id until its real end marker or another notice.
