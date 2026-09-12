@@ -70,10 +70,13 @@ impl RithmicResponse {
     ///
     /// Returns `None` when the message is not a bar replay response, or when the
     /// server sent no key — which, against Rithmic's live and demo systems, is
-    /// every replay tried so far, truncated or not. A truncated replay is
-    /// instead resumed by setting `resume_bars` on the original request, which
-    /// makes the server send the remaining records on that request; see
-    /// [`load_ticks_all`](crate::RithmicHistoryPlantHandle::load_ticks_all).
+    /// every replay tried so far, truncated or not. A replay cut at the record
+    /// limit is instead resumed by setting `resume_bars` on the original
+    /// request, which makes the server send the remaining records on that
+    /// request; see [`load_ticks_all`](crate::RithmicHistoryPlantHandle::load_ticks_all).
+    /// A replay the server closes on its output budget is not resumed by
+    /// either — see the truncation note on
+    /// [`load_volume_profile_minute_bars`](crate::RithmicHistoryPlantHandle::load_volume_profile_minute_bars).
     pub fn resume_key(&self) -> Option<&str> {
         let key = match &self.message {
             RithmicMessage::ResponseTickBarReplay(m) => m.request_key.as_deref(),

@@ -690,6 +690,17 @@ impl RithmicHistoryPlantHandle {
     /// `resume_bars` flag on the request lifts that limit, and the server sends
     /// the rest on the same request. There is no paging and no second call.
     ///
+    /// That lifts the record count, not every cut. A window that takes the
+    /// server more than a few seconds to stream can still be closed early on
+    /// an output budget of its own: the reply ends with an end marker that
+    /// looks complete, and the request's real final response — `rp_code`
+    /// `["12", "output inhibited"]` — follows on the same id over a minute
+    /// later, after the reply has been returned, so it is counted and logged
+    /// rather than delivered. Observed on per-price minute replays
+    /// ([`load_volume_profile_minute_bars`](Self::load_volume_profile_minute_bars));
+    /// if a reply ends short of the window asked, ask again from its newest
+    /// record.
+    ///
     /// # Cost
     ///
     /// The whole window is collected in memory before it returns. A full 23-hour
@@ -847,6 +858,18 @@ impl RithmicHistoryPlantHandle {
     ///
     /// # Returns
     /// One response per minute, followed by an end marker carrying no data.
+    ///
+    /// # Truncation
+    /// A window the server cannot stream inside its own output budget — a few
+    /// seconds' worth, observed 2026-09-12 at 3,387 minutes of a liquid
+    /// front-month contract — is closed early with an end marker that looks
+    /// complete; `resume_bars` does not lift this cut. The server may keep
+    /// streaming that request briefly afterwards and sends its real final
+    /// response, `rp_code` `["12", "output inhibited"]`, on the same id over a
+    /// minute later; both arrive after this call has returned and are counted
+    /// and logged, never delivered. A reply whose last minute is short of the
+    /// window asked is therefore a page, not the window: ask again from that
+    /// minute.
     pub async fn load_volume_profile_minute_bars(
         &self,
         request: VolumeProfileMinuteBarsRequest,

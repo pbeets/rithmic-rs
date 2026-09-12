@@ -1,5 +1,6 @@
+use std::collections::hash_map::Entry;
 use std::{collections::HashMap, time::Duration};
-use tracing::{error, info, trace};
+use tracing::{error, info};
 
 use tokio::sync::oneshot;
 
@@ -66,10 +67,11 @@ impl RithmicRequestHandler {
             .insert(request.request_id, request.responder);
     }
 
-    /// Hand the reply to its caller. A caller that stopped waiting — the
-    /// adapter's per-page deadline elapsed and dropped its receiver — has
-    /// nowhere for the reply to go; that is said in one line with the frame
-    /// count and the venue's code, never as a dump of every frame.
+    /// Hand the reply to its caller. A caller that stopped waiting — its own
+    /// deadline elapsed (see `examples/request_timeout.rs`) and it dropped its
+    /// receiver — has nowhere for the reply to go; that is said in one line
+    /// with the frame count and the venue's code, never as a dump of every
+    /// frame.
     fn send_to_responder(
         &self,
         responder: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
@@ -79,10 +81,10 @@ impl RithmicRequestHandler {
             let frames = unsent.as_ref().map(Vec::len).unwrap_or(0);
             let last = unsent.as_ref().ok().and_then(|frames| frames.last());
             let request_id = last.map(|frame| frame.request_id.as_str()).unwrap_or("");
-            let rp_code = last.and_then(RithmicResponse::rp_code);
+            let rp_code = last.and_then(RithmicResponse::rp_code).unwrap_or(&[]);
 
             info!(
-                "request {}: the caller stopped waiting before the reply arrived; {} frames \
+                "request_id {}: the caller stopped waiting before the reply arrived; {} frames \
                  dropped, final rp_code {:?}",
                 request_id, frames, rp_code
             );
@@ -167,7 +169,8 @@ impl RithmicRequestHandler {
 
     /// Release a request whose caller stopped waiting mid-reply: drop the
     /// responder and the parts held for it, and say so once. The rest of the
-    /// reply is then a late continuation like any other.
+    /// reply is then a late continuation like any other; the entry is opened
+    /// here so that continuation does not announce itself a second time.
     fn release_abandoned(&mut self, request_id: &str) {
         self.handle_map.remove(request_id);
         let parts = self
@@ -175,10 +178,11 @@ impl RithmicRequestHandler {
             .remove(request_id)
             .map(|parts| parts.len())
             .unwrap_or(0);
+        self.late_continuations.insert(request_id.to_string(), 0);
 
         info!(
-            "request {}: the caller stopped waiting after {} parts; the rest of this reply is \
-             counted, not kept",
+            "request_id {}: the caller stopped waiting after {} parts; the rest of this reply \
+             is counted, not kept",
             request_id, parts
         );
     }
@@ -186,21 +190,22 @@ impl RithmicRequestHandler {
     /// Record a part that arrived for an id nothing is waiting on.
     ///
     /// The part itself is not kept — the caller has already been given its
-    /// reply, so there is nowhere to deliver it — and it is not warned about:
-    /// a venue that continues past its own end marker is doing something the
-    /// protocol allows, and it does it hundreds of times per request.
+    /// reply, so there is nowhere to deliver it. The first such part says so
+    /// once; the rest are counted and reported when the continuation ends,
+    /// rather than one line per frame, because a venue that continues past
+    /// its own end marker does it hundreds of times per request.
     fn count_late_part(&mut self, request_id: &str) {
-        let parts = self
-            .late_continuations
-            .entry(request_id.to_string())
-            .or_default();
+        match self.late_continuations.entry(request_id.to_string()) {
+            Entry::Vacant(slot) => {
+                slot.insert(1);
 
-        *parts += 1;
-
-        trace!(
-            "request {}: part {} arrived after the reply was resolved",
-            request_id, parts
-        );
+                info!(
+                    "request_id {}: parts are arriving after the reply was resolved; counting them",
+                    request_id
+                );
+            }
+            Entry::Occupied(mut parts) => *parts.get_mut() += 1,
+        }
     }
 
     /// Report a terminal frame that found no caller waiting.
@@ -211,19 +216,19 @@ impl RithmicRequestHandler {
     /// frame and it stays an error — one line naming the request, the message
     /// and its rp_code, never a dump of the whole response.
     fn report_unmatched_terminal(&mut self, response: &RithmicResponse) {
+        let rp_code = response.rp_code().unwrap_or(&[]);
+
         match self.late_continuations.remove(&response.request_id) {
             Some(parts) => info!(
-                "request {}: the venue kept streaming after nothing was waiting: {} more parts, \
-                 then a final response with rp_code {:?}",
-                response.request_id,
-                parts,
-                response.rp_code()
+                "request_id {}: the venue kept streaming after nothing was waiting: {} more \
+                 parts, then a final response with rp_code {:?}",
+                response.request_id, parts, rp_code
             ),
             None => error!(
-                "request {}: no caller waiting; message {}, rp_code {:?}",
+                "request_id {}: no caller waiting; message {}, rp_code {:?}",
                 response.request_id,
-                message_name(&response.message),
-                response.rp_code()
+                response_rp_code_info(&response.message).map_or("Unknown", |(name, _)| name),
+                rp_code
             ),
         }
     }
@@ -239,27 +244,6 @@ impl RithmicRequestHandler {
         }
         self.response_vec_map.clear();
         self.late_continuations.clear();
-    }
-}
-
-/// Name a message for a log line, without formatting its payload.
-///
-/// Every message that can answer a request carries an rp_code, and
-/// [`response_rp_code_info`] returns that variant's name alongside it. The
-/// frames the library synthesises itself are named here. What is left are the
-/// subscription updates, which are broadcast rather than routed to a
-/// responder, so none of them reaches this function.
-fn message_name(message: &RithmicMessage) -> &'static str {
-    if let Some((name, _)) = response_rp_code_info(message) {
-        return name;
-    }
-
-    match message {
-        RithmicMessage::Unknown => "Unknown",
-        RithmicMessage::UnknownTemplate(_) => "UnknownTemplate",
-        RithmicMessage::ConnectionError => "ConnectionError",
-        RithmicMessage::HeartbeatTimeout => "HeartbeatTimeout",
-        _ => "<not a request reply>",
     }
 }
 
@@ -714,11 +698,11 @@ mod tests {
             handler.handle_response(part("gone", ref_data_message()));
         });
 
-        assert!(!logged.contains("Dropping part"), "{logged}");
-        assert!(!logged.contains("no request waiting"), "{logged}");
+        assert_eq!(logged.lines().count(), 1, "{logged}");
+        assert!(logged.contains("INFO"), "{logged}");
         assert!(
-            logged.is_empty(),
-            "a continuation part is venue behaviour, not a warning: {logged}"
+            logged.contains("request_id gone: parts are arriving after the reply was resolved"),
+            "{logged}"
         );
         assert_eq!(handler.late_continuations.get("gone"), Some(&1));
     }
@@ -747,11 +731,15 @@ mod tests {
             }
         });
 
-        assert!(!logged.contains("Dropping part"), "{logged}");
-        assert!(!logged.contains("no request waiting"), "{logged}");
+        assert_eq!(
+            logged.lines().count(),
+            1,
+            "170 parts put one line in the log, not 170: {logged}"
+        );
+        assert!(!logged.contains("WARN"), "{logged}");
         assert!(
-            logged.is_empty(),
-            "170 parts must not put 170 lines in the log: {logged}"
+            logged.contains("request_id 208: parts are arriving after the reply was resolved"),
+            "{logged}"
         );
         assert_eq!(handler.late_continuations.get("208"), Some(&170));
         assert!(
@@ -781,7 +769,7 @@ mod tests {
 
         assert_eq!(logged.lines().count(), 1, "{logged}");
         assert!(logged.contains("INFO"), "{logged}");
-        assert!(logged.contains("request 208"), "{logged}");
+        assert!(logged.contains("request_id 208"), "{logged}");
         assert!(logged.contains("170 more parts"), "{logged}");
         assert!(logged.contains("output inhibited"), "{logged}");
         assert!(logged.contains("\"12\""), "{logged}");
@@ -814,7 +802,7 @@ mod tests {
 
         assert_eq!(logged.lines().count(), 1, "{logged}");
         assert!(logged.contains("ERROR"), "{logged}");
-        assert!(logged.contains("request ghost"), "{logged}");
+        assert!(logged.contains("request_id ghost"), "{logged}");
         assert!(
             logged.contains("ResponseLogin"),
             "the line names the message variant: {logged}"
@@ -848,9 +836,8 @@ mod tests {
         handler.handle_response(make_response("ghost", login_message()));
     }
 
-    /// The caller gave up mid-reply — the adapter's per-page deadline
-    /// elapsed and dropped its receiver — while the venue is still
-    /// streaming. The next part frees the responder and the parts held for
+    /// The caller gave up mid-reply — its own deadline elapsed and it dropped
+    /// its receiver — while the venue is still streaming. The next part frees the responder and the parts held for
     /// nobody, says so once, and the rest of the reply is counted as a late
     /// continuation like any other.
     #[test]
@@ -877,7 +864,7 @@ mod tests {
         assert_eq!(logged.lines().count(), 1, "{logged}");
         assert!(logged.contains("INFO"), "{logged}");
         assert!(
-            logged.contains("request 9: the caller stopped waiting after 2 parts"),
+            logged.contains("request_id 9: the caller stopped waiting after 2 parts"),
             "{logged}"
         );
         assert!(!logged.contains("RithmicResponse {"), "{logged}");
@@ -913,11 +900,11 @@ mod tests {
         assert!(!logged.contains("ERROR"), "{logged}");
         assert!(
             logged.contains(
-                "request 9: the caller stopped waiting before the reply arrived; 3 frames dropped"
+                "request_id 9: the caller stopped waiting before the reply arrived; 3 frames dropped"
             ),
             "{logged}"
         );
-        assert!(logged.contains("rp_code Some([\"0\"])"), "{logged}");
+        assert!(logged.contains("rp_code [\"0\"]"), "{logged}");
         assert!(!logged.contains("RithmicResponse {"), "{logged}");
     }
 
