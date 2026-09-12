@@ -7,13 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `RithmicResponse::is_truncated`: `true` for the frame that closes a replay
+  the server truncated on its output budget — a dataless frame carrying a
+  `request_key` and no response code, on which a multi-part reply resolves.
+  The records before it are a prefix of the window; ask again from the last
+  one. The request handler says so once at `INFO`, with the part count and
+  the key.
+- `examples/replay_frames.rs`: every frame of one replay on the raw socket,
+  bypassing the request handler, including what the server sends after a
+  truncation. It is how the behaviour below was established.
+
 ### Fixed
 
 - Parts that arrive for a request that has already been answered are counted
   per request id and reported once, at `INFO`, when the venue's final response
   arrives, instead of a `WARN` per part (added in 3.1.0) and a full-response
-  dump at `ERROR`. The first such part says so once. The history plant does this
-  when it closes an over-budget replay early; page the window on your side.
+  dump at `ERROR`. The history plant does this after it truncates a replay:
+  it keeps streaming for a fraction of a second, then sends `rp_code ["12",
+  "output inhibited"]` on the same id over a minute later. A truncation
+  notice opens the count, so the parts after it do not announce themselves.
+- The `_all` loaders' docs no longer claim the whole window: `resume_bars`
+  lifts the 10,000-record cap, not the server's output budget (about 7.4 MB
+  on per-price replays, observed 2026-09-12 on Chicago: the same window cut
+  at the same frame and byte count twice, while a 224 MB one-tick replay
+  came back whole). `resume_key` is documented as the key the truncation
+  notice carries rather than one the server never sends.
 - A caller that drops its receiver mid-reply no longer has the rest of the reply
   held until the terminal; the next part releases it and says so once at `INFO`,
   and the terminal is one `INFO` line rather than a dump of every frame.

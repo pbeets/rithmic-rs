@@ -120,9 +120,15 @@ pub(crate) enum HistoryPlantCommand {
 /// | Volume traded at each price | [`load_volume_profile_minute_bars`] | one per minute |
 ///
 /// The plain methods return at most 10,000 records, because that is where
-/// Rithmic cuts a replay off. The `_all` methods lift that cap and return the
-/// whole window. Prefer an `_all` method unless you specifically want a bounded
-/// result — see [`load_ticks_all`] for why, and for the memory that costs.
+/// Rithmic cuts a replay off. The `_all` methods lift that cap. The server can
+/// still truncate a reply on an output budget of its own — observed at about
+/// 7.4 MB on per-price replays, while a 224 MB one-tick replay came back whole
+/// — and a reply truncated there ends with a notice, not a complete end
+/// marker: check the last frame with
+/// [`RithmicResponse::is_truncated`](crate::RithmicResponse::is_truncated) and ask
+/// again from the last record. Prefer an `_all` method unless you
+/// specifically want a bounded result — see [`load_ticks_all`] for why, and
+/// for the memory that costs.
 ///
 /// [`load_ticks`]: RithmicHistoryPlantHandle::load_ticks
 /// [`load_ticks_all`]: RithmicHistoryPlantHandle::load_ticks_all
@@ -690,16 +696,35 @@ impl RithmicHistoryPlantHandle {
     /// `resume_bars` flag on the request lifts that limit, and the server sends
     /// the rest on the same request. There is no paging and no second call.
     ///
-    /// That lifts the record count, not every cut. A window that takes the
-    /// server more than a few seconds to stream can still be closed early on
-    /// an output budget of its own: the reply ends with an end marker that
-    /// looks complete, and the request's real final response — `rp_code`
-    /// `["12", "output inhibited"]` — follows on the same id over a minute
-    /// later, after the reply has been returned, so it is counted and logged
-    /// rather than delivered. Observed on per-price minute replays
-    /// ([`load_volume_profile_minute_bars`](Self::load_volume_profile_minute_bars));
-    /// if a reply ends short of the window asked, ask again from its newest
-    /// record.
+    /// # Truncation
+    ///
+    /// That lifts the record count, not every cut. The server can close a reply
+    /// on an output budget of its own: per-price minute replays were cut at
+    /// about 7.4 MB (3,364 liquid minutes), while a one-tick replay of 1.4
+    /// million trades — 224 MB, one session day — came back whole with a
+    /// complete end marker, so the budget is not one number for every reply
+    /// shape. A reply cut there is closed with a truncation notice — a
+    /// dataless frame carrying a `request_key` and no response code — which
+    /// resolves this call with the records streamed so far and
+    /// [`RithmicResponse::is_truncated`] set on the last frame. The server keeps streaming the request for a moment
+    /// afterwards, then sends its real final response, `rp_code` `["12",
+    /// "output inhibited"]`, on the same id over a minute later; the request
+    /// handler counts both and logs them once, never delivering them. A
+    /// request sent in the meantime is served at once. Observed on Rithmic's
+    /// Chicago gateway, 2026-09-12, on per-price minute replays
+    /// ([`load_volume_profile_minute_bars`](Self::load_volume_profile_minute_bars))
+    /// with `examples/replay_frames.rs`, a reader that decodes nothing but the
+    /// envelope; the same 7-day window cut at the same frame and byte count in
+    /// two runs. If the last frame is truncated, ask again from the newest
+    /// record — the remedy Rithmic's Reference Guide names for a truncated bar
+    /// replay. The 10,000-record cut is a different animal: without
+    /// `resume_bars` a 30-day one-minute window came back as exactly 10,000
+    /// bars closed by a complete end marker, with no notice and no key, which
+    /// is why the plain loaders cannot tell you they were cut. A one-minute
+    /// replay over 120 days drew no reply at all in ten minutes, while one
+    /// over 30 days (29,500 bars, 3.8 MB) came back whole in two seconds: the
+    /// caller's own deadline is the only bound on a window the server does
+    /// not answer.
     ///
     /// # Cost
     ///
@@ -860,16 +885,22 @@ impl RithmicHistoryPlantHandle {
     /// One response per minute, followed by an end marker carrying no data.
     ///
     /// # Truncation
-    /// A window the server cannot stream inside its own output budget — a few
-    /// seconds' worth, observed 2026-09-12 at 3,387 minutes of a liquid
-    /// front-month contract — is closed early with an end marker that looks
-    /// complete; `resume_bars` does not lift this cut. The server may keep
-    /// streaming that request briefly afterwards and sends its real final
+    /// A window the server cannot stream inside its output budget — about
+    /// 7.4 MB of frames, which was 3,364 minutes of a liquid front-month
+    /// contract and 28,907 minutes of a thin back month on 2026-09-12 — is
+    /// closed there with a truncation notice: a dataless frame carrying
+    /// `request_key` `"0"` and no response code, on which this call returns
+    /// with [`RithmicResponse::is_truncated`] set on its last frame.
+    /// `resume_bars` does not lift this cut. The server keeps streaming the
+    /// request for a fraction of a second afterwards and sends its real final
     /// response, `rp_code` `["12", "output inhibited"]`, on the same id over a
     /// minute later; both arrive after this call has returned and are counted
-    /// and logged, never delivered. A reply whose last minute is short of the
-    /// window asked is therefore a page, not the window: ask again from that
-    /// minute.
+    /// and logged, never delivered. A reply whose last frame is truncated is
+    /// therefore a page, not the window: ask again from its last minute. An
+    /// empty reply closed by a complete end marker (`rp_code` `["0"]`, no
+    /// minutes) has also been seen for a window that held thousands of minutes
+    /// moments before and after, so an empty answer is not proof that nothing
+    /// traded.
     pub async fn load_volume_profile_minute_bars(
         &self,
         request: VolumeProfileMinuteBarsRequest,
@@ -889,12 +920,14 @@ impl RithmicHistoryPlantHandle {
     /// Resume a bars request from a previous response's `request_key`.
     ///
     /// Rithmic's release notes introduce `RequestResumeBars` as the way to pull
-    /// the chunks a truncated replay left out, but the server has not been seen
-    /// to hand out a `request_key` to call it with — see
-    /// [`RithmicResponse::resume_key`]. Setting `resume_bars` on the replay
-    /// request is what actually lifts the cap, which is what
-    /// [`load_ticks_all`](Self::load_ticks_all) does. This stays for a server
-    /// that does send a key.
+    /// the chunks a truncated replay left out. The server hands out a
+    /// `request_key` on the notice that closes a replay it truncated on its
+    /// output budget — `"0"`, so far — see [`RithmicResponse::resume_key`] and
+    /// [`RithmicResponse::is_truncated`]. Whether that key resumes anything is
+    /// not yet established; what is established is that setting `resume_bars`
+    /// on the replay request lifts the 10,000-record cap, which is what
+    /// [`load_ticks_all`](Self::load_ticks_all) does, and that asking again
+    /// from the last record covers the rest of a truncated window.
     ///
     /// # Arguments
     /// * `request_key` - The `request_key` carried on the previous response

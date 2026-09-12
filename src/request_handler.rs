@@ -39,16 +39,19 @@ pub struct RithmicRequestHandler {
     /// Requests the venue is still streaming after the frame that resolved
     /// them, counted rather than kept.
     ///
-    /// The history plant ends an over-budget window with a dataless end
-    /// marker, sends a further burst of parts for the same request id, and
-    /// then — up to a minute and a half later — a final response carrying
-    /// `rp_code` `["12", "output inhibited"]`. That is the venue's own
-    /// protocol, so the parts are counted here and reported once, when that
-    /// final response arrives, instead of one warning per frame.
+    /// The history plant closes an over-budget replay with a truncation
+    /// notice — a dataless frame carrying a `request_key` and no response
+    /// code ([`RithmicResponse::is_truncated`]) — sends a further burst of
+    /// parts for the same request id, and then, up to a minute and a half
+    /// later, a final response carrying `rp_code` `["12", "output
+    /// inhibited"]`. That is the venue's own protocol, so the parts are
+    /// counted here and reported once, when that final response arrives,
+    /// instead of one warning per frame.
     ///
-    /// An id is inserted by a part that finds no responder and removed by the
-    /// frame that ends the continuation, so the map holds only the ids a
-    /// continuation is in progress on. It is bounded by the venue's behaviour,
+    /// An id is inserted by the truncation notice that resolved its reply, or
+    /// by a part that finds no responder, and removed by the frame that ends
+    /// the continuation, so the map holds only the ids a continuation is in
+    /// progress on. It is bounded by the venue's behaviour,
     /// not by a constant, and carries no size cap: each entry is an id and a
     /// counter, a continuation the venue never terminates leaves exactly one,
     /// and [`Self::drain_and_drop`] clears the map when the connection goes.
@@ -148,8 +151,9 @@ impl RithmicRequestHandler {
                             None => self.count_late_part(&response.request_id),
                         }
                     } else if let Some(responder) = self.handle_map.remove(&response.request_id) {
-                        let response_vec = match self.response_vec_map.remove(&response.request_id)
-                        {
+                        let request_id = response.request_id.clone();
+                        let truncated = response.is_truncated();
+                        let response_vec = match self.response_vec_map.remove(&request_id) {
                             Some(mut vec) => {
                                 vec.push(response);
                                 vec
@@ -158,6 +162,9 @@ impl RithmicRequestHandler {
                                 vec![response]
                             }
                         };
+                        if truncated {
+                            self.note_truncation(&request_id, &response_vec);
+                        }
                         self.send_to_responder(responder, response_vec);
                     } else {
                         self.report_unmatched_terminal(&response);
@@ -165,6 +172,27 @@ impl RithmicRequestHandler {
                 }
             }
         }
+    }
+
+    /// Say once that the venue truncated a reply, and open its continuation:
+    /// the parts that follow the notice are counted against this entry rather
+    /// than announcing themselves, and the venue's final response for the id
+    /// — `rp_code` `["12", "output inhibited"]`, over a minute later — reports
+    /// the count and closes it.
+    fn note_truncation(&mut self, request_id: &str, reply: &[RithmicResponse]) {
+        let key = reply
+            .last()
+            .and_then(RithmicResponse::resume_key)
+            .unwrap_or("");
+        let parts = reply.len().saturating_sub(1);
+        self.late_continuations.insert(request_id.to_string(), 0);
+
+        info!(
+            "request_id {}: the venue truncated this reply after {} parts (request_key {:?}); \
+             the rest of the window was not delivered and what the venue still sends for it is \
+             counted",
+            request_id, parts, key
+        );
     }
 
     /// Release a request whose caller stopped waiting mid-reply: drop the
@@ -350,6 +378,15 @@ mod tests {
     fn volume_profile_message(rp_code: &[&str]) -> RithmicMessage {
         RithmicMessage::ResponseVolumeProfileMinuteBars(ResponseVolumeProfileMinuteBars {
             rp_code: rp_code.iter().map(|c| c.to_string()).collect(),
+            ..Default::default()
+        })
+    }
+
+    /// The notice that closes a truncated replay: a `request_key`, no
+    /// response code, no data.
+    fn truncation_notice(key: &str) -> RithmicMessage {
+        RithmicMessage::ResponseVolumeProfileMinuteBars(ResponseVolumeProfileMinuteBars {
+            request_key: Some(key.to_string()),
             ..Default::default()
         })
     }
@@ -964,5 +1001,79 @@ mod tests {
             result[0].message,
             RithmicMessage::ResponseLogin(_)
         ));
+    }
+    // =========================================================================
+    // Truncated replays
+    // =========================================================================
+
+    /// The venue closes an over-budget replay with a truncation notice. The
+    /// parts and the notice are delivered, the cut is said once with the key,
+    /// the parts the venue still sends do not announce themselves again, and
+    /// the venue's final response reports their count and closes the entry.
+    #[test]
+    fn a_truncation_notice_resolves_the_reply_and_is_said_once() {
+        let mut handler = RithmicRequestHandler::new();
+        let mut rx = register(&mut handler, "7");
+
+        let (_, logged) = log_capture::capture(|| {
+            handler.handle_response(part("7", volume_profile_message(&[])));
+            handler.handle_response(part("7", volume_profile_message(&[])));
+            handler.handle_response(terminal("7", truncation_notice("0")));
+        });
+
+        let reply = rx.try_recv().unwrap().unwrap();
+        assert_eq!(reply.len(), 3, "the parts and the notice are delivered");
+        assert!(reply[2].is_truncated());
+        assert!(
+            logged.contains(
+                "request_id 7: the venue truncated this reply after 2 parts (request_key \"0\")"
+            ),
+            "{logged}"
+        );
+
+        let (_, logged) = log_capture::capture(|| {
+            for _ in 0..3 {
+                handler.handle_response(part("7", volume_profile_message(&[])));
+            }
+        });
+        assert!(
+            !logged.contains("parts are arriving"),
+            "the notice already said the rest is counted: {logged}"
+        );
+        assert!(
+            handler.response_vec_map.is_empty(),
+            "late parts are counted, not kept"
+        );
+
+        let (_, logged) = log_capture::capture(|| {
+            handler.handle_response(terminal(
+                "7",
+                volume_profile_message(&["12", "output inhibited"]),
+            ));
+        });
+        assert!(
+            logged.contains("3 more parts") && logged.contains("output inhibited"),
+            "{logged}"
+        );
+        assert!(handler.late_continuations.is_empty());
+    }
+
+    /// A complete replay's end marker carries `rp_code` `["0"]` and no key:
+    /// it is not a truncation and opens no continuation.
+    #[test]
+    fn a_complete_replay_opens_no_continuation() {
+        let mut handler = RithmicRequestHandler::new();
+        let mut rx = register(&mut handler, "8");
+
+        let (_, logged) = log_capture::capture(|| {
+            handler.handle_response(part("8", volume_profile_message(&[])));
+            handler.handle_response(terminal("8", volume_profile_message(&["0"])));
+        });
+
+        let reply = rx.try_recv().unwrap().unwrap();
+        assert_eq!(reply.len(), 2);
+        assert!(!reply[1].is_truncated());
+        assert!(!logged.contains("truncated"), "{logged}");
+        assert!(handler.late_continuations.is_empty());
     }
 }
