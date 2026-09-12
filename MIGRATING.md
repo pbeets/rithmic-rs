@@ -233,8 +233,15 @@ they had returned all of it. An hour of a liquid contract runs well past that,
 and one-second bars pass it in under three hours.
 
 `load_ticks_all`, `load_tick_bars_all` and `load_time_bars_all` set Rithmic's
-`resume_bars` flag, which lifts the cap — one request, whole window, no paging.
-Same signatures otherwise, so the switch is the method name.
+`resume_bars` flag, which lifts that cap. Same signatures otherwise, so the
+switch is the method name. One cap remains, and it is the server's own output
+budget, about four seconds of streaming per request. A reply the server closes
+there with its truncation notice is resumed by the plant itself, so the loaders
+still return the whole window (`resume_truncated_replays(false)` turns that off
+for a caller that pages); a time bar reply has also been seen closed there with a
+complete end marker and nothing else, so compare the last record with the
+window you asked for and ask again from it (see the README's History Plant
+section).
 
 ```rust
 // Before — first 10,000 bars, silently

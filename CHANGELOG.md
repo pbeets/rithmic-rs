@@ -5,6 +5,52 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- A replay the server truncates on its output budget is resumed by the plant
+  itself. The server closes such a reply with a truncation notice — a
+  dataless frame carrying a `request_key` and no response code, named by the
+  new `RithmicResponse::is_truncated` — and the plant answers it with
+  `RequestResumeBars` and that key, consumes the acknowledgement, and keeps
+  the caller waiting while the server continues the reply on the same
+  request, until its real end marker. The loaders therefore return the whole
+  window, one round trip per cut (about four seconds of streaming each); the
+  notice is never delivered, the cut is said once at `INFO`, and a refused
+  resume delivers the prefix at `WARN`. A notice for a caller that has stopped
+  waiting is counted, not resumed.
+- `RithmicHistoryPlantHandle::resume_truncated_replays(bool)`: turns that off
+  for a caller that pages replays itself and needs every reply back inside its
+  own deadline; the notice is then the reply's last frame
+  (`RithmicResponse::is_truncated`).
+- `examples/replay_frames.rs`: every frame of one replay on the raw socket,
+  bypassing the request handler, including what the server sends after a
+  truncation. It is how the behaviour below was established.
+
+### Fixed
+
+- Parts that arrive for a request that has already been answered are counted
+  per request id and reported once, at `INFO`, when the venue's final response
+  arrives, instead of a `WARN` per part (added in 3.1.0) and a full-response
+  dump at `ERROR`. The history plant does this after it truncates a replay:
+  it keeps streaming for a fraction of a second, then sends `rp_code ["12",
+  "output inhibited"]` on the same id over a minute later. A truncation
+  notice opens the count, so the parts after it do not announce themselves.
+- The `_all` loaders' docs no longer claim the whole window: `resume_bars`
+  lifts the 10,000-record cap, not the server's output budget of about four
+  seconds of streaming (observed 2026-09-12 on Chicago: a per-price window
+  cut at the same frame three times over and closed with the notice, and at
+  925 rows when the server streamed slowly; a 60-day one-minute window cut at
+  53,190 bars, 7.5 days short, and closed with a complete end marker; a 224 MB
+  one-tick replay whole in 12.8 s). `resume_key` is documented as the key the
+  truncation notice carries rather than one the server never sends.
+- A caller that drops its receiver mid-reply no longer has the rest of the reply
+  held until the terminal; the next part releases it and says so once at `INFO`,
+  and the terminal is one `INFO` line rather than a dump of every frame.
+- A terminal for a request nothing is waiting on is one `ERROR` line naming the
+  request, the message and its `rp_code`, not a `{:#?}` dump.
+
 ## [3.1.0]
 
 ### Requests no longer time out

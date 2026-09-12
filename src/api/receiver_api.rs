@@ -2227,6 +2227,49 @@ mod tests {
         assert!(terminal.error.is_none());
     }
 
+    /// The three frames a per-price replay is made of, as decoded: a data
+    /// part (`rq_handler_rp_code` present), the notice that closes a replay
+    /// the venue truncated (a `request_key`, no code at all), and the end
+    /// marker of a complete replay (`rp_code` `["0"]`).
+    #[test]
+    fn a_replay_truncation_notice_resolves_the_reply_and_says_so() {
+        let data = decode_with_api(&ResponseVolumeProfileMinuteBars {
+            template_id: 209,
+            user_msg: vec!["probe".to_string()],
+            rq_handler_rp_code: vec!["0".to_string()],
+            marker: Some(1_788_732_060),
+            ..Default::default()
+        });
+        assert!(data.has_more);
+        assert!(!data.is_truncated());
+
+        let notice = decode_with_api(&ResponseVolumeProfileMinuteBars {
+            template_id: 209,
+            user_msg: vec!["probe".to_string()],
+            request_key: Some("0".to_string()),
+            ..Default::default()
+        });
+        assert!(notice.multi_response);
+        assert!(
+            !notice.has_more,
+            "no rq_handler_rp_code: the reply resolves here"
+        );
+        assert!(notice.error.is_none(), "no rp_code: nothing was refused");
+        assert_eq!(notice.resume_key(), Some("0"));
+        assert!(notice.is_truncated());
+
+        let complete = decode_with_api(&ResponseVolumeProfileMinuteBars {
+            template_id: 209,
+            user_msg: vec!["probe".to_string()],
+            rp_code: vec!["0".to_string()],
+            ..Default::default()
+        });
+        assert!(!complete.has_more);
+        assert!(complete.error.is_none());
+        assert_eq!(complete.resume_key(), None);
+        assert!(!complete.is_truncated());
+    }
+
     #[test]
     fn user_info_update_decodes_as_update() {
         let response = decode_with_api(&UserInfoUpdate {

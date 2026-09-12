@@ -26,7 +26,7 @@ use crate::{
     config::{LoginConfig, RithmicConfig},
     error::RithmicError,
     ping_manager::PingManager,
-    request_handler::{RithmicRequest, RithmicRequestHandler},
+    request_handler::{Resume, RithmicRequest, RithmicRequestHandler},
     rti::{messages::RithmicMessage, request_login::SysInfraType},
     ws::{
         PING_TIMEOUT_SECS, SEND_TIMEOUT_SECS, WebSocketSendError, connect_with_strategy,
@@ -334,7 +334,7 @@ where
     /// failed to decode take the same paths. Heartbeats are the one special
     /// case: a failed heartbeat is also broadcast as `HeartbeatTimeout`, while
     /// the original frame still resolves any request waiting on it.
-    fn forward_response(&mut self, response: RithmicResponse) {
+    async fn forward_response(&mut self, response: RithmicResponse) {
         // A failed heartbeat is broadcast as a synthetic HeartbeatTimeout, but
         // handle_response must get the original ResponseHeartbeat, not the
         // synthetic: it dispatches on message type, and a caller awaiting the
@@ -354,7 +354,7 @@ where
                 let _ = self.subscription_sender.send(synthetic);
             }
 
-            self.request_handler.handle_response(response);
+            let _ = self.request_handler.handle_response(response);
 
             return;
         }
@@ -371,9 +371,22 @@ where
                     self.rithmic_receiver_api.source, e
                 );
             }
-        } else {
-            self.request_handler.handle_response(response);
+        } else if let Some(resume) = self.request_handler.handle_response(response) {
+            self.resume_truncated_replay(resume).await;
         }
+    }
+
+    /// Continue a replay the venue truncated: send `RequestResumeBars` with
+    /// the key its notice carried. The venue acknowledges on the resume's own
+    /// id and streams the rest of the reply on the replay's id, so the
+    /// caller waiting on the replay gets the whole window. A send failure
+    /// fails the replay itself — the caller is the one waiting.
+    async fn resume_truncated_replay(&mut self, resume: Resume) {
+        let (buf, resume_id) = self.rithmic_sender_api.request_resume_bars(&resume.key);
+        self.request_handler
+            .register_resume(resume_id, resume.request_id.clone());
+        self.send_or_fail(Message::Binary(buf.into()), &resume.request_id)
+            .await;
     }
 
     /// Handle a raw WebSocket message. Returns `true` if the actor should stop.
@@ -402,7 +415,7 @@ where
                 Ok(response) => {
                     let forced_logout = matches!(response.message, RithmicMessage::ForcedLogout(_));
 
-                    self.forward_response(response);
+                    self.forward_response(response).await;
 
                     if forced_logout {
                         stop = self.handle_forced_logout();
@@ -413,7 +426,7 @@ where
                         "{}: decode failure: {:?}",
                         self.rithmic_receiver_api.source, err_response
                     );
-                    self.forward_response(err_response);
+                    self.forward_response(err_response).await;
                 }
             },
             Ok(Message::Ping(data)) => {
@@ -866,6 +879,76 @@ mod tests {
             responder: tx,
         });
         rx
+    }
+
+    /// A truncation notice for a pending replay puts `RequestResumeBars`
+    /// on the wire with the notice's key, the caller keeps waiting, and the
+    /// venue's real end marker resolves the reply.
+    #[tokio::test]
+    async fn a_truncation_notice_sends_a_resume_request_on_the_wire() {
+        use crate::rti::{RequestResumeBars, ResponseVolumeProfileMinuteBars};
+        use prost::Message as _;
+
+        let reader = make_dormant_ws_reader().await;
+        let (mut core, _sub_rx) = make_test_core(MockMessageSink::ready(), reader);
+        let mut rx = register_request(&mut core, "vp-1");
+
+        let frame_of = |message: &ResponseVolumeProfileMinuteBars| {
+            let mut payload = Vec::new();
+            message.encode(&mut payload).unwrap();
+            let mut framed = (payload.len() as u32).to_be_bytes().to_vec();
+            framed.extend(payload);
+            framed
+        };
+
+        let part = ResponseVolumeProfileMinuteBars {
+            template_id: 209,
+            user_msg: vec!["vp-1".to_string()],
+            rq_handler_rp_code: vec!["0".to_string()],
+            marker: Some(1_788_732_060),
+            ..Default::default()
+        };
+        core.handle_rithmic_message(Ok(Message::Binary(frame_of(&part).into())))
+            .await;
+
+        let notice = ResponseVolumeProfileMinuteBars {
+            template_id: 209,
+            user_msg: vec!["vp-1".to_string()],
+            request_key: Some("0".to_string()),
+            ..Default::default()
+        };
+        core.handle_rithmic_message(Ok(Message::Binary(frame_of(&notice).into())))
+            .await;
+
+        assert!(rx.try_recv().is_err(), "the caller keeps waiting");
+        let sent = core
+            .rithmic_sender
+            .sent_messages
+            .last()
+            .expect("the resume request was sent");
+        let Message::Binary(bytes) = sent else {
+            panic!("a binary frame was expected, got {sent:?}");
+        };
+        let resume = RequestResumeBars::decode(&bytes[4..]).unwrap();
+        assert_eq!(resume.template_id, 210);
+        assert_eq!(resume.request_key.as_deref(), Some("0"));
+
+        let end = ResponseVolumeProfileMinuteBars {
+            template_id: 209,
+            user_msg: vec!["vp-1".to_string()],
+            rp_code: vec!["0".to_string()],
+            ..Default::default()
+        };
+        core.handle_rithmic_message(Ok(Message::Binary(frame_of(&end).into())))
+            .await;
+
+        let reply = rx.try_recv().unwrap().unwrap();
+        assert_eq!(
+            reply.len(),
+            2,
+            "the part and the end marker; the notice is not delivered"
+        );
+        assert!(!reply[0].is_truncated() && !reply[1].is_truncated());
     }
 
     #[tokio::test]

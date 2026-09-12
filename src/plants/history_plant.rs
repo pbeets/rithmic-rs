@@ -38,6 +38,9 @@ pub(crate) enum HistoryPlantCommand {
     UpdateHeartbeat {
         seconds: u64,
     },
+    SetResumeTruncated {
+        resume: bool,
+    },
     LoadTicks {
         request: TickBarReplayRequest,
         response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
@@ -120,9 +123,18 @@ pub(crate) enum HistoryPlantCommand {
 /// | Volume traded at each price | [`load_volume_profile_minute_bars`] | one per minute |
 ///
 /// The plain methods return at most 10,000 records, because that is where
-/// Rithmic cuts a replay off. The `_all` methods lift that cap and return the
-/// whole window. Prefer an `_all` method unless you specifically want a bounded
-/// result — see [`load_ticks_all`] for why, and for the memory that costs.
+/// Rithmic cuts a replay off. The `_all` methods lift that cap. The server can
+/// still truncate a reply on an output budget of its own, about four seconds
+/// of streaming: a reply cut there with the server's truncation notice is
+/// resumed by the plant itself, with the key the notice carries, until the
+/// real end marker arrives, so the call still returns the whole window — one
+/// round trip per cut, unless [`resume_truncated_replays`] turns that off. A
+/// time bar reply cut there has also been seen closed with a
+/// complete end marker and nothing else, so compare the last record with the
+/// window you asked for and ask again from it when it falls short — see
+/// [`load_ticks_all`] for the details. Prefer an `_all` method unless you
+/// specifically want a bounded result, and see [`load_ticks_all`] for the
+/// memory that costs.
 ///
 /// [`load_ticks`]: RithmicHistoryPlantHandle::load_ticks
 /// [`load_ticks_all`]: RithmicHistoryPlantHandle::load_ticks_all
@@ -131,6 +143,7 @@ pub(crate) enum HistoryPlantCommand {
 /// [`load_time_bars`]: RithmicHistoryPlantHandle::load_time_bars
 /// [`load_time_bars_all`]: RithmicHistoryPlantHandle::load_time_bars_all
 /// [`load_volume_profile_minute_bars`]: RithmicHistoryPlantHandle::load_volume_profile_minute_bars
+/// [`resume_truncated_replays`]: RithmicHistoryPlantHandle::resume_truncated_replays
 ///
 /// # Example
 ///
@@ -300,6 +313,7 @@ impl PlantActor for HistoryPlant {
                 HistoryPlantCommand::Close
                     | HistoryPlantCommand::SetLogin
                     | HistoryPlantCommand::UpdateHeartbeat { .. }
+                    | HistoryPlantCommand::SetResumeTruncated { .. }
                     | HistoryPlantCommand::Abort
             )
         {
@@ -331,6 +345,9 @@ impl PlantActor for HistoryPlant {
             }
             HistoryPlantCommand::UpdateHeartbeat { seconds } => {
                 self.core.handle_update_heartbeat(seconds);
+            }
+            HistoryPlantCommand::SetResumeTruncated { resume } => {
+                self.core.request_handler.set_resume_truncated(resume);
             }
             HistoryPlantCommand::LoadTicks {
                 request,
@@ -690,6 +707,45 @@ impl RithmicHistoryPlantHandle {
     /// `resume_bars` flag on the request lifts that limit, and the server sends
     /// the rest on the same request. There is no paging and no second call.
     ///
+    /// # Truncation
+    ///
+    /// That lifts the record count, not every cut. The server also closes a
+    /// reply on an output budget of its own — about four seconds of streaming,
+    /// whatever the window asked: 3,364 liquid front-month minutes (7.4 MB)
+    /// at one rate, as few as 925 thin back-month minutes when it streams
+    /// slowly — and how it says so depends on the reply shape. A per-price
+    /// minute replay cut there is closed with a truncation notice — a
+    /// dataless frame carrying a `request_key` and no response code — and the
+    /// plant answers it itself: it sends `RequestResumeBars` with that key, the
+    /// server acknowledges and streams the rest of the reply on the same
+    /// request, and this call returns when the real end marker arrives, with
+    /// the whole window and without the notice. Each resume is one more round
+    /// trip of about four seconds, so a large window takes as many as it
+    /// needs; a caller's own deadline is the only bound, and a caller that
+    /// pages replays itself can turn the resume off with
+    /// [`resume_truncated_replays`](Self::resume_truncated_replays). A time
+    /// bar replay cut there
+    /// (53,190 one-minute bars, 6.9 MB, of a 60-day window that ran 7.5 days
+    /// further) was instead closed with a **complete end marker**, `rp_code`
+    /// `["0"]`, no notice and no key: nothing on the wire says it was cut,
+    /// exactly as the Reference Guide warns for time and tick bars, so compare
+    /// the last bar's `marker` with the window you asked for. Another 90-day
+    /// window of the same bars was cut with the notice, resumed, and completed.
+    /// A one-tick replay of 1.4 million trades (224 MB, one session day) came
+    /// back whole.
+    ///
+    /// Observed on Rithmic's Chicago gateway, 2026-09-12, with
+    /// `examples/replay_frames.rs`, a reader that decodes nothing but the
+    /// envelope; the same 7-day per-price window cut at the same frame and
+    /// byte count in three runs. The 10,000-record cut is a different animal:
+    /// without `resume_bars` a 30-day one-minute window came back as exactly
+    /// 10,000 bars closed by a complete end marker, with no notice and no key,
+    /// which is why the plain loaders cannot tell you they were cut. A
+    /// one-minute replay over 120 days drew no reply at all in ten minutes,
+    /// while one over 30 days (29,500 bars, 3.8 MB) came back whole in two
+    /// seconds: the caller's own deadline is the only bound on a window the
+    /// server does not answer.
+    ///
     /// # Cost
     ///
     /// The whole window is collected in memory before it returns. A full 23-hour
@@ -847,6 +903,25 @@ impl RithmicHistoryPlantHandle {
     ///
     /// # Returns
     /// One response per minute, followed by an end marker carrying no data.
+    ///
+    /// # Truncation
+    /// A window the server cannot stream inside its output budget — about
+    /// four seconds of streaming: 3,364 minutes of a liquid front-month
+    /// contract, 28,907 minutes of a thin back month, and as few as 925 when
+    /// the server streams slowly, on 2026-09-12 — is closed there with a
+    /// truncation notice: a dataless frame carrying a `request_key` (a small
+    /// counter across the session's truncations) and no response code. The
+    /// plant resumes the reply with that key on the
+    /// caller's behalf, as many times as the window needs, so this call
+    /// returns the whole window at about four seconds per cut — unless
+    /// [`resume_truncated_replays`](Self::resume_truncated_replays) is off,
+    /// when the notice is the reply's last frame; see
+    /// [`load_ticks_all`](Self::load_ticks_all) for what a resume costs and
+    /// what a caller that stops waiting sees. `resume_bars` does not lift
+    /// this cut. An empty reply closed by a complete end marker
+    /// (`rp_code` `["0"]`, no minutes) has also been seen, several times in
+    /// one weekend hour, for a window that held thousands of minutes moments
+    /// before and after, so an empty answer is not proof that nothing traded.
     pub async fn load_volume_profile_minute_bars(
         &self,
         request: VolumeProfileMinuteBarsRequest,
@@ -863,15 +938,43 @@ impl RithmicHistoryPlantHandle {
         await_all_responses(rx).await
     }
 
+    /// Choose whether this plant resumes a replay the venue truncates (the
+    /// default) or hands the truncated reply back as it stands.
+    ///
+    /// On, a truncation notice keeps the caller waiting while the plant sends
+    /// `RequestResumeBars` and the venue continues the reply on the same
+    /// request, so the loaders return whole windows; a window the venue cuts
+    /// N times takes N further round trips of about four seconds each. Off,
+    /// the notice is the reply's last frame ([`RithmicResponse::is_truncated`])
+    /// and the records before it are a prefix of the window — the choice for
+    /// a caller that pages replays itself and needs every reply back inside
+    /// its own deadline, since the venue's cut lands at about four seconds of
+    /// streaming whatever the window asked. Applies to replies resolved after
+    /// the plant processes this, in order with the loaders called before and
+    /// after it.
+    pub async fn resume_truncated_replays(&self, resume: bool) {
+        let _ = self
+            .sender
+            .send(HistoryPlantCommand::SetResumeTruncated { resume })
+            .await;
+    }
+
     /// Resume a bars request from a previous response's `request_key`.
     ///
     /// Rithmic's release notes introduce `RequestResumeBars` as the way to pull
-    /// the chunks a truncated replay left out, but the server has not been seen
-    /// to hand out a `request_key` to call it with — see
-    /// [`RithmicResponse::resume_key`]. Setting `resume_bars` on the replay
-    /// request is what actually lifts the cap, which is what
-    /// [`load_ticks_all`](Self::load_ticks_all) does. This stays for a server
-    /// that does send a key.
+    /// the chunks a truncated replay left out, and that is what it does: the
+    /// server hands out a `request_key` (a small counter across the session's
+    /// truncations) on the notice that
+    /// closes a replay it truncated on its output budget, acknowledges this
+    /// request with `ResponseResumeBars`, and streams the rest of the reply on
+    /// the ORIGINAL request's id until its real end marker or another notice.
+    /// The plant does this itself for every replay it is waiting on, so the
+    /// loaders return whole windows; see [`RithmicResponse::is_truncated`].
+    /// Calling it by hand continues a replay nothing is waiting on: the
+    /// continuation is counted by the request handler, not delivered here —
+    /// this returns the acknowledgement only. Setting `resume_bars` on the
+    /// replay request is a different lever: it lifts the 10,000-record cap,
+    /// which is what [`load_ticks_all`](Self::load_ticks_all) does.
     ///
     /// # Arguments
     /// * `request_key` - The `request_key` carried on the previous response

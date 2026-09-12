@@ -265,15 +265,63 @@ let tick_bars = handle.load_tick_bars_all(symbol, exchange, 5, start, end).await
 ```
 
 **Use the `_all` loaders.** Rithmic caps a replay at 10,000 records and gives no
-sign that it did — the closing response of a truncated replay is identical to a
-complete one's. The `_all` variants set `resume_bars`, which lifts the cap, so
-one request covers the window. `load_ticks`, `load_tick_bars` and
-`load_time_bars` leave the cap in place; reach for them only when you want at
-most 10,000 records.
+sign that it did — the closing response of a replay cut at that count is
+identical to a complete one's. The `_all` variants set `resume_bars`, which
+lifts the cap. `load_ticks`, `load_tick_bars` and `load_time_bars` leave the cap
+in place; reach for them only when you want at most 10,000 records.
+
+**Compare the last record with your window.** The server can also close a reply
+on an output budget of its own — about four seconds of streaming, whatever the
+window asked and whatever the flag says. When it does so with its truncation
+notice — a dataless frame carrying a `request_key` and no response code — the
+plant resumes the reply itself (`RequestResumeBars` with that key; the server
+continues on the same request) until the real end marker arrives, so the `_all`
+call still returns the whole window, one round trip per cut; a caller that pages
+replays itself turns that off with `resume_truncated_replays(false)` and gets
+the notice as the reply's last frame. A time bar reply has also been seen cut with a
+complete end marker and nothing else: a 60-day one-minute window came back as
+53,190 bars ending 7.5 days short, under `rp_code ["0"]`. So compare the last
+record with the window you asked for, and ask again from it when it falls
+short:
+
+```rust
+let mut bars = handle
+    .load_time_bars_all(symbol.clone(), exchange.clone(), TimeBarType::MinuteBar, 1, start, end)
+    .await?;
+loop {
+    // The newest bar's close is where the next page starts; the bar closing
+    // there may be sent again, so keep the first copy.
+    let newest = bars.iter().rev().find_map(|r| match &r.message {
+        RithmicMessage::ResponseTimeBarReplay(bar) => bar.marker,
+        _ => None,
+    });
+    let Some(from) = newest else { break };
+    if from + 60 > end {
+        break; // the window is covered
+    }
+    let rest = handle
+        .load_time_bars_all(symbol.clone(), exchange.clone(), TimeBarType::MinuteBar, 1, from, end)
+        .await?;
+    if rest.iter().all(|r| r.rp_code().is_some_and(|c| !c.is_empty())) {
+        break; // nothing newer came back
+    }
+    bars.pop(); // the end marker of the page before
+    bars.extend(rest);
+}
+```
+
+Left alone, a truncated request keeps streaming for a moment and then draws
+`rp_code ["12", "output inhibited"]` over a minute later; both are counted and
+logged once, never delivered, and a request sent in the meantime is served at
+once. [`examples/replay_frames.rs`](examples/replay_frames.rs) records every
+frame of one replay on the raw socket, which is how all of this was
+established.
 
 The whole window is buffered before the call returns. A full 23-hour ES session
 runs to hundreds of thousands of records, so ask for the window you need rather
-than a day at a time.
+than a day at a time. A window far past the budget may draw no reply at all — a
+one-minute replay over 120 days did not answer in ten minutes — so wrap the call
+in your own deadline.
 
 Volume profile bars take a request struct:
 
@@ -390,6 +438,7 @@ Every example is runnable against a Demo account once `.env` is filled in from
 | [`trade_routes.rs`](examples/trade_routes.rs) | Inspecting the routes orders will take |
 | [`load_historical_bars.rs`](examples/load_historical_bars.rs) | Time bar replay |
 | [`load_historical_ticks.rs`](examples/load_historical_ticks.rs) | Tick replay |
+| [`replay_frames.rs`](examples/replay_frames.rs) | Every frame of one replay on the raw socket, including what the server sends after a truncation |
 | [`pnl.rs`](examples/pnl.rs) | Position and P&L updates |
 | [`error_handling.rs`](examples/error_handling.rs) | Every error the crate can hand you, in one file |
 | [`reconnect.rs`](examples/reconnect.rs) | A reconnection loop that restores subscriptions |
