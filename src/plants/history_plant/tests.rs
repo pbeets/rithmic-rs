@@ -34,6 +34,12 @@ fn load_ticks(response_sender: Responder) -> HistoryPlantCommand {
     }
 }
 
+/// A load whose caller has already stopped waiting: the actor takes it off the
+/// queue and sends nothing.
+fn abandoned_load() -> HistoryPlantCommand {
+    load_ticks(oneshot::channel().0)
+}
+
 #[tokio::test]
 async fn load_ticks_after_close_requested_is_not_sent() {
     let (mut plant, _command_sender, mut client) = plant_with_wire().await;
@@ -592,10 +598,7 @@ async fn a_load_dropped_mid_replay_is_released_without_another_frame() {
         source: "test".into(),
     });
     for _ in 0..4 {
-        handle
-            .sender
-            .try_send(HistoryPlantCommand::SetLogin)
-            .unwrap();
+        handle.sender.try_send(abandoned_load()).unwrap();
     }
     drop(load);
 
@@ -621,10 +624,7 @@ async fn a_load_dropped_while_waiting_for_room_in_the_queue_is_never_sent() {
     let handle = handle_for(&plant, command_sender);
 
     for _ in 0..4 {
-        handle
-            .sender
-            .try_send(HistoryPlantCommand::SetLogin)
-            .unwrap();
+        handle.sender.try_send(abandoned_load()).unwrap();
     }
 
     let mut load = Box::pin(handle.load_ticks_all("ESH6".into(), "CME".into(), 1, 1000));

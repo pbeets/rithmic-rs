@@ -4,7 +4,7 @@ use super::*;
 use crate::{
     plants::test_support::{
         self, Responder, assert_close_still_sent, assert_rejected_after_close,
-        assert_sent_while_open, assert_wire_silent,
+        assert_sent_while_open, assert_wire_silent, read_wire_request, write_wire_response,
     },
     rti::request_market_data_update::{Request, UpdateBits},
 };
@@ -112,4 +112,57 @@ async fn disconnect_sends_close_even_when_logout_fails() {
         call.await.expect("call task panicked"),
         Err(RithmicError::SendFailed)
     ));
+}
+
+/// A caller that gives up on `login()` — say under `tokio::time::timeout` —
+/// once the request is on the wire must still leave a session that heartbeats:
+/// the actor learns it is logged in from the reply itself.
+#[tokio::test]
+async fn a_login_whose_caller_stops_waiting_still_heartbeats() {
+    use crate::rti::{RequestHeartbeat, RequestLogin, ResponseLogin};
+    use prost::Message as _;
+
+    let (mut plant, command_sender, mut client) = plant_with_wire().await;
+    plant.core.logged_in = false;
+
+    let subscription_sender = plant.core.subscription_sender.clone();
+    let handle = RithmicTickerPlantHandle {
+        sender: command_sender,
+        subscription_receiver: subscription_sender.subscribe(),
+        subscription_sender,
+    };
+
+    let actor = tokio::spawn(async move { plant.run().await });
+
+    let request = {
+        let login = handle.login();
+        tokio::pin!(login);
+
+        tokio::select! {
+            _ = &mut login => panic!("login cannot finish before it is answered"),
+            request = read_wire_request(&mut client) => request,
+        }
+        // The login future is dropped here, before the reply is written.
+    };
+    let request = RequestLogin::decode(request.as_slice()).unwrap();
+    assert_eq!(request.template_id, 10);
+
+    write_wire_response(
+        &mut client,
+        &ResponseLogin {
+            template_id: 11,
+            user_msg: request.user_msg,
+            rp_code: vec!["0".to_string()],
+            heartbeat_interval: Some(1.0),
+            ..Default::default()
+        },
+    )
+    .await;
+
+    let heartbeat = RequestHeartbeat::decode(read_wire_request(&mut client).await.as_slice())
+        .expect("the actor must heartbeat once logged in");
+    assert_eq!(heartbeat.template_id, 18);
+
+    handle.abort();
+    let _ = actor.await;
 }

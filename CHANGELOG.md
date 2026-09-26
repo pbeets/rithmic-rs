@@ -38,6 +38,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Daily and weekly time bars are documented as taking `YYYYMMDD` dates, not
   Unix seconds. Unix seconds there return an empty reply rather than an error.
 - The `_all` loaders' docs no longer claim they always return the whole window.
+- A login whose caller stops waiting after the reply arrives no longer leaves
+  the plant without heartbeats.
 - `RithmicResponse::resume_key` is documented as the key the server's
   truncation notice carries.
 

@@ -333,8 +333,18 @@ where
     /// broadcast, replies go to the per-request responder. Responses that
     /// failed to decode take the same paths. Heartbeats are the one special
     /// case: a failed heartbeat is also broadcast as `HeartbeatTimeout`, while
-    /// the original frame still resolves any request waiting on it.
+    /// the original frame still resolves any request waiting on it. A
+    /// successful login reply also updates the actor's own login state before
+    /// it is routed.
     async fn forward_response(&mut self, response: RithmicResponse) {
+        // The actor owns its login state: a caller can stop waiting after the
+        // reply arrives, and the session still needs its heartbeats.
+        if response.error.is_none() {
+            if let RithmicMessage::ResponseLogin(resp) = &response.message {
+                self.handle_login_accepted(resp.heartbeat_interval);
+            }
+        }
+
         // A failed heartbeat is broadcast as a synthetic HeartbeatTimeout, but
         // handle_response must get the original ResponseHeartbeat, not the
         // synthetic: it dispatches on message type, and a caller awaiting the
@@ -375,6 +385,18 @@ where
             // This write pauses the loop, as answering a ping does. It is
             // normally instant and gives up after SEND_TIMEOUT_SECS.
             self.resume_truncated_replay(resume).await;
+        }
+    }
+
+    /// Mark the session logged in so heartbeats go out, on the period the
+    /// server asked for when it named one.
+    fn handle_login_accepted(&mut self, heartbeat_interval: Option<f64>) {
+        self.logged_in = true;
+
+        if let Some(hb) = heartbeat_interval {
+            if hb > 0.0 {
+                self.interval = get_heartbeat_interval(Some(hb as u64));
+            }
         }
     }
 
@@ -652,10 +674,6 @@ where
         self.register_and_send(login_buf, id, response_sender).await;
     }
 
-    pub(crate) fn handle_set_login(&mut self) {
-        self.logged_in = true;
-    }
-
     pub(crate) async fn handle_logout(
         &mut self,
         response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
@@ -669,10 +687,6 @@ where
         let (logout_buf, id) = self.rithmic_sender_api.request_logout();
         self.register_and_send(logout_buf, id, response_sender)
             .await;
-    }
-
-    pub(crate) fn handle_update_heartbeat(&mut self, seconds: u64) {
-        self.interval = get_heartbeat_interval(Some(seconds));
     }
 }
 
@@ -970,6 +984,78 @@ mod tests {
             "the part and the end marker; the notice is not delivered"
         );
         assert!(!reply[0].is_truncated() && !reply[1].is_truncated());
+    }
+
+    /// A template-11 login reply for request `id`, framed as it arrives off
+    /// the wire.
+    fn login_reply_frame(id: &str, rp_code: &[&str]) -> Message {
+        use crate::rti::ResponseLogin;
+        use prost::Message as _;
+
+        let reply = ResponseLogin {
+            template_id: 11,
+            user_msg: vec![id.to_string()],
+            rp_code: rp_code.iter().map(|code| code.to_string()).collect(),
+            heartbeat_interval: Some(30.0),
+            ..Default::default()
+        };
+
+        let mut payload = Vec::new();
+        reply.encode(&mut payload).unwrap();
+        let mut framed = (payload.len() as u32).to_be_bytes().to_vec();
+        framed.extend(payload);
+
+        Message::Binary(framed.into())
+    }
+
+    #[tokio::test]
+    async fn an_accepted_login_reply_logs_the_actor_in_on_the_server_heartbeat() {
+        let reader = make_dormant_ws_reader().await;
+        let (mut core, _sub_rx) = make_test_core(MockMessageSink::ready(), reader);
+        let mut rx = register_request(&mut core, "login-1");
+
+        core.handle_rithmic_message(Ok(login_reply_frame("login-1", &["0"])))
+            .await;
+
+        assert!(core.logged_in);
+        assert_eq!(core.interval.period(), Duration::from_secs(30));
+
+        let reply = rx.try_recv().unwrap().unwrap();
+        assert!(matches!(reply[0].message, RithmicMessage::ResponseLogin(_)));
+    }
+
+    #[tokio::test]
+    async fn a_rejected_login_reply_leaves_the_actor_logged_out() {
+        let reader = make_dormant_ws_reader().await;
+        let (mut core, _sub_rx) = make_test_core(MockMessageSink::ready(), reader);
+        let default_period = core.interval.period();
+        let mut rx = register_request(&mut core, "login-1");
+
+        core.handle_rithmic_message(Ok(login_reply_frame("login-1", &["7", "bad"])))
+            .await;
+
+        assert!(!core.logged_in);
+        assert_eq!(core.interval.period(), default_period);
+
+        let reply = rx.try_recv().unwrap().unwrap();
+        assert!(
+            reply[0].error.is_some(),
+            "the caller still gets the rejection"
+        );
+    }
+
+    /// The caller stopped waiting after the reply arrived: the session must
+    /// still be logged in, or it never heartbeats and Rithmic drops it.
+    #[tokio::test]
+    async fn an_accepted_login_reply_nobody_waits_for_still_logs_the_actor_in() {
+        let reader = make_dormant_ws_reader().await;
+        let (mut core, _sub_rx) = make_test_core(MockMessageSink::ready(), reader);
+
+        core.handle_rithmic_message(Ok(login_reply_frame("login-1", &["0"])))
+            .await;
+
+        assert!(core.logged_in);
+        assert_eq!(core.interval.period(), Duration::from_secs(30));
     }
 
     #[tokio::test]

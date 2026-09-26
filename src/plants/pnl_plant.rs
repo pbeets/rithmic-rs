@@ -25,12 +25,8 @@ pub(crate) enum PnlPlantCommand {
         config: LoginConfig,
         response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
     },
-    SetLogin,
     Logout {
         response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
-    },
-    UpdateHeartbeat {
-        seconds: u64,
     },
     GetPnlPositionSnapshot {
         account: Arc<RithmicAccount>,
@@ -233,13 +229,7 @@ impl PlantActor for PnlPlant {
     async fn handle_command(&mut self, command: PnlPlantCommand) {
         // Disconnect race guard — see `TickerPlant::handle_command`.
         if self.core.close_requested
-            && !matches!(
-                command,
-                PnlPlantCommand::Close
-                    | PnlPlantCommand::SetLogin
-                    | PnlPlantCommand::UpdateHeartbeat { .. }
-                    | PnlPlantCommand::Abort
-            )
+            && !matches!(command, PnlPlantCommand::Close | PnlPlantCommand::Abort)
         {
             debug!("pnl_plant: dropping a command queued after close was requested");
 
@@ -261,14 +251,8 @@ impl PlantActor for PnlPlant {
                     .handle_login(config, SysInfraType::PnlPlant, response_sender)
                     .await;
             }
-            PnlPlantCommand::SetLogin => {
-                self.core.handle_set_login();
-            }
             PnlPlantCommand::Logout { response_sender } => {
                 self.core.handle_logout(response_sender).await;
-            }
-            PnlPlantCommand::UpdateHeartbeat { seconds } => {
-                self.core.handle_update_heartbeat(seconds);
             }
             PnlPlantCommand::SubscribePnlUpdates {
                 account,
@@ -400,14 +384,9 @@ impl RithmicPnlPlantHandle {
             return Err(err);
         }
 
-        let _ = self.sender.send(PnlPlantCommand::SetLogin).await;
-
+        // The actor marks itself logged in and adopts the server's heartbeat
+        // period when it sees this reply, so nothing here needs to reach it.
         if let RithmicMessage::ResponseLogin(resp) = &response.message {
-            if let Some(hb) = resp.heartbeat_interval {
-                let secs = hb as u64;
-                self.update_heartbeat(secs).await;
-            }
-
             if let Some(session_id) = &resp.unique_user_id {
                 info!("pnl_plant: session id: {}", session_id);
             }
@@ -416,12 +395,6 @@ impl RithmicPnlPlantHandle {
         info!("pnl_plant: logged in");
 
         Ok(response)
-    }
-
-    async fn update_heartbeat(&self, seconds: u64) {
-        let command = PnlPlantCommand::UpdateHeartbeat { seconds };
-
-        let _ = self.sender.send(command).await;
     }
 
     /// Disconnect from the Rithmic PnL plant

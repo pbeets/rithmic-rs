@@ -32,12 +32,8 @@ pub(crate) enum HistoryPlantCommand {
         config: LoginConfig,
         response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
     },
-    SetLogin,
     Logout {
         response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
-    },
-    UpdateHeartbeat {
-        seconds: u64,
     },
     Replay {
         query: ReplayQuery,
@@ -307,10 +303,7 @@ impl PlantActor for HistoryPlant {
         if self.core.close_requested
             && !matches!(
                 command,
-                HistoryPlantCommand::Close
-                    | HistoryPlantCommand::SetLogin
-                    | HistoryPlantCommand::UpdateHeartbeat { .. }
-                    | HistoryPlantCommand::Abort
+                HistoryPlantCommand::Close | HistoryPlantCommand::Abort
             )
         {
             debug!("history_plant: dropping a command queued after close was requested");
@@ -333,14 +326,8 @@ impl PlantActor for HistoryPlant {
                     .handle_login(config, SysInfraType::HistoryPlant, response_sender)
                     .await;
             }
-            HistoryPlantCommand::SetLogin => {
-                self.core.handle_set_login();
-            }
             HistoryPlantCommand::Logout { response_sender } => {
                 self.core.handle_logout(response_sender).await;
-            }
-            HistoryPlantCommand::UpdateHeartbeat { seconds } => {
-                self.core.handle_update_heartbeat(seconds);
             }
             HistoryPlantCommand::Replay {
                 query,
@@ -510,14 +497,9 @@ impl RithmicHistoryPlantHandle {
             return Err(err);
         }
 
-        let _ = self.sender.send(HistoryPlantCommand::SetLogin).await;
-
+        // The actor marks itself logged in and adopts the server's heartbeat
+        // period when it sees this reply, so nothing here needs to reach it.
         if let RithmicMessage::ResponseLogin(resp) = &response.message {
-            if let Some(hb) = resp.heartbeat_interval {
-                let secs = hb as u64;
-                self.update_heartbeat(secs).await;
-            }
-
             if let Some(session_id) = &resp.unique_user_id {
                 info!("history_plant: session id: {}", session_id);
             }
@@ -526,12 +508,6 @@ impl RithmicHistoryPlantHandle {
         info!("history_plant: logged in");
 
         Ok(response)
-    }
-
-    async fn update_heartbeat(&self, seconds: u64) {
-        let command = HistoryPlantCommand::UpdateHeartbeat { seconds };
-
-        let _ = self.sender.send(command).await;
     }
 
     /// Disconnect from the Rithmic History plant

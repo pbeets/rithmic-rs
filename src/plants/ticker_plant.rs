@@ -29,12 +29,8 @@ pub(crate) enum TickerPlantCommand {
         config: LoginConfig,
         response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
     },
-    SetLogin,
     Logout {
         response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
-    },
-    UpdateHeartbeat {
-        seconds: u64,
     },
     Subscribe {
         symbol: String,
@@ -329,10 +325,7 @@ impl PlantActor for TickerPlant {
         if self.core.close_requested
             && !matches!(
                 command,
-                TickerPlantCommand::Close
-                    | TickerPlantCommand::SetLogin
-                    | TickerPlantCommand::UpdateHeartbeat { .. }
-                    | TickerPlantCommand::Abort
+                TickerPlantCommand::Close | TickerPlantCommand::Abort
             )
         {
             debug!("ticker_plant: dropping a command queued after close was requested");
@@ -355,14 +348,8 @@ impl PlantActor for TickerPlant {
                     .handle_login(config, SysInfraType::TickerPlant, response_sender)
                     .await;
             }
-            TickerPlantCommand::SetLogin => {
-                self.core.handle_set_login();
-            }
             TickerPlantCommand::Logout { response_sender } => {
                 self.core.handle_logout(response_sender).await;
-            }
-            TickerPlantCommand::UpdateHeartbeat { seconds } => {
-                self.core.handle_update_heartbeat(seconds);
             }
             TickerPlantCommand::Subscribe {
                 symbol,
@@ -665,14 +652,9 @@ impl RithmicTickerPlantHandle {
             return Err(err);
         }
 
-        let _ = self.sender.send(TickerPlantCommand::SetLogin).await;
-
+        // The actor marks itself logged in and adopts the server's heartbeat
+        // period when it sees this reply, so nothing here needs to reach it.
         if let RithmicMessage::ResponseLogin(resp) = &response.message {
-            if let Some(hb) = resp.heartbeat_interval {
-                let secs = hb as u64;
-                self.update_heartbeat(secs).await;
-            }
-
             if let Some(session_id) = &resp.unique_user_id {
                 info!("ticker_plant: session id: {}", session_id);
             }
@@ -1316,12 +1298,6 @@ impl RithmicTickerPlantHandle {
         let _ = self.sender.send(command).await;
 
         await_all_responses(rx).await
-    }
-
-    async fn update_heartbeat(&self, seconds: u64) {
-        let command = TickerPlantCommand::UpdateHeartbeat { seconds };
-
-        let _ = self.sender.send(command).await;
     }
 
     /// Search for symbols based on search criteria

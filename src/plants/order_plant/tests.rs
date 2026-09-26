@@ -316,7 +316,7 @@ fn login_response() -> RithmicResponse {
     }
 }
 
-/// Answer `Login` and `SetLogin`, leaving the next command for the caller.
+/// Answer `Login`, leaving the next command for the caller.
 async fn drive_login_to_login_info(command_receiver: &mut mpsc::Receiver<OrderPlantCommand>) {
     match next_command(command_receiver).await {
         OrderPlantCommand::Login {
@@ -325,11 +325,6 @@ async fn drive_login_to_login_info(command_receiver: &mut mpsc::Receiver<OrderPl
             let _ = response_sender.send(Ok(vec![login_response()]));
         }
         _ => panic!("expected Login first"),
-    }
-
-    match next_command(command_receiver).await {
-        OrderPlantCommand::SetLogin => {}
-        _ => panic!("expected SetLogin"),
     }
 }
 

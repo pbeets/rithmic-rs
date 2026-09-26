@@ -39,12 +39,8 @@ pub(crate) enum OrderPlantCommand {
         config: LoginConfig,
         response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
     },
-    SetLogin,
     Logout {
         response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
-    },
-    UpdateHeartbeat {
-        seconds: u64,
     },
     AccountList {
         response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
@@ -465,13 +461,7 @@ impl PlantActor for OrderPlant {
     async fn handle_command(&mut self, command: OrderPlantCommand) {
         // Disconnect race guard — see `TickerPlant::handle_command`.
         if self.core.close_requested
-            && !matches!(
-                command,
-                OrderPlantCommand::Close
-                    | OrderPlantCommand::SetLogin
-                    | OrderPlantCommand::UpdateHeartbeat { .. }
-                    | OrderPlantCommand::Abort
-            )
+            && !matches!(command, OrderPlantCommand::Close | OrderPlantCommand::Abort)
         {
             debug!("order_plant: dropping a command queued after close was requested");
 
@@ -493,14 +483,8 @@ impl PlantActor for OrderPlant {
                     .handle_login(config, SysInfraType::OrderPlant, response_sender)
                     .await;
             }
-            OrderPlantCommand::SetLogin => {
-                self.core.handle_set_login();
-            }
             OrderPlantCommand::Logout { response_sender } => {
                 self.core.handle_logout(response_sender).await;
-            }
-            OrderPlantCommand::UpdateHeartbeat { seconds } => {
-                self.core.handle_update_heartbeat(seconds);
             }
             OrderPlantCommand::AccountList { response_sender } => {
                 let (req_buf, id) = self
@@ -1150,14 +1134,9 @@ impl RithmicOrderPlantHandle {
             return Err(err);
         }
 
-        let _ = self.sender.send(OrderPlantCommand::SetLogin).await;
-
+        // The actor marks itself logged in and adopts the server's heartbeat
+        // period when it sees this reply, so nothing here needs to reach it.
         if let RithmicMessage::ResponseLogin(resp) = &response.message {
-            if let Some(hb) = resp.heartbeat_interval {
-                let secs = hb as u64;
-                self.update_heartbeat(secs).await;
-            }
-
             if let Some(session_id) = &resp.unique_user_id {
                 info!("order_plant: session id: {}", session_id);
             }
@@ -1534,12 +1513,6 @@ impl RithmicOrderPlantHandle {
         let _ = self.sender.send(command).await;
 
         await_first_response(rx).await
-    }
-
-    async fn update_heartbeat(&self, seconds: u64) {
-        let command = OrderPlantCommand::UpdateHeartbeat { seconds };
-
-        let _ = self.sender.send(command).await;
     }
 
     /// Cancel all active orders on the account.
