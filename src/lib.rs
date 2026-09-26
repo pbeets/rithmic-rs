@@ -75,7 +75,7 @@
 //! - [`ConnectStrategy::AlternateWithRetry`]: Alternates between primary and beta URLs
 //!
 //! `Retry` and `AlternateWithRetry` keep trying until they connect. To bound
-//! them, set [`RithmicConfigBuilder::connect_deadline`]; once it passes,
+//! them, set [`RithmicConfigBuilder::retry_timeout`]; once it passes,
 //! `connect` returns [`RithmicError::ConnectionFailed`] with the attempt count.
 //!
 //! A graceful `disconnect().await` logs out first and then closes the WebSocket.
@@ -207,7 +207,7 @@
 //!
 //! ([`ConnectionFailed`](RithmicError::ConnectionFailed) comes from `connect()`
 //! rather than a handle method, and only under [`ConnectStrategy::Simple`] or
-//! once a [`connect_deadline`](RithmicConfigBuilder::connect_deadline) passes —
+//! once a [`retry_timeout`](RithmicConfigBuilder::retry_timeout) passes —
 //! without one, the retrying strategies keep trying instead of handing you an
 //! error.
 //! [`EmptyResponse`](RithmicError::EmptyResponse) is a defensive case you should

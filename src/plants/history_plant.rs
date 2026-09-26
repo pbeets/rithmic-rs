@@ -216,9 +216,9 @@ impl RithmicHistoryPlant {
     /// [`RithmicError::ConnectionFailed`] under [`ConnectStrategy::Simple`] when
     /// its one attempt fails. `Retry` and `AlternateWithRetry` return it only
     /// once the config's
-    /// [`connect_deadline`](crate::RithmicConfigBuilder::connect_deadline)
-    /// passes, with the attempt count and the deadline in the message. Without
-    /// a deadline they retry until they connect, so this call can block
+    /// [`retry_timeout`](crate::RithmicConfigBuilder::retry_timeout)
+    /// passes, with the attempt count and the timeout in the message. Without
+    /// one they retry until they connect, so this call can block
     /// indefinitely if the server is unreachable.
     pub async fn connect(
         config: &RithmicConfig,

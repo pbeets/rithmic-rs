@@ -93,7 +93,7 @@ impl PlantCore<WsSink> {
             &config.url,
             &config.beta_url,
             strategy,
-            config.connect_deadline,
+            config.retry_timeout,
         )
         .await
         .map_err(|e| RithmicError::ConnectionFailed(e.to_string()))?;
@@ -2008,7 +2008,7 @@ mod tests {
     /// A retry that runs out of time surfaces as `ConnectionFailed`, like a
     /// failed `Simple` attempt.
     #[tokio::test(start_paused = true)]
-    async fn a_passed_connect_deadline_is_reported_as_connection_failed() {
+    async fn a_passed_retry_timeout_is_reported_as_connection_failed() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("ws://127.0.0.1:{}", listener.local_addr().unwrap().port());
         drop(listener);
@@ -2020,7 +2020,7 @@ mod tests {
             .beta_url(url)
             .app_name("test_app")
             .app_version("1.0")
-            .connect_deadline(std::time::Duration::from_secs(3))
+            .retry_timeout(std::time::Duration::from_secs(3))
             .build()
             .unwrap();
         let (subscription_sender, _) = broadcast::channel(4);

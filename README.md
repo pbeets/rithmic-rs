@@ -432,12 +432,13 @@ Three strategies for initial connection:
 - **`Retry`**: Linear backoff (500 ms more per attempt, capped at 60 seconds, jittered ±50%) (recommended default)
 - **`AlternateWithRetry`**: Alternates between primary and alt URLs
 
-The retrying strategies try until they connect. To bound them, set a deadline
-on the config; once it passes, `connect` returns `ConnectionFailed`:
+The retrying strategies try until they connect. To bound them, set a retry
+timeout on the config. It covers all attempts together, not each one; once it
+passes, `connect` returns `ConnectionFailed`:
 
 ```rust
 let config = RithmicConfigBuilder::from_env(RithmicEnv::Demo)?
-    .connect_deadline(Duration::from_secs(30))
+    .retry_timeout(Duration::from_secs(30))
     .build()?;
 
 let plant = RithmicTickerPlant::connect(&config, ConnectStrategy::Retry).await?;

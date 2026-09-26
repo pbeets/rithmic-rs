@@ -37,7 +37,7 @@ const MAX_BACKOFF_SECS: u64 = 60;
 /// Connection strategy for connecting to Rithmic servers.
 ///
 /// The retrying strategies try indefinitely unless
-/// [`RithmicConfigBuilder::connect_deadline`](crate::RithmicConfigBuilder::connect_deadline)
+/// [`RithmicConfigBuilder::retry_timeout`](crate::RithmicConfigBuilder::retry_timeout)
 /// sets a limit, after which `connect` returns
 /// [`RithmicError::ConnectionFailed`](crate::RithmicError::ConnectionFailed).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
