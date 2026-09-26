@@ -236,12 +236,13 @@ impl RithmicRequestHandler {
             return;
         };
 
-        let parts = self.refuse_replay(replay.clone(), error.clone());
-
-        warn!(
-            "request_id {}: the venue refused to resume request_id {} ({}); {} parts are incomplete",
-            ack.request_id, replay, error, parts
-        );
+        if let Some(parts) = self.refuse_replay(replay.clone(), error.clone()) {
+            warn!(
+                "request_id {}: the venue refused to resume request_id {} ({}); {} parts are \
+                 incomplete",
+                ack.request_id, replay, error, parts
+            );
+        }
     }
 
     /// Start counting frames the server may still send for `request_id`.
@@ -731,16 +732,6 @@ mod tests {
         rx
     }
 
-    /// Register a history replay, as the history plant does for `load_*`.
-    fn register_replay(
-        handler: &mut RithmicRequestHandler,
-        id: &str,
-    ) -> oneshot::Receiver<Result<Vec<RithmicResponse>, RithmicError>> {
-        let (tx, rx) = oneshot::channel();
-        assert!(handler.register_replay(id.to_string(), PendingReplay::new(tx)));
-        rx
-    }
-
     #[test]
     fn a_failed_request_clears_its_partial_multi_response() {
         let mut handler = RithmicRequestHandler::new();
@@ -1116,7 +1107,7 @@ mod tests {
     #[test]
     fn a_truncation_notice_keeps_the_caller_waiting_and_asks_to_resume() {
         let mut handler = RithmicRequestHandler::new();
-        let mut rx = register_replay(&mut handler, "7");
+        let mut rx = handler.register_test_replay("7");
 
         assert_eq!(
             handler.handle_response(part("7", volume_profile_message(&[]))),
@@ -1184,7 +1175,7 @@ mod tests {
     #[test]
     fn a_repeated_resume_key_without_new_data_is_not_asked_for_again() {
         let mut handler = RithmicRequestHandler::new();
-        let mut rx = register_replay(&mut handler, "7");
+        let mut rx = handler.register_test_replay("7");
 
         handler.handle_response(part("7", volume_profile_message(&[])));
         assert_eq!(
@@ -1229,7 +1220,7 @@ mod tests {
     #[test]
     fn a_duplicate_resume_acknowledgement_is_counted_not_an_error() {
         let mut handler = RithmicRequestHandler::new();
-        let mut rx = register_replay(&mut handler, "7");
+        let mut rx = handler.register_test_replay("7");
 
         handler.handle_response(part("7", volume_profile_message(&[])));
         let resume = handler
@@ -1278,7 +1269,7 @@ mod tests {
     #[test]
     fn a_refused_resume_never_reports_a_complete_prefix() {
         let mut handler = RithmicRequestHandler::new();
-        let mut rx = register_replay(&mut handler, "7");
+        let mut rx = handler.register_test_replay("7");
 
         handler.handle_response(part("7", volume_profile_message(&[])));
         let resume = handler
@@ -1315,7 +1306,7 @@ mod tests {
     #[test]
     fn a_truncation_notice_for_a_caller_that_stopped_waiting_is_counted_not_resumed() {
         let mut handler = RithmicRequestHandler::new();
-        let rx = register_replay(&mut handler, "7");
+        let rx = handler.register_test_replay("7");
         handler.mark_sent("7");
 
         handler.handle_response(part("7", volume_profile_message(&[])));
@@ -1347,12 +1338,45 @@ mod tests {
         assert!(handler.late_continuations.is_empty());
     }
 
+    /// A resume refusal that arrives after its replay already ended is not a
+    /// warning: nothing is missing a reply.
+    #[test]
+    fn a_refusal_after_the_replay_ended_is_not_a_warning() {
+        let mut handler = RithmicRequestHandler::new();
+        let mut rx = handler.register_test_replay("7");
+
+        handler.handle_response(part("7", volume_profile_message(&[])));
+        let resume = handler
+            .handle_response(terminal("7", truncation_notice("0")))
+            .expect("a pending truncated reply asks to resume");
+        handler.register_resume("9".to_string(), resume.request_id);
+        handler.handle_response(terminal("7", volume_profile_message(&["0"])));
+        assert_eq!(rx.try_recv().unwrap().unwrap().len(), 2);
+        assert!(
+            handler.resumes.is_empty(),
+            "the replay's resume is forgotten"
+        );
+
+        let mut refusal = terminal(
+            "9",
+            RithmicMessage::ResponseResumeBars(ResponseResumeBars {
+                rp_code: vec!["5".to_string(), "late".to_string()],
+                ..Default::default()
+            }),
+        );
+        refusal.error = Some(RithmicError::ProtocolError("late".to_string()));
+        let (_, logged) = log_capture::capture(|| handler.handle_response(refusal));
+
+        assert!(!logged.contains("WARN"), "{logged}");
+        assert!(!logged.contains("ERROR"), "{logged}");
+    }
+
     /// A complete replay's end marker carries `rp_code` `["0"]` and no key:
     /// it is not a truncation and opens no continuation.
     #[test]
     fn a_complete_replay_opens_no_continuation() {
         let mut handler = RithmicRequestHandler::new();
-        let mut rx = register_replay(&mut handler, "8");
+        let mut rx = handler.register_test_replay("8");
 
         let (_, logged) = log_capture::capture(|| {
             handler.handle_response(part("8", volume_profile_message(&[])));

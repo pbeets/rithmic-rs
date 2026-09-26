@@ -101,7 +101,8 @@ pub(crate) enum ReplayQuery {
 /// - **The last entry is an end marker, not data.** Rithmic closes every replay
 ///   with a response that carries no bar. Matching on the message type as above
 ///   skips it; counting `responses.len()` does not, so subtract one if you want
-///   a record count.
+///   a record count. If the server ended the replay early, the call still
+///   returns `Ok` and this entry has [`error`](RithmicResponse::error) set.
 /// - **Times are Unix seconds as `i32`,** both going in and coming back. This
 ///   is Rithmic's own type and it overflows in 2038. Daily and weekly time bars
 ///   are the exception: they use `YYYYMMDD` dates; see
@@ -678,7 +679,9 @@ impl RithmicHistoryPlantHandle {
     /// sends a truncation notice. The plant asks it to continue, so this call
     /// still returns the whole window; each continuation adds about four
     /// seconds. If the server refuses to continue, this returns
-    /// [`RithmicError::RequestRejected`] rather than a partial window.
+    /// [`RithmicError::RequestRejected`] rather than a partial window. If it ends
+    /// the replay early any other way, this returns `Ok` and the last frame has
+    /// [`error`](RithmicResponse::error) set.
     ///
     /// Time bar replays have also been seen to stop early with no notice (a
     /// 60-day window of one-minute bars came back 7.5 days short). Check that
@@ -879,17 +882,16 @@ impl RithmicHistoryPlantHandle {
 
     /// Ask the server to continue a replay it cut short.
     ///
-    /// You don't need this for the `load_*` methods: the plant continues their
-    /// replays automatically. Called by hand, it returns only the server's
-    /// acknowledgement; the rest of the replay arrives on the original request
-    /// and is discarded.
+    /// The `load_*` methods do this automatically and never return the notice
+    /// that carries the key, so there is normally nothing to pass here; it is
+    /// kept for compatibility. Called by hand, it returns only the server's
+    /// acknowledgement, and the rest of the replay is discarded.
     ///
     /// Not the same as the `resume_bars` request flag, which lifts the
     /// 10,000-record cap.
     ///
     /// # Arguments
-    /// * `request_key` - From the truncation notice; see
-    ///   [`RithmicResponse::resume_key`]
+    /// * `request_key` - The key from the server's truncation notice
     ///
     /// # Returns
     /// The server's acknowledgement, `ResponseResumeBars`.

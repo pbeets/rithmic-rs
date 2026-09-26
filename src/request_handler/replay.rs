@@ -5,7 +5,7 @@ use tracing::info;
 
 use crate::{RithmicError, RithmicResponse, rti::messages::RithmicMessage};
 
-type Reply = Result<Vec<RithmicResponse>, RithmicError>;
+pub(crate) type Reply = Result<Vec<RithmicResponse>, RithmicError>;
 
 /// A history replay the plant is collecting for a caller.
 ///
@@ -68,8 +68,17 @@ impl RithmicRequestHandler {
         true
     }
 
-    /// `false` if `id` is a replay whose caller has stopped waiting.
-    pub(crate) fn replay_send_allowed(&mut self, id: &str) -> bool {
+    /// Register a replay for a test, and return its reply channel.
+    #[cfg(test)]
+    pub(crate) fn register_test_replay(&mut self, id: &str) -> oneshot::Receiver<Reply> {
+        let (tx, rx) = oneshot::channel();
+        assert!(self.register_replay(id.to_string(), PendingReplay::new(tx)));
+        rx
+    }
+
+    /// Whether the caller of replay `id` is still waiting. Releases the replay
+    /// if not.
+    pub(crate) fn replay_waiting(&mut self, id: &str) -> bool {
         let abandoned = self
             .replay_map
             .get(id)
@@ -80,11 +89,6 @@ impl RithmicRequestHandler {
         }
 
         !abandoned
-    }
-
-    /// Forget a resume that was never sent.
-    pub(crate) fn forget_resume(&mut self, id: &str) {
-        self.resumes.remove(id);
     }
 
     /// Record that replay `id` reached the socket.
@@ -116,10 +120,18 @@ impl RithmicRequestHandler {
                 replay.responses.len()
             );
 
+            self.forget_resumes_of(&id);
+
             if replay.sent {
                 self.expect_late_frames(id);
             }
         }
+    }
+
+    /// Forget any in-flight resume of replay `id`, so a late acknowledgement
+    /// is not mistaken for one that matters.
+    fn forget_resumes_of(&mut self, id: &str) {
+        self.resumes.retain(|_, replay| replay != id);
     }
 
     /// Fail a replay with `error`. Returns `false` if `request_id` is not a
@@ -134,23 +146,27 @@ impl RithmicRequestHandler {
             self.expect_late_frames(request_id);
         }
 
-        self.resumes.retain(|_, id| id != request_id);
+        self.forget_resumes_of(request_id);
         replay.finish(Err(error));
 
         true
     }
 
-    /// End a replay because the server refused to continue it.
-    pub(super) fn refuse_replay(&mut self, request_id: String, error: RithmicError) -> usize {
-        let Some(replay) = self.replay_map.remove(&request_id) else {
-            return 0;
-        };
+    /// End a replay because the server refused to continue it. Returns how
+    /// many parts it had, or `None` if nothing was waiting on it.
+    pub(super) fn refuse_replay(
+        &mut self,
+        request_id: String,
+        error: RithmicError,
+    ) -> Option<usize> {
+        let replay = self.replay_map.remove(&request_id)?;
 
         let parts = replay.responses.len();
+        self.forget_resumes_of(&request_id);
         replay.finish(Err(error));
         self.expect_late_frames(request_id);
 
-        parts
+        Some(parts)
     }
 
     /// Fail every replay because the connection is gone.
@@ -202,6 +218,7 @@ impl RithmicRequestHandler {
         // gets every frame. Without a code, more may still follow.
         let final_from_server = response.rp_code().is_some_and(|code| !code.is_empty());
         let mut replay = self.replay_map.remove(&id)?;
+        self.forget_resumes_of(&id);
 
         replay.responses.push(response);
         let responses = std::mem::take(&mut replay.responses);
@@ -220,12 +237,6 @@ mod tests {
     use super::*;
 
     use crate::rti::{ResponseResumeBars, ResponseTimeBarReplay};
-
-    fn registered(handler: &mut RithmicRequestHandler, id: &str) -> oneshot::Receiver<Reply> {
-        let (tx, rx) = oneshot::channel();
-        assert!(handler.register_replay(id.into(), PendingReplay::new(tx)));
-        rx
-    }
 
     fn frame(id: &str, marker: Option<i32>, code: &[&str], key: Option<&str>) -> RithmicResponse {
         RithmicResponse {
@@ -257,8 +268,8 @@ mod tests {
     #[test]
     fn a_reused_continuation_key_resumes_again_after_new_replay_data() {
         let mut handler = RithmicRequestHandler::new();
-        let mut rx = registered(&mut handler, "original");
-        let _other = registered(&mut handler, "other");
+        let mut rx = handler.register_test_replay("original");
+        let _other = handler.register_test_replay("other");
         handler.mark_sent("original");
 
         handler.handle_response(frame("original", Some(1), &[], None));
@@ -309,7 +320,7 @@ mod tests {
             (&[][..], None, true),
         ] {
             let mut handler = RithmicRequestHandler::new();
-            let mut rx = registered(&mut handler, "original");
+            let mut rx = handler.register_test_replay("original");
 
             handler.handle_response(frame("original", Some(1), &[], None));
             let mut last = frame("original", None, code, None);
@@ -335,7 +346,7 @@ mod tests {
             &["7", "an error occurred while parsing data."][..],
         ] {
             let mut handler = RithmicRequestHandler::new();
-            let mut rx = registered(&mut handler, "original");
+            let mut rx = handler.register_test_replay("original");
 
             let mut last = frame("original", None, code, None);
             // As the decoder classifies it.
@@ -350,7 +361,7 @@ mod tests {
     #[test]
     fn a_decode_failure_mid_replay_keeps_the_earlier_frames() {
         let mut handler = RithmicRequestHandler::new();
-        let mut rx = registered(&mut handler, "original");
+        let mut rx = handler.register_test_replay("original");
 
         handler.handle_response(frame("original", Some(1), &[], None));
         handler.handle_response(RithmicResponse {
@@ -375,7 +386,7 @@ mod tests {
     #[test]
     fn a_refused_resume_returns_the_refusal_not_the_frames_so_far() {
         let mut handler = RithmicRequestHandler::new();
-        let mut rx = registered(&mut handler, "original");
+        let mut rx = handler.register_test_replay("original");
 
         handler.handle_response(frame("original", Some(1), &[], None));
         handler.handle_response(frame("original", None, &[], Some("key")));
@@ -392,8 +403,8 @@ mod tests {
     #[test]
     fn an_abandoned_replay_is_released_and_its_late_frames_are_counted() {
         let mut handler = RithmicRequestHandler::new();
-        let rx = registered(&mut handler, "original");
-        let _other = registered(&mut handler, "other");
+        let rx = handler.register_test_replay("original");
+        let _other = handler.register_test_replay("other");
         handler.mark_sent("original");
 
         handler.handle_response(frame("original", Some(1), &[], None));
@@ -437,7 +448,7 @@ mod tests {
         assert!(!handler.register_replay("unsent".into(), PendingReplay::new(tx)));
         assert!(handler.replay_map.is_empty());
 
-        let mut failed = registered(&mut handler, "failed");
+        let mut failed = handler.register_test_replay("failed");
         handler.fail_request("failed", RithmicError::SendFailed);
         assert_eq!(failed.try_recv().unwrap(), Err(RithmicError::SendFailed));
         assert!(
@@ -445,7 +456,7 @@ mod tests {
             "the server never saw a request that failed to send"
         );
 
-        let mut sent = registered(&mut handler, "sent");
+        let mut sent = handler.register_test_replay("sent");
         handler.mark_sent("sent");
         handler.fail_request("sent", RithmicError::SendFailed);
         assert_eq!(sent.try_recv().unwrap(), Err(RithmicError::SendFailed));
@@ -459,7 +470,7 @@ mod tests {
     #[test]
     fn a_dropped_connection_fails_every_replay() {
         let mut handler = RithmicRequestHandler::new();
-        let mut rx = registered(&mut handler, "original");
+        let mut rx = handler.register_test_replay("original");
 
         handler.handle_response(frame("original", Some(1), &[], None));
         handler.register_resume("resume".into(), "original".into());

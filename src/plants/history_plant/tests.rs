@@ -599,12 +599,12 @@ async fn a_load_dropped_mid_replay_is_released_without_another_frame() {
     }
     drop(load);
 
-    // The plant releases the replay on its next loop turn, with no new frame.
-    let actor = tokio::spawn(async move {
-        let _ = tokio::time::timeout(std::time::Duration::from_millis(200), plant.run()).await;
-        plant
-    });
-    let plant = actor.await.unwrap();
+    // One pass of the plant loop works through the queued commands and
+    // releases the dropped replay, with no new frame.
+    {
+        let mut run = std::pin::pin!(plant.run());
+        assert!(run.as_mut().now_or_never().is_none());
+    }
 
     assert!(
         plant.core.request_handler.expects_late_frames(&id),

@@ -67,10 +67,10 @@ impl RithmicResponse {
 
     /// The key for continuing a replay the server cut short.
     ///
-    /// Only the server's truncation notice carries one; every other frame
-    /// returns `None`. The `load_*` methods use it automatically, so you only
-    /// need it to call
-    /// [`resume_bars`](crate::RithmicHistoryPlantHandle::resume_bars) yourself.
+    /// Only the server's truncation notice carries one. The `load_*` methods
+    /// use those notices to continue the replay and leave them out of the
+    /// result, so frames they return always give `None`. Kept for
+    /// compatibility.
     pub fn resume_key(&self) -> Option<&str> {
         let key = match &self.message {
             RithmicMessage::ResponseTickBarReplay(m) => m.request_key.as_deref(),
