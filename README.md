@@ -264,107 +264,72 @@ let ticks = handle
 let tick_bars = handle.load_tick_bars_all(symbol, exchange, 5, start, end).await?;
 ```
 
-**Match time-bar indices to the bar type.** The second/minute example above uses
-Unix seconds. `DailyBar` and `WeeklyBar` instead require `YYYYMMDD` date indices
-(for example `20260914`), and their response `marker` values use that date
-encoding too. The legacy arguments and builder fields are still named
-`start_time_sec` / `end_time_sec`; the SDK forwards them unchanged as the wire
-`start_index` / `finish_index`. It does not convert Unix timestamps into dates.
+**Use the `_all` loaders.** Rithmic stops a replay at 10,000 records without
+saying so. The `_all` variants lift that cap; use the plain ones only when you
+want at most 10,000 records.
 
-**Use the `_all` loaders.** Rithmic caps a replay at 10,000 records and gives no
-sign that it did — the closing response of a replay cut at that count is
-identical to a complete one's. The `_all` variants set `resume_bars`, which
-lifts the cap. `load_ticks`, `load_tick_bars` and `load_time_bars` leave the cap
-in place; reach for them only when you want at most 10,000 records.
+**Daily and weekly bars take dates.** For `DailyBar` and `WeeklyBar`, pass the
+window as `YYYYMMDD` (e.g. `20260914`); each bar's `marker` is a date too. Unix
+seconds there return an empty reply, not an error.
 
-**Compare the last record with your window.** The server can also close a reply
-on an output budget of its own — about four seconds of streaming, whatever the
-window asked and whatever the flag says. When it does so with its truncation
-notice — a dataless frame carrying a `request_key` and no response code — the
-plant resumes the reply itself (`RequestResumeBars` with that key; the server
-continues on the same request) until the real end marker arrives, so the `_all`
-call still returns the whole window, one round trip per cut; a key repeated
-without intervening data is not asked for again, on these loaders and the
-scoped replays alike; a caller that pages
-replays itself turns that off with `resume_truncated_replays(false)` and gets
-the notice as the reply's last frame. A time bar reply has also been seen cut with a
-complete end marker and nothing else: a 60-day one-minute window came back as
-53,190 bars ending 7.5 days short, under `rp_code ["0"]`. So compare the last
-record with the window you asked for, and ask again from it when it falls
-short:
+**Check large time bar windows.** The server cuts replies short after about four
+seconds of streaming. The plant normally asks it to continue, so you still get
+the whole window, but time bar replays have occasionally stopped early without
+warning. For large windows, check the last bar and request the rest:
 
 ```rust
 let mut bars = handle
     .load_time_bars_all(symbol.clone(), exchange.clone(), TimeBarType::MinuteBar, 1, start, end)
     .await?;
+
 loop {
-    // The newest bar's close is where the next page starts; the bar closing
-    // there may be sent again, so keep the first copy.
+    // Continue from the newest bar's close time.
     let newest = bars.iter().rev().find_map(|r| match &r.message {
         RithmicMessage::ResponseTimeBarReplay(bar) => bar.marker,
         _ => None,
     });
+
     let Some(from) = newest else { break };
     if from + 60 > end {
         break; // the window is covered
     }
+
     let rest = handle
         .load_time_bars_all(symbol.clone(), exchange.clone(), TimeBarType::MinuteBar, 1, from, end)
         .await?;
+
     if rest.iter().all(|r| r.rp_code().is_some_and(|c| !c.is_empty())) {
         break; // nothing newer came back
     }
-    bars.pop(); // the end marker of the page before
+
+    bars.pop(); // drop the previous page's final response
     bars.extend(rest);
 }
 ```
 
-Left alone, a truncated request keeps streaming for a moment and then draws
-`rp_code ["12", "output inhibited"]` over a minute later; both are counted and
-logged once, never delivered, and a request sent in the meantime is served at
-once. [`examples/replay_frames.rs`](examples/replay_frames.rs) records every
-frame of one replay on the raw socket, which is how all of this was
-established. It resolves the front month of `PRODUCT` (default `MNQ`) through
-the ticker plant, so it keeps running as contracts roll; `SYMBOL` pins a
-contract.
+**Set your own time limit.** The crate never times out a request, and a very
+large window may get no reply at all. Wrap `load_*` calls in
+`tokio::time::timeout`, or use a replay you can watch.
 
-The whole window is buffered before the call returns. A full 23-hour ES session
-runs to hundreds of thousands of records, so ask for the window you need rather
-than a day at a time. A window far past the budget may draw no reply at all — a
-one-minute replay over 120 days did not answer in ten minutes — so wrap the call
-in your own deadline.
+**Replays you can watch and cancel.** `start_time_bar_replay`,
+`start_tick_bar_replay` and `start_volume_profile_minute_bars` return a
+`ReplayHandle` straight away:
 
-For an inactivity deadline, use `start_time_bar_replay`, `start_tick_bar_replay`,
-or `start_volume_profile_replay`. Each returns a `ReplayHandle` after bounded
-queue admission. Clone its `subscribe_progress()` receiver and select progress
-changes against `result()` and your own deadline or cancellation signal.
-`ReplayProgress::sent_at` is set only after the original socket write completes;
-`last_progress_at` advances for correlated data, an accepted continuation notice, or a
-matched successful continuation acknowledgement. Other requests, heartbeats,
-empty intermediate frames, and repeated notices without new data do not keep
-this replay alive.
-The SDK imposes neither an inactivity deadline nor a total replay duration limit.
-A resume key may repeat after another chunk of replay data; repeated notices
-without intervening data remain inert.
+```rust
+let mut replay = handle.start_time_bar_replay(request).await?;
+let mut progress = replay.subscribe_progress(); // updates as data arrives
 
-These methods lift the record cap and continue on the original replay request,
-independently of `resume_truncated_replays`. `ReplayOutcome` owns the received
-frames once and distinguishes `Complete`, `Truncated` (output inhibited),
-`Refused`, `Failed`, and `Cancelled`. A non-complete result's frames are a prefix,
-not a successful reply. Even a successful server marker does not certify that
-an illiquid or silent-cut window contains data through its requested end; the
-coverage checks described above still belong to the caller.
+// ... select on replay.result(), progress.changed() and your own timer ...
 
-`cancel().await` acknowledges local retirement of that request's responder and
-accumulator. The result remains available, including any incomplete prefix.
-Cancellation does not log out or disconnect the healthy history plant. The SDK
-retains only inert correlation for late frames until the server ends them, and
-never resumes a cancelled replay. Dropping the handle also cancels locally;
-dropping a pending `result()` future alone does not. A dropped start future is
-safe even while waiting for command-queue admission.
+replay.cancel().await?; // stops this replay only
+let outcome = replay.result().await?; // frames so far, and why it ended
+```
 
-Legacy `load_*` methods remain available. A refused automatic continuation now
-returns an error instead of incorrectly returning its prefix as `Ok`.
+`outcome.end` is `ReplayEnd::Complete` only if you have the whole window. See
+the `ReplayHandle` docs for a full example.
+
+Either way, the whole window is held in memory until you receive it, so ask for
+the window you need rather than a day at a time.
 
 Volume profile bars take a request struct:
 
@@ -481,7 +446,7 @@ Every example is runnable against a Demo account once `.env` is filled in from
 | [`trade_routes.rs`](examples/trade_routes.rs) | Inspecting the routes orders will take |
 | [`load_historical_bars.rs`](examples/load_historical_bars.rs) | Time bar replay |
 | [`load_historical_ticks.rs`](examples/load_historical_ticks.rs) | Tick replay |
-| [`replay_frames.rs`](examples/replay_frames.rs) | Every frame of one replay on the raw socket, including what the server sends after a truncation |
+| [`replay_frames.rs`](examples/replay_frames.rs) | Diagnostic: every frame of one replay |
 | [`pnl.rs`](examples/pnl.rs) | Position and P&L updates |
 | [`error_handling.rs`](examples/error_handling.rs) | Every error the crate can hand you, in one file |
 | [`reconnect.rs`](examples/reconnect.rs) | A reconnection loop that restores subscriptions |

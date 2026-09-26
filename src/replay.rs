@@ -1,71 +1,132 @@
-//! Request-scoped historical replay progress and cancellation.
-
-use std::collections::HashSet;
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
-};
-
-use tokio::sync::{mpsc, oneshot, watch};
-use tokio::time::Instant;
+//! History replays you can watch and cancel. See [`ReplayHandle`].
 
 use crate::{RithmicError, RithmicResponse, plants::history_plant::HistoryPlantCommand};
 
-/// Coalesced progress for one replay. Observing progress never copies historical data.
+use std::{
+    collections::HashSet,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+};
+
+use tokio::{
+    sync::{mpsc, oneshot, watch},
+    time::Instant,
+};
+
+/// A snapshot of a replay's progress, from [`ReplayHandle::subscribe_progress`].
 ///
-/// The SDK sets no deadline. A caller may measure inactivity from `last_progress_at`
-/// after `sent_at` becomes available. Heartbeats, other requests, empty intermediate
-/// frames, and repeated continuation notices without new data do not advance it.
+/// Use it to spot a replay that has stalled. Only this replay's own data moves
+/// it forward; heartbeats and other requests do not.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct ReplayProgress {
-    /// When the original request finished writing to the socket; not queue admission.
+    /// When the request was written to the socket. `None` while it is queued.
     pub sent_at: Option<Instant>,
-    /// Last data frame, accepted continuation notice, matched successful resume
-    /// acknowledgement, or original send.
+    /// When data last arrived, or the request was sent or continued.
     pub last_progress_at: Option<Instant>,
-    /// Data-bearing frames received for this request, including its continuation.
+    /// Frames received that carry data.
     pub data_frames: u64,
-    /// Accepted continuation notices. A key may repeat after new replay data.
+    /// How many times the server cut the reply short and the plant asked it to
+    /// continue.
     pub continuations: u64,
 }
 
-/// How the replay ended. Only `Complete` proves the server finished its reply.
+/// Why a replay ended.
+///
+/// Only [`Complete`](Self::Complete) means you have the whole window. For any
+/// other variant, [`ReplayOutcome::responses`] holds only its start.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ReplayEnd {
-    /// The server supplied its successful terminal marker.
+    /// The server sent the whole window. An empty window ends here too, with
+    /// no data frames.
     Complete,
-    /// The server ended an incomplete replay with output inhibited (code 12).
+    /// The server stopped before the end of the window (`rp_code` `"12"`).
     Truncated,
-    /// The server refused the original replay or a continuation.
+    /// The server refused the replay, or refused to continue it.
     Refused(RithmicError),
-    /// A local transport or protocol failure prevented completion.
+    /// The connection failed, or the server's reply could not be read.
     Failed(RithmicError),
-    /// The caller cancelled locally. The healthy connection remains available.
+    /// You cancelled the replay. The plant is unaffected.
     Cancelled,
 }
 
-/// The sole owned payload of a finished replay, including its final wire marker
-/// when one was received. A non-complete outcome's responses are only a prefix,
-/// never evidence that the requested time window is covered.
+/// A finished replay: every frame received, and why it ended.
 #[derive(Debug)]
+#[non_exhaustive]
 pub struct ReplayOutcome {
-    /// Received frames, moved from the accumulator without copying their data.
+    /// Every frame received, in order.
     pub responses: Vec<RithmicResponse>,
-    /// Completion, refusal, incomplete termination, failure, or cancellation.
+    /// Why the replay ended.
     pub end: ReplayEnd,
 }
 
-/// A replay admitted to the history plant's bounded command queue.
+/// A running history replay.
 ///
-/// Clone the progress receiver with [`Self::subscribe_progress`] and select its
-/// changes against [`Self::result`] and your own cancellation/deadline signal.
-/// Dropping the result future is safe: it does not cancel or consume the reply.
-/// Dropping this handle cancels locally; use [`Self::cancel`] when you need an
-/// acknowledgement before reusing your caller-side resources.
+/// Returned by [`start_time_bar_replay`], [`start_tick_bar_replay`] and
+/// [`start_volume_profile_minute_bars`]. Unlike the `load_*` methods, a handle
+/// lets you:
+///
+/// - watch progress with [`subscribe_progress`](Self::subscribe_progress), to
+///   stop a replay that has stalled;
+/// - see whether you got the whole window, from the [`ReplayEnd`] that
+///   [`result`](Self::result) returns;
+/// - cancel just this replay with [`cancel`](Self::cancel).
+///
+/// Dropping the handle cancels the replay.
+///
+/// # Example
+///
+/// Cancel a replay if no data arrives for 30 seconds:
+///
+/// ```no_run
+/// use std::time::Duration;
+/// use rithmic_rs::{ReplayEnd, RithmicHistoryPlantHandle, TimeBarReplayRequest, TimeBarType};
+///
+/// # async fn demo(handle: RithmicHistoryPlantHandle) -> Result<(), Box<dyn std::error::Error>> {
+/// let request = TimeBarReplayRequest::new()
+///     .symbol("ESU6")
+///     .exchange("CME")
+///     .bar_type(TimeBarType::MinuteBar)
+///     .bar_type_period(1)
+///     .start_time_sec(1_750_000_000)
+///     .end_time_sec(1_750_086_400);
+///
+/// let mut replay = handle.start_time_bar_replay(request).await?;
+/// let mut progress = replay.subscribe_progress();
+///
+/// let outcome = loop {
+///     tokio::select! {
+///         outcome = replay.result() => break outcome?,
+///
+///         changed = progress.changed() => {
+///             // An error means the replay has ended and its result is ready.
+///             if changed.is_err() {
+///                 break replay.result().await?;
+///             }
+///         }
+///
+///         _ = tokio::time::sleep(Duration::from_secs(30)) => {
+///             replay.cancel().await?;
+///             break replay.result().await?;
+///         }
+///     }
+/// };
+///
+/// if outcome.end != ReplayEnd::Complete {
+///     println!("only part of the window: {:?}", outcome.end);
+/// }
+/// # Ok(())
+/// # }
+/// ```
+///
+/// [`start_time_bar_replay`]: crate::RithmicHistoryPlantHandle::start_time_bar_replay
+/// [`start_tick_bar_replay`]: crate::RithmicHistoryPlantHandle::start_tick_bar_replay
+/// [`start_volume_profile_minute_bars`]: crate::RithmicHistoryPlantHandle::start_volume_profile_minute_bars
 #[derive(Debug)]
-#[must_use = "dropping the handle cancels the replay locally"]
+#[must_use = "dropping the handle cancels the replay"]
 pub struct ReplayHandle {
     result: Option<oneshot::Receiver<ReplayOutcome>>,
     progress: watch::Receiver<ReplayProgress>,
@@ -74,32 +135,48 @@ pub struct ReplayHandle {
 }
 
 impl ReplayHandle {
-    /// Observe coalesced progress for this request only.
+    /// A receiver that updates as the replay makes progress. It holds only the
+    /// latest snapshot, not every change.
     pub fn subscribe_progress(&self) -> watch::Receiver<ReplayProgress> {
         self.progress.clone()
     }
 
-    /// Wait for the terminal outcome. Cancel-safe until it returns; call once.
+    /// Wait for the replay to end, and take its frames.
+    ///
+    /// Safe to use in `tokio::select!`: if the future is dropped, call it again.
+    ///
+    /// # Errors
+    ///
+    /// - [`RithmicError::ConnectionClosed`] if the plant shut down first.
+    /// - [`RithmicError::InvalidArgument`] if the result was already taken.
     pub async fn result(&mut self) -> Result<ReplayOutcome, RithmicError> {
         let Some(receiver) = self.result.as_mut() else {
             return Err(RithmicError::InvalidArgument(
                 "replay result already consumed".into(),
             ));
         };
+
         let result = receiver.await.map_err(|_| RithmicError::ConnectionClosed);
         self.result = None;
+
         result
     }
 
-    /// Cancel only this replay and wait until the actor has released its active
-    /// responder and accumulator. If completion won the race, its outcome stands.
+    /// Cancel this replay. Other requests and the connection are unaffected.
     ///
-    /// This is local cancellation: no logout, socket close, or invented wire
-    /// cancellation is sent. Late frames remain correlated and are discarded
-    /// until the server's real terminal marker. Call [`Self::result`] to obtain
-    /// the outcome and any received prefix after this acknowledgement.
+    /// Afterwards, [`result`](Self::result) returns the frames received so far
+    /// with [`ReplayEnd::Cancelled`], or the real outcome if the replay had
+    /// already finished.
+    ///
+    /// The replay stops at once, but this call waits for the plant to confirm,
+    /// which can take a moment if the plant is busy.
+    ///
+    /// # Errors
+    ///
+    /// [`RithmicError::ConnectionClosed`] if the plant has shut down.
     pub async fn cancel(&self) -> Result<(), RithmicError> {
         self.control.cancel();
+
         let (tx, rx) = oneshot::channel();
         self.sender
             .send(HistoryPlantCommand::CancelReplay {
@@ -108,6 +185,7 @@ impl ReplayHandle {
             })
             .await
             .map_err(|_| RithmicError::ConnectionClosed)?;
+
         rx.await.map_err(|_| RithmicError::ConnectionClosed)
     }
 }
@@ -116,8 +194,8 @@ impl Drop for ReplayHandle {
     fn drop(&mut self) {
         if self.result.is_some() {
             self.control.cancel();
-            // The actor also sweeps cancellation flags on every turn, so a full
-            // command queue cannot strand a dropped handle's accumulator.
+            // If the queue is full the command is dropped, but the plant also
+            // checks the flag on every loop turn.
             let _ = self.sender.try_send(HistoryPlantCommand::CancelReplay {
                 control: self.control.clone(),
                 acknowledged: None,
@@ -126,6 +204,8 @@ impl Drop for ReplayHandle {
     }
 }
 
+/// The cancel flag shared by a [`ReplayHandle`] and the plant. The plant checks
+/// it on every loop turn.
 #[derive(Debug, Default)]
 pub(crate) struct ReplayControl(AtomicBool);
 
@@ -133,11 +213,13 @@ impl ReplayControl {
     pub(crate) fn cancel(&self) {
         self.0.store(true, Ordering::Release);
     }
+
     pub(crate) fn cancelled(&self) -> bool {
         self.0.load(Ordering::Acquire)
     }
 }
 
+/// The plant's side of a [`ReplayHandle`].
 #[derive(Debug)]
 pub(crate) struct ReplayRequest {
     pub(crate) control: Arc<ReplayControl>,
@@ -152,6 +234,7 @@ impl ReplayRequest {
         let (tx, rx) = oneshot::channel();
         let (progress_tx, progress_rx) = watch::channel(ReplayProgress::default());
         let control = Arc::new(ReplayControl::default());
+
         (
             ReplayHandle {
                 result: Some(rx),
@@ -169,10 +252,26 @@ impl ReplayRequest {
         )
     }
 
+    /// Whether the handle cancelled the replay or was dropped.
     pub(crate) fn cancelled(&self) -> bool {
         self.control.cancelled() || self.responder.is_closed()
     }
 
+    /// Whether the request reached the socket, so the server may still be
+    /// sending frames for it.
+    pub(crate) fn was_sent(&self) -> bool {
+        self.progress.borrow().sent_at.is_some()
+    }
+
+    /// Update the counters and set `last_progress_at` to now.
+    pub(crate) fn record_progress(&self, update: impl FnOnce(&mut ReplayProgress)) {
+        self.progress.send_modify(|progress| {
+            update(progress);
+            progress.last_progress_at = Some(Instant::now());
+        });
+    }
+
+    /// Send the frames and outcome to the handle.
     pub(crate) fn finish(self, end: ReplayEnd) {
         let _ = self.responder.send(ReplayOutcome {
             responses: self.responses,

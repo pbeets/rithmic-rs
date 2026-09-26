@@ -538,7 +538,7 @@ async fn scoped_volume_replay_refusal_cannot_turn_a_prefix_into_success() {
     };
     let (handle, actor, mut client) = running_plant_with_handle().await;
     let mut replay = handle
-        .start_volume_profile_replay(
+        .start_volume_profile_minute_bars(
             VolumeProfileMinuteBarsRequest::new()
                 .symbol("ESH6")
                 .exchange("CME")

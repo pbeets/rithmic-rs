@@ -65,10 +65,9 @@ impl std::error::Error for RithmicRequestError {}
 /// it as a success. Check [`RithmicResponse::error`] to tell the first two
 /// apart.
 ///
-/// `login` and a refused automatic replay continuation return it as
-/// `Err(`[`RequestRejected`](Self::RequestRejected)`)` instead. The scoped
-/// replay API exposes refusal in [`crate::ReplayEnd::Refused`]. Login and
-/// ordinary response handling are shown below.
+/// `login` returns a refusal as `Err(`[`RequestRejected`](Self::RequestRejected)`)`
+/// instead, as does a `load_*` replay the server refuses to continue. Both
+/// styles are shown below.
 ///
 /// For which of these arrive on the subscription channel instead, and which
 /// stop a plant, see the crate-level [Error Handling](crate#error-handling)

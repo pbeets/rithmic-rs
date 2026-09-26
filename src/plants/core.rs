@@ -26,6 +26,7 @@ use crate::{
     config::{LoginConfig, RithmicConfig},
     error::RithmicError,
     ping_manager::PingManager,
+    replay::ReplayRequest,
     request_handler::{Resume, RithmicRequest, RithmicRequestHandler},
     rti::{messages::RithmicMessage, request_login::SysInfraType},
     ws::{
@@ -146,8 +147,8 @@ where
         self.request_handler.drain_and_drop();
     }
 
-    /// Returns false only if local replay cancellation prevented any write.
-    /// A transport error still counts as a write attempt: bytes may have escaped.
+    /// Send `msg`, failing `request_id` if the write fails. Returns `false`
+    /// only if nothing was written because the replay was cancelled.
     pub(crate) async fn send_or_fail(&mut self, msg: Message, request_id: &str) -> bool {
         if !self.request_handler.replay_send_allowed(request_id) {
             return false;
@@ -378,6 +379,8 @@ where
                 );
             }
         } else if let Some(resume) = self.request_handler.handle_response(response) {
+            // This write pauses the loop, as answering a ping does. It is
+            // normally instant and gives up after SEND_TIMEOUT_SECS.
             self.resume_truncated_replay(resume).await;
         }
     }
@@ -605,6 +608,19 @@ where
         });
 
         self.send_or_fail(Message::Binary(buf.into()), &id).await;
+    }
+
+    /// Register a `start_*` replay and send it, unless it was cancelled while
+    /// queued.
+    pub(crate) async fn register_replay_and_send(
+        &mut self,
+        buf: Vec<u8>,
+        id: String,
+        request: ReplayRequest,
+    ) {
+        if self.request_handler.register_replay(id.clone(), request) {
+            self.send_or_fail(Message::Binary(buf.into()), &id).await;
+        }
     }
 
     pub(crate) async fn handle_close(&mut self) {

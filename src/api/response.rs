@@ -65,17 +65,10 @@ impl RithmicResponse {
         self.rp_code().and_then(|c| c.get(1).map(String::as_str))
     }
 
-    /// The `request_key` a bar replay carries, to pass to
-    /// [`resume_bars`](crate::RithmicHistoryPlantHandle::resume_bars).
+    /// The key for continuing a replay the server cut short.
     ///
-    /// Returns `None` when the message is not a bar replay response, or when
-    /// the frame carries no key. The server sends a key on exactly one frame:
-    /// the notice that closes a replay it truncated (see
-    /// [`is_truncated`](Self::is_truncated)). Treat it as an opaque token: the
-    /// same key can recur on later cuts of the same replay. Data frames and the end
-    /// marker of a complete replay carry none. A replay cut at the 10,000-record
-    /// limit is lifted differently — by setting `resume_bars` on the original
-    /// request; see [`load_ticks_all`](crate::RithmicHistoryPlantHandle::load_ticks_all).
+    /// Only a truncation notice carries one ([`is_truncated`](Self::is_truncated));
+    /// every other frame returns `None`. The plant uses it automatically.
     pub fn resume_key(&self) -> Option<&str> {
         let key = match &self.message {
             RithmicMessage::ResponseTickBarReplay(m) => m.request_key.as_deref(),
@@ -87,32 +80,18 @@ impl RithmicResponse {
         key.filter(|k| !k.is_empty())
     }
 
-    /// `true` for the frame that closes a replay the server truncated.
+    /// `true` if this frame is the server's notice that it cut a replay short.
     ///
-    /// Rithmic's history plant streams a replay it cannot finish inside its
-    /// output budget up to that budget, then sends a dataless frame carrying
-    /// a `request_key` and **no response code** — neither `rq_handler_rp_code`
-    /// nor `rp_code`. It is not an end marker, and the request handler does
-    /// not deliver it: while the caller is waiting, the plant sends
-    /// `RequestResumeBars` with the key and the reply goes on, on the same
-    /// request, until its real end marker (see
-    /// [`resume_bars`](crate::RithmicHistoryPlantHandle::resume_bars)). Only
-    /// when the caller has stopped waiting is the notice the reply's last
-    /// frame; the records before it are then a prefix of the window. Left
-    /// alone, the server keeps streaming the request briefly and sends its
-    /// real final response, `rp_code` `["12", "output inhibited"]`, on the
-    /// same id over a minute later; the request handler counts both and logs
-    /// them once. See the truncation notes on
-    /// [`load_ticks_all`](crate::RithmicHistoryPlantHandle::load_ticks_all) and
-    /// [`load_volume_profile_minute_bars`](crate::RithmicHistoryPlantHandle::load_volume_profile_minute_bars).
-    ///
-    /// A complete replay ends with a frame carrying `rp_code` `["0"]` and no
-    /// key; a refused one with a non-zero `rp_code` and [`error`](Self::error)
-    /// set. Both answer `false` here.
+    /// The notice carries no data, only a [`resume_key`](Self::resume_key). The
+    /// plant normally continues the replay and leaves the notice out, so you
+    /// only see one when
+    /// [`resume_truncated_replays`](crate::RithmicHistoryPlantHandle::resume_truncated_replays)
+    /// is off. It is then the last frame, and the reply holds only part of the
+    /// window.
     pub fn is_truncated(&self) -> bool {
         self.multi_response
             && !self.has_more
-            && self.rp_code().is_none_or(<[String]>::is_empty)
+            && self.rp_code().is_none_or(|code| code.is_empty())
             && self.resume_key().is_some()
     }
 

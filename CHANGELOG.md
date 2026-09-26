@@ -9,29 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- A replay the server truncates on its output budget is resumed by the plant
-  itself. The server closes such a reply with a truncation notice — a
-  dataless frame carrying a `request_key` and no response code, named by the
-  new `RithmicResponse::is_truncated` — and the plant answers it with
-  `RequestResumeBars` and that key, consumes the acknowledgement, and keeps
-  the caller waiting while the server continues the reply on the same
-  request, until its real end marker. The loaders therefore return the whole
-  window, one round trip per cut (about four seconds of streaming each); the
-  notice is never delivered, the cut is said once at `INFO`, and a refused
-  resume returns the refusal to the caller at `WARN`, never the prefix as a
-  complete reply. A resume key repeated without intervening data is not asked
-  for again, on the loaders and the scoped replays alike. A notice for a
-  caller that has stopped
-  waiting is counted, not resumed.
-- `RithmicHistoryPlantHandle::resume_truncated_replays(bool)`: turns that off
-  for a caller that pages replays itself and needs every reply back inside its
-  own deadline; the notice is then the reply's last frame
-  (`RithmicResponse::is_truncated`).
-- `examples/replay_frames.rs`: every frame of one replay on the raw socket,
-  bypassing the request handler, including what the server sends after a
-  truncation. It is how the behaviour below was established. Its symbol is
-  the ticker plant's front month for `PRODUCT` (default `MNQ`) unless
-  `SYMBOL` pins one, so it keeps running as contracts roll.
+- `start_time_bar_replay`, `start_tick_bar_replay` and
+  `start_volume_profile_minute_bars` on `RithmicHistoryPlantHandle`. They
+  return a `ReplayHandle` you can use to watch a replay's progress, cancel it,
+  and see whether you got the whole window (`ReplayEnd::Complete`) or only part.
+- The plant now continues replays the server cuts short after about four
+  seconds of streaming, so the `load_*` methods return the whole window.
+  `RithmicResponse::is_truncated` identifies the server's notice.
+- `RithmicHistoryPlantHandle::resume_truncated_replays(bool)` turns that off
+  for the `load_*` methods.
+- `RithmicOrderPlant::subscribe_all()`: every account's messages, unfiltered,
+  for proxies that relay a multi-account login.
+- `examples/replay_frames.rs`: a diagnostic that prints every frame of a replay.
+
+### Changed
+
+- A `load_*` replay the server refuses to continue now returns
+  `Err(RithmicError::RequestRejected)` instead of the partial data.
+- Frames that arrive after a request is answered are counted and logged once
+  at `INFO`, instead of a `WARN` per frame and a full dump at `ERROR`.
+- If a caller stops waiting mid-reply, the rest of the reply is no longer held
+  in memory.
+- An unexpected final response is logged as one `ERROR` line, not a dump.
 
 ### Fixed
 
@@ -39,26 +38,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   decoded instead of surfacing as `UnknownTemplate`. A generated-schema coverage
   test now exercises every inbound template and fails when a future `src/rti.rs`
   refresh adds an unregistered message or a template decodes as the wrong type.
-- Parts that arrive for a request that has already been answered are counted
-  per request id and reported once, at `INFO`, when the venue's final response
-  arrives, instead of a `WARN` per part (added in 3.1.0) and a full-response
-  dump at `ERROR`. The history plant does this after it truncates a replay:
-  it keeps streaming for a fraction of a second, then sends `rp_code ["12",
-  "output inhibited"]` on the same id over a minute later. A truncation
-  notice opens the count, so the parts after it do not announce themselves.
-- The `_all` loaders' docs no longer claim the whole window: `resume_bars`
-  lifts the 10,000-record cap, not the server's output budget of about four
-  seconds of streaming (observed 2026-09-12 on Chicago: a per-price window
-  cut at the same frame three times over and closed with the notice, and at
-  925 rows when the server streamed slowly; a 60-day one-minute window cut at
-  53,190 bars, 7.5 days short, and closed with a complete end marker; a 224 MB
-  one-tick replay whole in 12.8 s). `resume_key` is documented as the key the
-  truncation notice carries rather than one the server never sends.
-- A caller that drops its receiver mid-reply no longer has the rest of the reply
-  held until the terminal; the next part releases it and says so once at `INFO`,
-  and the terminal is one `INFO` line rather than a dump of every frame.
-- A terminal for a request nothing is waiting on is one `ERROR` line naming the
-  request, the message and its `rp_code`, not a `{:#?}` dump.
+- Daily and weekly time bars are documented as taking `YYYYMMDD` dates, not
+  Unix seconds. Unix seconds there return an empty reply rather than an error.
+- The `_all` loaders' docs no longer claim they always return the whole window.
+- `RithmicResponse::resume_key` is documented as the key the server's
+  truncation notice carries.
 
 ## [3.1.0]
 

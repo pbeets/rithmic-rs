@@ -1,18 +1,15 @@
+use super::{Resume, RithmicRequestHandler};
 use std::sync::Arc;
-
 use tokio::time::Instant;
 
-use super::{Resume, RithmicRequestHandler};
 use crate::{
     ReplayEnd, RithmicError, RithmicResponse,
     replay::{ReplayControl, ReplayRequest},
     rti::messages::RithmicMessage,
 };
 
-/// Whether this frame carries replay data — the evidence, on either path,
-/// that new data has arrived since a truncation notice, re-arming the keys
-/// that notice already used. Time-bar and volume-profile parts carry a
-/// `marker`; tick-bar parts carry bar ssboe stamps.
+/// Whether this frame carries replay data (a `marker`, or tick bar
+/// timestamps).
 pub(super) fn carries_replay_data(response: &RithmicResponse) -> bool {
     match &response.message {
         RithmicMessage::ResponseTimeBarReplay(m) => m.marker.is_some(),
@@ -23,8 +20,8 @@ pub(super) fn carries_replay_data(response: &RithmicResponse) -> bool {
 }
 
 impl RithmicRequestHandler {
-    /// Admission is checked before sending, including a handle dropped while
-    /// its start future was waiting for room in the command queue.
+    /// Track a `start_*` replay. Returns `false` if it was cancelled while
+    /// queued, in which case nothing should be sent.
     pub(crate) fn register_replay(&mut self, id: String, request: ReplayRequest) -> bool {
         if request.cancelled() {
             request.finish(ReplayEnd::Cancelled);
@@ -34,6 +31,7 @@ impl RithmicRequestHandler {
         true
     }
 
+    /// `false` if `id` is a replay that has been cancelled.
     pub(crate) fn replay_send_allowed(&mut self, id: &str) -> bool {
         let cancelled = self
             .replay_map
@@ -45,10 +43,12 @@ impl RithmicRequestHandler {
         !cancelled
     }
 
+    /// Forget a resume that was never sent.
     pub(crate) fn forget_resume(&mut self, id: &str) {
         self.resumes.remove(id);
     }
 
+    /// Record when replay `id` was first written to the socket.
     pub(crate) fn mark_sent(&mut self, id: &str) {
         if let Some(request) = self.replay_map.get_mut(id) {
             request.progress.send_if_modified(|progress| {
@@ -63,97 +63,115 @@ impl RithmicRequestHandler {
         }
     }
 
+    /// Cancel and release the replay behind `control`.
     pub(crate) fn cancel_replay(&mut self, control: &Arc<ReplayControl>) {
         control.cancel();
         self.release_cancelled_replays();
     }
 
+    /// End every cancelled replay, handing it the frames received so far.
+    /// Called on every loop turn.
     pub(crate) fn release_cancelled_replays(&mut self) {
-        // Each removed value is moved straight to its one result receiver.
-        // Only the id and late-frame count remain while the remote reply drains.
         let cancelled: Vec<_> = self
             .replay_map
             .iter()
             .filter(|(_, request)| request.cancelled())
             .map(|(id, _)| id.clone())
             .collect();
+
         for id in cancelled {
             if let Some(request) = self.replay_map.remove(&id) {
-                if request.progress.borrow().sent_at.is_some() {
-                    self.late_continuations.insert(id, 0);
+                if request.was_sent() {
+                    self.expect_late_frames(id);
                 }
+
                 request.finish(ReplayEnd::Cancelled);
             }
         }
     }
 
+    /// Route a frame for a `start_*` replay. Returns a [`Resume`] if the
+    /// replay should be continued.
     pub(super) fn handle_replay_response(&mut self, response: RithmicResponse) -> Option<Resume> {
         let id = response.request_id.clone();
         let request = self.replay_map.get_mut(&id)?;
+
         if response.is_truncated() {
             let key = response.resume_key()?.to_owned();
-            // Duplicate notices without intervening data are not progress.
-            // The venue reuses a key when a later chunk reaches its budget.
+
+            // Ignore a key already used since the last data.
             if !request.continuation_keys.insert(key.clone()) {
                 return None;
             }
-            request.progress.send_modify(|progress| {
+
+            request.record_progress(|progress| {
                 progress.continuations = progress.continuations.saturating_add(1);
-                progress.last_progress_at = Some(Instant::now());
             });
+
             return Some(Resume {
                 request_id: id,
                 key,
             });
         }
-        let data = carries_replay_data(&response);
-        if data && response.error.is_none() {
+
+        if carries_replay_data(&response) && response.error.is_none() {
+            // The server can reuse a key after new data, so forget used keys.
             request.continuation_keys.clear();
-            request.progress.send_modify(|progress| {
+            request.record_progress(|progress| {
                 progress.data_frames = progress.data_frames.saturating_add(1);
-                progress.last_progress_at = Some(Instant::now());
             });
         }
+
         if response.has_more && response.error.is_none() {
             request.responses.push(response);
             return None;
         }
-        let end = if response.rp_code_num() == Some("12") {
-            ReplayEnd::Truncated
-        } else if let Some(error) = response.error.clone() {
-            match error {
-                RithmicError::RequestRejected(_) => ReplayEnd::Refused(error),
-                _ => ReplayEnd::Failed(error),
-            }
-        } else if response.rp_code_num() == Some("0") {
-            ReplayEnd::Complete
-        } else {
-            ReplayEnd::Failed(RithmicError::ProtocolError(
-                "replay ended without a successful terminal marker".into(),
-            ))
-        };
-        let terminal =
+
+        // Unless this is the server's own final response, more may follow.
+        let end = replay_end(&response);
+        let final_from_server =
             !response.has_more && response.rp_code().is_some_and(|code| !code.is_empty());
+
         if let Some(mut request) = self.replay_map.remove(&id) {
             request.responses.push(response);
             request.finish(end);
-            if !terminal {
-                self.late_continuations.insert(id, 0);
+
+            if !final_from_server {
+                self.expect_late_frames(id);
             }
         }
+
         None
+    }
+}
+
+/// How a replay ended, judged from its last frame.
+fn replay_end(response: &RithmicResponse) -> ReplayEnd {
+    if response.rp_code_num() == Some("12") {
+        return ReplayEnd::Truncated;
+    }
+
+    match &response.error {
+        Some(error @ RithmicError::RequestRejected(_)) => ReplayEnd::Refused(error.clone()),
+        Some(error) => ReplayEnd::Failed(error.clone()),
+        // "7" without an error is "no data": the window is empty.
+        None if matches!(response.rp_code_num(), Some("0" | "7")) => ReplayEnd::Complete,
+        None => ReplayEnd::Failed(RithmicError::ProtocolError(
+            "replay ended without a successful terminal marker".into(),
+        )),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
+    use tokio::sync::mpsc;
+
     use crate::{
         ReplayHandle,
         rti::{ResponseResumeBars, ResponseTimeBarReplay},
     };
-    use std::time::Duration;
-    use tokio::sync::mpsc;
 
     fn registered(handler: &mut RithmicRequestHandler, id: &str) -> ReplayHandle {
         let (sender, _receiver) = mpsc::channel(4);
@@ -376,6 +394,28 @@ mod tests {
             let outcome = replay.result().await.unwrap();
             assert_eq!(outcome.end, expected);
             assert_eq!(outcome.responses.len(), 2);
+        }
+    }
+
+    #[tokio::test]
+    async fn an_empty_window_completes_but_another_code_7_is_refused() {
+        for (code, complete) in [
+            (&["7", "no data"][..], true),
+            (&["7", "an error occurred while parsing data."][..], false),
+        ] {
+            let mut handler = RithmicRequestHandler::new();
+            let mut replay = registered(&mut handler, "original");
+            let mut last = frame("original", None, code, None);
+            // As the decoder classifies it.
+            last.error = crate::api::rp_code::classify_rp_code_error(last.rp_code().unwrap());
+            handler.handle_response(last);
+            let outcome = replay.result().await.unwrap();
+            if complete {
+                assert_eq!(outcome.end, ReplayEnd::Complete, "{code:?}");
+            } else {
+                assert!(matches!(outcome.end, ReplayEnd::Refused(_)), "{code:?}");
+            }
+            assert_eq!(outcome.responses.len(), 1);
         }
     }
 

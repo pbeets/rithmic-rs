@@ -1,4 +1,3 @@
-use crate::replay::{ReplayControl, ReplayHandle, ReplayRequest};
 use std::sync::Arc;
 use tracing::{debug, error, info};
 
@@ -16,6 +15,7 @@ use crate::{
         await_all_responses, await_first_response,
         core::{PlantActor, PlantCore, SelectResult},
     },
+    replay::{ReplayControl, ReplayHandle, ReplayRequest},
     rti::{
         messages::RithmicMessage, request_login::SysInfraType, request_tick_bar_update,
         request_time_bar_replay::BarType, request_time_bar_update,
@@ -86,6 +86,7 @@ pub(crate) enum HistoryPlantCommand {
     },
 }
 
+/// The request behind a [`HistoryPlantCommand::StartReplay`].
 pub(crate) enum ReplayQuery {
     Time(TimeBarReplayRequest),
     Tick(TickBarReplayRequest),
@@ -99,10 +100,9 @@ pub(crate) enum ReplayQuery {
 /// [`RithmicHistoryPlantHandle`], which is cheap to clone and safe to share
 /// between tasks.
 ///
-/// For request-scoped progress and acknowledged local cancellation, use the
-/// `start_*_replay` methods on [`RithmicHistoryPlantHandle`]. They return a
-/// [`ReplayHandle`] and distinguish successful completion from an incomplete
-/// prefix. The SDK has no replay deadline; the caller owns that policy.
+/// The `load_*` methods return every record once the replay is over. The
+/// `start_*` methods return a [`ReplayHandle`] straight away, which lets you
+/// watch progress, cancel, and tell a complete window from a partial one.
 ///
 /// # Getting data out
 ///
@@ -126,10 +126,10 @@ pub(crate) enum ReplayQuery {
 ///   with a response that carries no bar. Matching on the message type as above
 ///   skips it; counting `responses.len()` does not, so subtract one if you want
 ///   a record count.
-/// - **Index encoding depends on the replay.** Tick, second/minute time bars,
-///   and minute volume profiles use Unix seconds as `i32` (which overflow in
-///   2038). Daily/weekly time bars instead use `YYYYMMDD` date indices for both
-///   request bounds and response `marker` values; they are not Unix timestamps.
+/// - **Times are Unix seconds as `i32`,** both going in and coming back. This
+///   is Rithmic's own type and it overflows in 2038. Daily and weekly time bars
+///   are the exception: they use `YYYYMMDD` dates; see
+///   [`load_time_bars`](RithmicHistoryPlantHandle::load_time_bars).
 /// - **Tick bars carry two timestamps.** `data_bar_ssboe` and `data_bar_usecs`
 ///   are two-element arrays holding the bar's open and close: index 0 is when
 ///   the bar started, index 1 is when it ended. For one-tick bars both describe
@@ -138,26 +138,21 @@ pub(crate) enum ReplayQuery {
 ///
 /// # Which loader do I want?
 ///
-/// | You want | Use | Records |
-/// |---|---|---|
-/// | Individual trades | [`load_ticks`] / [`load_ticks_all`] | one per trade |
-/// | Bars of N trades | [`load_tick_bars`] / [`load_tick_bars_all`] | one per N trades |
-/// | Bars of a fixed duration | [`load_time_bars`] / [`load_time_bars_all`] | one per interval |
-/// | Volume traded at each price | [`load_volume_profile_minute_bars`] | one per minute |
+/// | You want | Use | Or, to watch and cancel | Records |
+/// |---|---|---|---|
+/// | Individual trades | [`load_ticks`] / [`load_ticks_all`] | [`start_tick_bar_replay`], `bar_length` 1 | one per trade |
+/// | Bars of N trades | [`load_tick_bars`] / [`load_tick_bars_all`] | [`start_tick_bar_replay`] | one per N trades |
+/// | Bars of a fixed duration | [`load_time_bars`] / [`load_time_bars_all`] | [`start_time_bar_replay`] | one per interval |
+/// | Volume traded at each price | [`load_volume_profile_minute_bars`] | [`start_volume_profile_minute_bars`] | one per minute |
 ///
-/// The plain methods return at most 10,000 records, because that is where
-/// Rithmic cuts a replay off. The `_all` methods lift that cap. The server can
-/// still truncate a reply on an output budget of its own, about four seconds
-/// of streaming: a reply cut there with the server's truncation notice is
-/// resumed by the plant itself, with the key the notice carries, until the
-/// real end marker arrives, so the call still returns the whole window — one
-/// round trip per cut, unless [`resume_truncated_replays`] turns that off. A
-/// time bar reply cut there has also been seen closed with a
-/// complete end marker and nothing else, so compare the last record with the
-/// window you asked for and ask again from it when it falls short — see
-/// [`load_ticks_all`] for the details. Prefer an `_all` method unless you
-/// specifically want a bounded result, and see [`load_ticks_all`] for the
-/// memory that costs.
+/// # Limits on one replay
+///
+/// - **10,000 records.** The plain methods stop there without saying so. The
+///   `_all` and `start_*` methods lift the cap; prefer them.
+/// - **About four seconds of streaming.** The server then cuts the reply short
+///   and the plant asks it to continue, so you still get the whole window.
+///   Time bar replays can occasionally stop here without warning, so check the
+///   last bar reaches the end of your window. See [`load_ticks_all`].
 ///
 /// [`load_ticks`]: RithmicHistoryPlantHandle::load_ticks
 /// [`load_ticks_all`]: RithmicHistoryPlantHandle::load_ticks_all
@@ -166,7 +161,9 @@ pub(crate) enum ReplayQuery {
 /// [`load_time_bars`]: RithmicHistoryPlantHandle::load_time_bars
 /// [`load_time_bars_all`]: RithmicHistoryPlantHandle::load_time_bars_all
 /// [`load_volume_profile_minute_bars`]: RithmicHistoryPlantHandle::load_volume_profile_minute_bars
-/// [`resume_truncated_replays`]: RithmicHistoryPlantHandle::resume_truncated_replays
+/// [`start_tick_bar_replay`]: RithmicHistoryPlantHandle::start_tick_bar_replay
+/// [`start_time_bar_replay`]: RithmicHistoryPlantHandle::start_time_bar_replay
+/// [`start_volume_profile_minute_bars`]: RithmicHistoryPlantHandle::start_volume_profile_minute_bars
 ///
 /// # Example
 ///
@@ -424,18 +421,7 @@ impl PlantActor for HistoryPlant {
                         .rithmic_sender_api
                         .request_volume_profile_minute_bars(&query),
                 };
-                if self
-                    .core
-                    .request_handler
-                    .register_replay(id.clone(), request)
-                {
-                    self.core
-                        .send_or_fail(
-                            tokio_tungstenite::tungstenite::Message::Binary(buf.into()),
-                            &id,
-                        )
-                        .await;
-                }
+                self.core.register_replay_and_send(buf, id, request).await;
             }
             HistoryPlantCommand::CancelReplay {
                 control,
@@ -769,42 +755,22 @@ impl RithmicHistoryPlantHandle {
     ///
     /// # Truncation
     ///
-    /// That lifts the record count, not every cut. The server also closes a
-    /// reply on an output budget of its own — about four seconds of streaming,
-    /// whatever the window asked: 3,364 liquid front-month minutes (7.4 MB)
-    /// at one rate, as few as 925 thin back-month minutes when it streams
-    /// slowly — and how it says so depends on the reply shape. A per-price
-    /// minute replay cut there is closed with a truncation notice — a
-    /// dataless frame carrying a `request_key` and no response code — and the
-    /// plant answers it itself: it sends `RequestResumeBars` with that key, the
-    /// server acknowledges and streams the rest of the reply on the same
-    /// request, and this call returns when the real end marker arrives, with
-    /// the whole window and without the notice. Each resume is one more round
-    /// trip of about four seconds, so a large window takes as many as it
-    /// needs; a caller's own deadline is the only bound, and a caller that
-    /// pages replays itself can turn the resume off with
-    /// [`resume_truncated_replays`](Self::resume_truncated_replays). A time
-    /// bar replay cut there
-    /// (53,190 one-minute bars, 6.9 MB, of a 60-day window that ran 7.5 days
-    /// further) was instead closed with a **complete end marker**, `rp_code`
-    /// `["0"]`, no notice and no key: nothing on the wire says it was cut,
-    /// exactly as the Reference Guide warns for time and tick bars, so compare
-    /// the last bar's `marker` with the window you asked for. Another 90-day
-    /// window of the same bars was cut with the notice, resumed, and completed.
-    /// A one-tick replay of 1.4 million trades (224 MB, one session day) came
-    /// back whole.
+    /// The server also stops streaming a reply after about four seconds. It
+    /// usually says so with a truncation notice
+    /// ([`RithmicResponse::is_truncated`]), and the plant asks it to continue,
+    /// so this call still returns the whole window. Each continuation adds about
+    /// four seconds. [`resume_truncated_replays`](Self::resume_truncated_replays)
+    /// turns this off.
     ///
-    /// Observed on Rithmic's Chicago gateway, 2026-09-12, with
-    /// `examples/replay_frames.rs`, a reader that decodes nothing but the
-    /// envelope; the same 7-day per-price window cut at the same frame and
-    /// byte count in three runs. The 10,000-record cut is a different animal:
-    /// without `resume_bars` a 30-day one-minute window came back as exactly
-    /// 10,000 bars closed by a complete end marker, with no notice and no key,
-    /// which is why the plain loaders cannot tell you they were cut. A
-    /// one-minute replay over 120 days drew no reply at all in ten minutes,
-    /// while one over 30 days (29,500 bars, 3.8 MB) came back whole in two
-    /// seconds: the caller's own deadline is the only bound on a window the
-    /// server does not answer.
+    /// Time bar replays have also been seen to stop early with no notice (a
+    /// 60-day window of one-minute bars came back 7.5 days short). Check that
+    /// the last record reaches the end of your window, and request the rest if
+    /// not.
+    ///
+    /// A very large window may get no reply at all, so set a timeout of your
+    /// own, or use a `start_*` method and stop when progress stalls.
+    ///
+    /// This is observed behaviour, not documented by Rithmic, and may change.
     ///
     /// # Cost
     ///
@@ -863,10 +829,10 @@ impl RithmicHistoryPlantHandle {
     /// The uncapped form of [`load_time_bars`](Self::load_time_bars). One-second
     /// bars pass 10,000 in under three hours, so this is the one you usually
     /// want. See [`load_ticks_all`](Self::load_ticks_all) for how the cap is
-    /// lifted and what it costs in memory.
-    /// The `start_time_sec` and `end_time_sec` arguments use Unix seconds for
-    /// second/minute bars, but `YYYYMMDD` date indices for daily/weekly bars.
-    /// Values are forwarded unchanged, as in [`Self::load_time_bars`].
+    /// lifted, the server's other limits, and the memory a window costs.
+    ///
+    /// Daily and weekly bars use `YYYYMMDD` dates, not Unix seconds; see
+    /// [`load_time_bars`](Self::load_time_bars).
     ///
     /// # Example
     /// See [`load_historical_bars.rs`](https://github.com/pbeets/rithmic-rs/blob/main/examples/load_historical_bars.rs).
@@ -899,10 +865,12 @@ impl RithmicHistoryPlantHandle {
     /// 5 gives five-minute bars.
     ///
     /// Each bar carries a `marker`, plus its open, high, low, close, volume and
-    /// trade count. For second/minute bars, the marker is the bar's close in
-    /// Unix seconds. For daily/weekly bars, it is a `YYYYMMDD` date index, not
-    /// a close timestamp. Request bounds use the corresponding encoding too;
-    /// the `_sec` argument names do not cause any conversion.
+    /// trade count. For second and minute bars the `marker` is the time the bar
+    /// **closed**, in Unix seconds.
+    ///
+    /// Daily and weekly bars use `YYYYMMDD` dates instead (e.g. `20260914`), for
+    /// both the window and the `marker`, despite the `_sec` argument names.
+    /// Unix seconds there return an empty reply, not an error.
     ///
     /// Returns **at most 10,000 bars**, with no sign when the result was cut
     /// short. Use [`load_time_bars_all`](Self::load_time_bars_all) for the whole
@@ -913,9 +881,9 @@ impl RithmicHistoryPlantHandle {
     /// * `exchange` - The exchange code, e.g. `"CME"`
     /// * `bar_type` - `SecondBar`, `MinuteBar`, `DailyBar` or `WeeklyBar`
     /// * `bar_type_period` - How many of those units per bar
-    /// * `start_time_sec` - Start index: Unix seconds for second/minute bars,
-    ///   or `YYYYMMDD` for daily/weekly bars
-    /// * `end_time_sec` - End index, using the same encoding as the start
+    /// * `start_time_sec` - Window start: Unix seconds, or `YYYYMMDD` for daily
+    ///   and weekly bars
+    /// * `end_time_sec` - Window end, in the same form as the start
     ///
     /// # Returns
     /// One response per bar, followed by an end marker carrying no data.
@@ -972,23 +940,12 @@ impl RithmicHistoryPlantHandle {
     /// One response per minute, followed by an end marker carrying no data.
     ///
     /// # Truncation
-    /// A window the server cannot stream inside its output budget — about
-    /// four seconds of streaming: 3,364 minutes of a liquid front-month
-    /// contract, 28,907 minutes of a thin back month, and as few as 925 when
-    /// the server streams slowly, on 2026-09-12 — is closed there with a
-    /// truncation notice: a dataless frame carrying an opaque `request_key`
-    /// (which may repeat on later cuts of the same replay) and no response code. The
-    /// plant resumes the reply with that key on the
-    /// caller's behalf, as many times as the window needs, so this call
-    /// returns the whole window at about four seconds per cut — unless
-    /// [`resume_truncated_replays`](Self::resume_truncated_replays) is off,
-    /// when the notice is the reply's last frame; see
-    /// [`load_ticks_all`](Self::load_ticks_all) for what a resume costs and
-    /// what a caller that stops waiting sees. `resume_bars` does not lift
-    /// this cut. An empty reply closed by a complete end marker
-    /// (`rp_code` `["0"]`, no minutes) has also been seen, several times in
-    /// one weekend hour, for a window that held thousands of minutes moments
-    /// before and after, so an empty answer is not proof that nothing traded.
+    ///
+    /// Large windows are cut short and continued automatically, as described on
+    /// [`load_ticks_all`](Self::load_ticks_all).
+    ///
+    /// An empty reply does not always mean nothing traded; it has been seen for
+    /// windows that had data moments before. Retry before relying on it.
     pub async fn load_volume_profile_minute_bars(
         &self,
         request: VolumeProfileMinuteBarsRequest,
@@ -1005,20 +962,13 @@ impl RithmicHistoryPlantHandle {
         await_all_responses(rx).await
     }
 
-    /// Choose whether this plant resumes a replay the venue truncates (the
-    /// default) or hands the truncated reply back as it stands.
+    /// Choose whether `load_*` replays the server cuts short are continued
+    /// automatically (the default).
     ///
-    /// On, a truncation notice keeps the caller waiting while the plant sends
-    /// `RequestResumeBars` and the venue continues the reply on the same
-    /// request, so the loaders return whole windows; a window the venue cuts
-    /// N times takes N further round trips of about four seconds each. Off,
-    /// the notice is the reply's last frame ([`RithmicResponse::is_truncated`])
-    /// and the records before it are a prefix of the window — the choice for
-    /// a caller that pages replays itself and needs every reply back inside
-    /// its own deadline, since the venue's cut lands at about four seconds of
-    /// streaming whatever the window asked. Applies to replies resolved after
-    /// the plant processes this, in order with the loaders called before and
-    /// after it.
+    /// When off, the reply ends at the server's truncation notice
+    /// ([`RithmicResponse::is_truncated`]) and holds only part of the window.
+    /// Turn it off if you page through history yourself. `start_*` replays are
+    /// always continued.
     pub async fn resume_truncated_replays(&self, resume: bool) {
         let _ = self
             .sender
@@ -1026,29 +976,22 @@ impl RithmicHistoryPlantHandle {
             .await;
     }
 
-    /// Resume a bars request from a previous response's `request_key`.
+    /// Ask the server to continue a replay it cut short.
     ///
-    /// Rithmic's release notes introduce `RequestResumeBars` as the way to pull
-    /// the chunks a truncated replay left out, and that is what it does: the
-    /// server hands out an opaque `request_key` (reusable on later cuts of the
-    /// same replay) on the notice that
-    /// closes a replay it truncated on its output budget, acknowledges this
-    /// request with `ResponseResumeBars`, and streams the rest of the reply on
-    /// the ORIGINAL request's id until its real end marker or another notice.
-    /// The plant does this itself for every replay it is waiting on, so the
-    /// loaders return whole windows; see [`RithmicResponse::is_truncated`].
-    /// Calling it by hand continues a replay nothing is waiting on: the
-    /// continuation is counted by the request handler, not delivered here —
-    /// this returns the acknowledgement only. Setting `resume_bars` on the
-    /// replay request is a different lever: it lifts the 10,000-record cap,
-    /// which is what [`load_ticks_all`](Self::load_ticks_all) does.
+    /// You rarely need this: the plant does it automatically (see
+    /// [`resume_truncated_replays`](Self::resume_truncated_replays)). Called by
+    /// hand, it returns only the server's acknowledgement; the rest of the
+    /// replay arrives on the original request and is discarded.
+    ///
+    /// Not the same as the `resume_bars` request flag, which lifts the
+    /// 10,000-record cap.
     ///
     /// # Arguments
-    /// * `request_key` - The `request_key` carried on the previous response
+    /// * `request_key` - From the truncation notice; see
+    ///   [`RithmicResponse::resume_key`]
     ///
     /// # Returns
-    /// The server's acknowledgement of the resume, or an error message; the
-    /// continuation itself is counted, not delivered
+    /// The server's acknowledgement, `ResponseResumeBars`.
     pub async fn resume_bars(
         &self,
         request_key: String,
@@ -1140,17 +1083,23 @@ impl RithmicHistoryPlantHandle {
 
         await_first_response(rx).await
     }
-}
 
-impl RithmicHistoryPlantHandle {
-    /// Start a time-bar replay with request-scoped progress and cancellation.
+    /// Start a time bar replay that you can watch and cancel.
     ///
-    /// [`TimeBarReplayRequest`] uses Unix-second bounds for second/minute bars
-    /// and `YYYYMMDD` date indices for daily/weekly bars. The latter also return
-    /// date-encoded response markers. These values are forwarded unchanged.
+    /// Returns a [`ReplayHandle`] once the request is queued. Like
+    /// [`load_time_bars_all`](Self::load_time_bars_all), it lifts the
+    /// 10,000-record cap and continues replays the server cuts short.
     ///
-    /// Native continuation stays on the original request, independent of
-    /// [`Self::resume_truncated_replays`]. The SDK sets no replay deadline.
+    /// Daily and weekly bars use `YYYYMMDD` dates; see
+    /// [`load_time_bars`](Self::load_time_bars).
+    ///
+    /// # Errors
+    /// * [`RithmicError::InvalidArgument`] if the request is incomplete or its
+    ///   window is out of order. Nothing is sent.
+    /// * [`RithmicError::ConnectionClosed`] if the plant has shut down.
+    ///
+    /// # Example
+    /// See [`ReplayHandle`].
     pub async fn start_time_bar_replay(
         &self,
         request: TimeBarReplayRequest,
@@ -1160,8 +1109,13 @@ impl RithmicHistoryPlantHandle {
             .await
     }
 
-    /// Start a tick-bar replay with request-scoped progress and cancellation.
-    /// Native continuation is enabled independently of the legacy plant flag.
+    /// Start a tick bar replay that you can watch and cancel.
+    ///
+    /// The [`ReplayHandle`] form of [`load_tick_bars_all`](Self::load_tick_bars_all).
+    /// Use a `bar_length` of 1 for individual trades.
+    ///
+    /// # Errors
+    /// As [`start_time_bar_replay`](Self::start_time_bar_replay).
     pub async fn start_tick_bar_replay(
         &self,
         request: TickBarReplayRequest,
@@ -1171,9 +1125,14 @@ impl RithmicHistoryPlantHandle {
             .await
     }
 
-    /// Start a per-minute volume-profile replay with request-scoped progress
-    /// and cancellation. Native continuation is enabled for this request.
-    pub async fn start_volume_profile_replay(
+    /// Start a volume profile replay that you can watch and cancel.
+    ///
+    /// The [`ReplayHandle`] form of
+    /// [`load_volume_profile_minute_bars`](Self::load_volume_profile_minute_bars).
+    ///
+    /// # Errors
+    /// As [`start_time_bar_replay`](Self::start_time_bar_replay).
+    pub async fn start_volume_profile_minute_bars(
         &self,
         request: VolumeProfileMinuteBarsRequest,
     ) -> Result<ReplayHandle, RithmicError> {
@@ -1183,8 +1142,8 @@ impl RithmicHistoryPlantHandle {
     }
 
     async fn start_replay(&self, query: ReplayQuery) -> Result<ReplayHandle, RithmicError> {
-        // Construct the handle before awaiting admission: dropping this future
-        // also cancels a command that might already have entered the queue.
+        // Create the handle first, so that if this future is dropped while
+        // queued, dropping the handle cancels the replay.
         let (handle, request) = ReplayRequest::new(self.sender.clone());
         self.sender
             .send(HistoryPlantCommand::StartReplay { query, request })

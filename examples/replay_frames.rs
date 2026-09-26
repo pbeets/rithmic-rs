@@ -1,24 +1,21 @@
-//! Example: watch every frame of ONE history replay on the raw socket.
+//! Example: print every frame of one history replay, straight off the socket.
 //!
-//! This bypasses the crate's request handler entirely. It opens the
-//! WebSocket itself, logs in, sends one replay request and records the
-//! envelope of every frame the server sends back — including any frame that
-//! arrives AFTER the reply's end marker — so what the venue does with a
-//! large window is on record with no client-side interpretation in the way.
+//! A diagnostic tool, not a usage example: it bypasses the crate, sends one
+//! replay request on its own WebSocket, and prints a summary of every frame the
+//! server sends back, including any after the final response. For normal use,
+//! see `load_historical_bars.rs`.
 //!
-//! The reader does nothing per frame but decode the envelope and count, so a
-//! cut it observes is not the reader's pace. `SLOW_MS` adds a per-frame
-//! delay to see whether the venue reacts to a slow consumer.
+//! `SLOW_MS` adds a delay per frame, to see how the server treats a slow
+//! reader.
 //!
-//! Run with (credentials from the environment or a `.env`):
+//! Credentials come from `.env` (see `examples/.env.blank`). Run with:
 //!
 //! ```text
-//! RITHMIC_URL=wss://rprotocol.rithmic.com:443 RITHMIC_USER=… RITHMIC_PW=… \
-//! RITHMIC_SYSTEM_NAME=… RITHMIC_APP_NAME=… RITHMIC_APP_VERSION=… \
 //! KIND=vp PRODUCT=MNQ EXCHANGE=CME DAYS_BACK=7 \
 //! cargo run --release --example replay_frames
 //! ```
 //!
+//! - `RITHMIC_ENV`: `demo` (default), `live` or `test`.
 //! - `KIND`: `vp` (template 208, one-minute per-price bars), `minute` or
 //!   `second` (template 202 with `PERIOD`, default 1), `tick` (template 206,
 //!   one-tick bars).
@@ -43,25 +40,22 @@
 //!   `rq_handler_rp_code` arrives, as a client that took that frame for the
 //!   end of the reply would; what the venue then does to the first reply is
 //!   recorded.
-//! - `DOTENV`: path of a `.env` to load first. `RITHMIC_USERNAME` /
-//!   `RITHMIC_PASSWORD` are accepted as aliases of `RITHMIC_USER` /
-//!   `RITHMIC_PW`, and `RITHMIC_SERVER=chicago` (or another Rithmic gateway
-//!   name) as an alias of `RITHMIC_URL`.
-
-use std::env;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use futures_util::{SinkExt, StreamExt};
 use prost::Message as _;
+use std::env;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use tokio_tungstenite::{connect_async, tungstenite::Message};
+
+use rithmic_rs::{
+    ConnectStrategy, RithmicConfig, RithmicEnv, RithmicTickerPlant, rti::messages::RithmicMessage,
+};
+
 use rithmic_rs::rti::{
     RequestHeartbeat, RequestLogin, RequestLogout, RequestResumeBars, RequestTickBarReplay,
     RequestTimeBarReplay, RequestVolumeProfileMinuteBars, request_login::SysInfraType,
     request_tick_bar_replay, request_time_bar_replay,
 };
-use rithmic_rs::{
-    ConnectStrategy, RithmicConfig, RithmicEnv, RithmicTickerPlant, rti::messages::RithmicMessage,
-};
-use tokio_tungstenite::{connect_async, tungstenite::Message};
 
 /// The fields every Rithmic response shares, plus the ones a replay frame
 /// is stamped with. Rithmic's field numbers are global, so one struct reads
@@ -179,38 +173,15 @@ fn var(key: &str) -> Option<String> {
     env::var(key).ok().filter(|v| !v.trim().is_empty())
 }
 
-fn require(keys: &[&str]) -> Result<String, String> {
-    keys.iter()
-        .find_map(|k| var(k))
-        .ok_or_else(|| format!("set one of {}", keys.join(" / ")))
-}
-
-fn gateway(server: &str) -> String {
-    match server.to_ascii_lowercase().trim() {
-        "chicago" => "wss://rprotocol.rithmic.com:443".to_owned(),
-        "sydney" => "wss://rprotocol-au.rithmic.com:443".to_owned(),
-        "frankfurt" => "wss://rprotocol-de.rithmic.com:443".to_owned(),
-        "test" => "wss://rituz00100.rithmic.com:443".to_owned(),
-        raw => raw.to_owned(),
-    }
-}
-
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    if let Some(path) = var("DOTENV") {
-        dotenvy::from_path(&path).map_err(|e| format!("DOTENV {path}: {e}"))?;
-    } else {
-        dotenvy::dotenv().ok();
-    }
+    dotenvy::dotenv().ok();
 
-    let url = var("RITHMIC_URL")
-        .or_else(|| var("RITHMIC_SERVER").map(|s| gateway(&s)))
-        .ok_or("set RITHMIC_URL or RITHMIC_SERVER")?;
-    let user = require(&["RITHMIC_USER", "RITHMIC_USERNAME"])?;
-    let password = require(&["RITHMIC_PW", "RITHMIC_PASSWORD"])?;
-    let system_name = require(&["RITHMIC_SYSTEM_NAME"])?;
-    let app_name = require(&["RITHMIC_APP_NAME"])?;
-    let app_version = require(&["RITHMIC_APP_VERSION"])?;
+    let rithmic_env: RithmicEnv = var("RITHMIC_ENV")
+        .map(|v| v.parse())
+        .transpose()?
+        .unwrap_or(RithmicEnv::Demo);
+    let config = RithmicConfig::from_env(rithmic_env)?;
 
     let kind = var("KIND").unwrap_or_else(|| "vp".to_owned());
     let exchange = var("EXCHANGE").unwrap_or_else(|| "CME".to_owned());
@@ -224,15 +195,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             // it instead of naming a contract that expires; the session is
             // closed before the history socket opens.
             let product = var("PRODUCT").unwrap_or_else(|| "MNQ".to_owned());
-            let config = RithmicConfig::builder(RithmicEnv::Demo)
-                .url(&url)
-                .beta_url(&url)
-                .user(&user)
-                .password(&password)
-                .system_name(&system_name)
-                .app_name(&app_name)
-                .app_version(&app_version)
-                .build()?;
             let ticker = RithmicTickerPlant::connect(&config, ConnectStrategy::Retry).await?;
             let handle = ticker.get_handle();
             handle.login().await?;
@@ -287,9 +249,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     println!(
-        "probe: {url} system={system_name} app={app_name}/{app_version} kind={kind} \
+        "probe: {} system={} app={}/{} kind={kind} \
          symbol={symbol} exchange={exchange} period={period} start={start} end={end} \
          ({:.1} minutes) resume_bars={resume_bars} wait_secs={wait_secs} slow_ms={slow_ms}",
+        config.url,
+        config.system_name,
+        config.app_name,
+        config.app_version,
         f64::from(end - start) / 60.0
     );
 
@@ -302,7 +268,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or(3);
     let mut ws = None;
     for attempt in 1..=attempts {
-        match tokio::time::timeout(Duration::from_secs(10), connect_async(&url)).await {
+        match tokio::time::timeout(Duration::from_secs(10), connect_async(config.url.as_str()))
+            .await
+        {
             Ok(Ok((stream, _))) => {
                 ws = Some(stream);
                 break;
@@ -313,7 +281,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     }
-    let ws = ws.ok_or_else(|| format!("{url}: could not connect in {attempts} attempts"))?;
+    let ws =
+        ws.ok_or_else(|| format!("{}: could not connect in {attempts} attempts", config.url))?;
     let (mut sink, mut stream) = ws.split();
     println!("connected at {}", utc(wall_now()));
 
@@ -323,11 +292,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         r.template_id = 10;
         r.template_version = Some("5.42".to_owned());
         r.user_msg = vec!["login".to_owned()];
-        r.user = Some(user);
-        r.password = Some(password);
-        r.app_name = Some(app_name);
-        r.app_version = Some(app_version);
-        r.system_name = Some(system_name);
+        r.user = Some(config.user.clone());
+        r.password = Some(config.password.clone());
+        r.app_name = Some(config.app_name.clone());
+        r.app_version = Some(config.app_version.clone());
+        r.system_name = Some(config.system_name.clone());
         r.infra_type = Some(SysInfraType::HistoryPlant as i32);
     });
     sink.send(Message::Binary(frame(&login).into())).await?;
