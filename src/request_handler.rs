@@ -25,9 +25,9 @@ pub(crate) use replay::PendingReplay;
 pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Debug)]
-pub struct RithmicRequest {
-    pub request_id: String,
-    pub responder: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
+pub(crate) struct RithmicRequest {
+    pub(crate) request_id: String,
+    pub(crate) responder: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
 }
 
 type Responder = oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>;
@@ -48,7 +48,7 @@ pub(crate) struct Resume {
 /// [`Self::fail_request`], or by [`Self::drain_and_drop`] on disconnect. It is
 /// never failed on a clock: the caller owns its own deadline.
 #[derive(Debug, Default)]
-pub struct RithmicRequestHandler {
+pub(crate) struct RithmicRequestHandler {
     handle_map: HashMap<String, Responder>,
     response_vec_map: HashMap<String, Vec<RithmicResponse>>,
 
@@ -69,13 +69,13 @@ pub struct RithmicRequestHandler {
 }
 
 impl RithmicRequestHandler {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self::default()
     }
 
     /// Register a request. It waits until a response carries its id, until it
     /// is failed, or until the connection drops.
-    pub fn register_request(&mut self, request: RithmicRequest) {
+    pub(crate) fn register_request(&mut self, request: RithmicRequest) {
         self.handle_map
             .insert(request.request_id, request.responder);
     }
@@ -112,7 +112,7 @@ impl RithmicRequestHandler {
     /// request ID so that `response_vec_map` does not retain stale data.
     ///
     /// Returns `true` if the request was found and the error was sent.
-    pub fn fail_request(&mut self, request_id: &str, error: RithmicError) -> bool {
+    pub(crate) fn fail_request(&mut self, request_id: &str, error: RithmicError) -> bool {
         if self.fail_replay(request_id, error.clone()) {
             return true;
         }
@@ -341,7 +341,7 @@ impl RithmicRequestHandler {
     ///
     /// Call this during an unclean shutdown (e.g., abort) to unblock any tasks that are
     /// waiting for a response that will never arrive.
-    pub fn drain_and_drop(&mut self) {
+    pub(crate) fn drain_and_drop(&mut self) {
         self.drain_replays();
 
         for (_, responder) in self.handle_map.drain() {

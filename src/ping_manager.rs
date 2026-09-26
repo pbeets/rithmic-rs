@@ -18,7 +18,7 @@ use tracing::warn;
 /// The timeout is supplied by the caller; see [`crate::ws::PING_INTERVAL_SECS`]
 /// and [`crate::ws::PING_TIMEOUT_SECS`] for the values the plants use.
 #[derive(Debug)]
-pub struct PingManager {
+pub(crate) struct PingManager {
     /// Pending ping waiting for pong response
     pending: Option<Instant>,
     /// Timeout duration
@@ -27,7 +27,7 @@ pub struct PingManager {
 
 impl PingManager {
     /// Creates a new ping manager with the given timeout in seconds.
-    pub fn new(timeout_secs: u64) -> Self {
+    pub(crate) fn new(timeout_secs: u64) -> Self {
         Self {
             pending: None,
             timeout: Duration::from_secs(timeout_secs),
@@ -37,7 +37,7 @@ impl PingManager {
     /// Registers that a WebSocket ping was sent.
     ///
     /// If a ping is already pending, replaces it and logs a warning.
-    pub fn sent(&mut self) {
+    pub(crate) fn sent(&mut self) {
         if self.pending.replace(Instant::now()).is_some() {
             warn!("Sent new ping before receiving pong for previous ping");
         }
@@ -47,7 +47,7 @@ impl PingManager {
     ///
     /// Clears pending state. WebSocket protocol guarantees pongs echo pings,
     /// so any pong corresponds to our most recent ping.
-    pub fn received(&mut self) {
+    pub(crate) fn received(&mut self) {
         self.pending = None;
     }
 
@@ -55,7 +55,7 @@ impl PingManager {
     ///
     /// Never resolves while no ping is pending, so it can sit in a `select!` arm.
     /// Clears the pending ping before returning, so a timeout is reported once.
-    pub async fn timed_out(&mut self) {
+    pub(crate) async fn timed_out(&mut self) {
         match self.pending {
             Some(sent_at) => {
                 sleep_until(sent_at + self.timeout).await;
@@ -67,7 +67,7 @@ impl PingManager {
 
     /// Returns the instant when the pending ping will timeout, if any.
     #[cfg(test)]
-    pub fn next_timeout_at(&self) -> Option<Instant> {
+    pub(crate) fn next_timeout_at(&self) -> Option<Instant> {
         self.pending.map(|sent_at| sent_at + self.timeout)
     }
 }
