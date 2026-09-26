@@ -7,11 +7,8 @@
 //!
 //! Run with: cargo run --release --example backfill
 //!
-//! Optional env vars: RITHMIC_ENV (demo, live or test; default demo), PRODUCT
-//! (default MNQ), EXCHANGE (default CME), SYMBOL (a contract to use instead of
-//! the front month), TIMEOUT_SECS (per check, default 300)
+//! To use another environment or product, change the constants below.
 
-use std::env;
 use std::future::Future;
 use std::time::{Duration, Instant, SystemTime};
 use tracing::info;
@@ -20,6 +17,13 @@ use rithmic_rs::{
     ConnectStrategy, RithmicConfig, RithmicEnv, RithmicError, RithmicHistoryPlant, RithmicResponse,
     RithmicTickerPlant, TimeBarType, VolumeProfileMinuteBarsRequest, rti::messages::RithmicMessage,
 };
+
+const ENV: RithmicEnv = RithmicEnv::Demo;
+const PRODUCT: &str = "MNQ";
+const EXCHANGE: &str = "CME";
+
+/// How long each check may take before it is reported as a failure.
+const TIMEOUT: Duration = Duration::from_secs(300);
 
 const DAY: i32 = 24 * 60 * 60;
 
@@ -73,16 +77,15 @@ async fn check(
     name: &str,
     window_end: i32,
     times: Times,
-    timeout: Duration,
     load: impl Future<Output = Result<Vec<RithmicResponse>, RithmicError>>,
 ) -> Option<i32> {
     let started = Instant::now();
-    let result = tokio::time::timeout(timeout, load).await;
+    let result = tokio::time::timeout(TIMEOUT, load).await;
     let elapsed = started.elapsed().as_secs_f64();
 
     let responses = match result {
         Err(_) => {
-            info!("FAIL  {name}: no reply within {timeout:?}");
+            info!("FAIL  {name}: no reply within {TIMEOUT:?}");
             return None;
         }
         Ok(Err(error)) => {
@@ -120,43 +123,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenvy::dotenv().ok();
     tracing_subscriber::fmt().init();
 
-    let rithmic_env: RithmicEnv = env::var("RITHMIC_ENV")
-        .ok()
-        .map(|v| v.parse())
-        .transpose()?
-        .unwrap_or(RithmicEnv::Demo);
-    let config = RithmicConfig::from_env(rithmic_env)?;
+    let config = RithmicConfig::from_env(ENV)?;
 
-    let product = env::var("PRODUCT").unwrap_or_else(|_| "MNQ".to_string());
-    let exchange = env::var("EXCHANGE").unwrap_or_else(|_| "CME".to_string());
-    let timeout = Duration::from_secs(
-        env::var("TIMEOUT_SECS")
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(300),
-    );
+    // Contracts roll, so ask the ticker plant for the front month.
+    let ticker = RithmicTickerPlant::connect(&config, ConnectStrategy::Retry).await?;
+    let ticker_handle = ticker.get_handle();
+    ticker_handle.login().await?;
 
-    // Contracts roll, so ask the ticker plant for the front month unless a
-    // contract was given.
-    let symbol = match env::var("SYMBOL") {
-        Ok(symbol) => symbol,
-        Err(_) => {
-            let ticker = RithmicTickerPlant::connect(&config, ConnectStrategy::Retry).await?;
-            let handle = ticker.get_handle();
-            handle.login().await?;
+    let response = ticker_handle
+        .get_front_month_contract(PRODUCT, EXCHANGE, false)
+        .await?;
+    ticker_handle.disconnect().await?;
 
-            let response = handle
-                .get_front_month_contract(&product, &exchange, false)
-                .await?;
-            handle.disconnect().await?;
-
-            match &response.message {
-                RithmicMessage::ResponseFrontMonthContract(fm) => fm.trading_symbol.clone(),
-                _ => None,
-            }
-            .ok_or_else(|| format!("no front month for {product} on {exchange}; set SYMBOL"))?
-        }
-    };
+    let symbol = match &response.message {
+        RithmicMessage::ResponseFrontMonthContract(fm) => fm.trading_symbol.clone(),
+        _ => None,
+    }
+    .ok_or_else(|| format!("no front month for {PRODUCT} on {EXCHANGE}"))?;
+    let exchange = EXCHANGE.to_string();
 
     let history_plant = RithmicHistoryPlant::connect(&config, ConnectStrategy::Retry).await?;
     let history = history_plant.get_handle();
@@ -170,7 +154,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "30 days of 1-minute bars",
         now,
         Times::UnixSeconds,
-        timeout,
         history.load_time_bars_all(
             symbol.clone(),
             exchange.clone(),
@@ -197,7 +180,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "7 days of 1-minute volume profile",
         now,
         Times::UnixSeconds,
-        timeout,
         history.load_volume_profile_minute_bars(volume_profile(7)),
     )
     .await;
@@ -209,7 +191,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "4 hours of ticks",
         tick_end,
         Times::UnixSeconds,
-        timeout,
         history.load_ticks_all(
             symbol.clone(),
             exchange.clone(),
@@ -225,7 +206,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "100 days of daily bars",
         to,
         Times::Dates,
-        timeout,
         history.load_time_bars(
             symbol.clone(),
             exchange.clone(),
@@ -255,7 +235,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "a request after the dropped replay",
         now,
         Times::UnixSeconds,
-        timeout,
         history.load_time_bars(
             symbol.clone(),
             exchange.clone(),
