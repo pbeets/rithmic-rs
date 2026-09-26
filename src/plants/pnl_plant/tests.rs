@@ -126,3 +126,40 @@ async fn disconnect_sends_close_even_when_logout_fails() {
         Err(RithmicError::SendFailed)
     ));
 }
+
+#[tokio::test]
+async fn subscribe_all_retains_every_account() {
+    let (sender, _rx) = mpsc::channel(4);
+    let (subscription_sender, _) = broadcast::channel(4);
+    let plant = RithmicPnlPlant {
+        sender,
+        subscription_sender,
+        connection_handle: tokio::spawn(async {}),
+    };
+    let mut receiver = plant.subscribe_all();
+    for account in ["account-a", "account-b"] {
+        let update = crate::rti::InstrumentPnLPositionUpdate {
+            account_id: Some(account.into()),
+            ..Default::default()
+        };
+        plant
+            .subscription_sender
+            .send(RithmicResponse {
+                request_id: String::new(),
+                source: "pnl_plant".into(),
+                message: RithmicMessage::InstrumentPnLPositionUpdate(update),
+                is_update: true,
+                has_more: false,
+                multi_response: false,
+                error: None,
+            })
+            .unwrap();
+        let RithmicMessage::InstrumentPnLPositionUpdate(update) =
+            receiver.recv().await.unwrap().message
+        else {
+            panic!("missing instrument update")
+        };
+        assert_eq!(update.account_id.as_deref(), Some(account));
+    }
+    plant.connection_handle.await.unwrap();
+}

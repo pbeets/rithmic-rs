@@ -169,6 +169,15 @@ impl RithmicPnlPlant {
             ),
         }
     }
+
+    /// Subscribe to this plant's updates for every account, unfiltered.
+    ///
+    /// Unlike the handle from [`Self::get_handle`], which only yields updates
+    /// for its own account, this receiver yields updates for every account on
+    /// the login.
+    pub fn subscribe_all(&self) -> broadcast::Receiver<RithmicResponse> {
+        self.subscription_sender.subscribe()
+    }
 }
 
 #[derive(Debug)]

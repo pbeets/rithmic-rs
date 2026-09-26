@@ -9,8 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `RithmicOrderPlant::subscribe_all()`: every account's messages, unfiltered,
-  for proxies that relay a multi-account login.
+- `RithmicOrderPlant::subscribe_all()` and `RithmicPnlPlant::subscribe_all()`:
+  every account's updates, unfiltered, for proxies that relay a multi-account
+  login.
 - `examples/backfill.rs`: backfills large windows for the front-month
   contract and reports, for each, whether you got all of it.
 
