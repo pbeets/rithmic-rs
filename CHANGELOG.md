@@ -21,6 +21,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `examples/backfill.rs`: backfills large windows for the front-month
   contract and reports, for each, whether you got all of it.
 
+### Deprecated
+
+- `RithmicHistoryPlantHandle::resume_bars()`: the plant now resumes truncated
+  replays itself, and a continuation requested by hand is counted rather than
+  delivered, so the call returns only the acknowledgement.
+
 ### Changed
 
 - The history plant now continues replays the server cuts short after about

@@ -888,6 +888,9 @@ impl RithmicHistoryPlantHandle {
         self.replay(ReplayQuery::Volume(request)).await
     }
 
+    /// Deprecated: the plant resumes truncated replays itself, as described on
+    /// [`load_ticks_all`](Self::load_ticks_all), so there is no need to call this.
+    ///
     /// Ask the server to continue a replay it cut short.
     ///
     /// The `load_*` methods do this automatically and never return the notice
@@ -903,6 +906,10 @@ impl RithmicHistoryPlantHandle {
     ///
     /// # Returns
     /// The server's acknowledgement, `ResponseResumeBars`.
+    #[deprecated(
+        since = "3.2.0",
+        note = "the plant resumes truncated replays itself; the continuation this requests is counted, not delivered"
+    )]
     pub async fn resume_bars(
         &self,
         request_key: String,
