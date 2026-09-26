@@ -20,6 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   or replay results.
 - `examples/backfill.rs`: backfills large windows for the front-month
   contract and reports, for each, whether you got all of it.
+- `RithmicHistoryPlantHandle::load_tick_bar_replay()` and `load_time_bar_replay()`: take a `TickBarReplayRequest` or `TimeBarReplayRequest` as built, reaching fields such as `user_max_count` that the positional loaders do not.
+- `RithmicConfigBuilder::connect_deadline()` and `RithmicConfig::connect_deadline`: bound how long `ConnectStrategy::Retry` and `AlternateWithRetry` keep trying; once it passes, `connect` returns `RithmicError::ConnectionFailed` with the attempt count.
 
 ### Deprecated
 

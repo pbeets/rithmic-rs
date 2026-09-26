@@ -339,6 +339,28 @@ let request = VolumeProfileMinuteBarsRequest::new()
 let bars = handle.load_volume_profile_minute_bars(request).await?;
 ```
 
+Tick and time bars take one too, for fields the positional loaders don't, such
+as `user_max_count`. These send the request as given, so set `resume_bars`
+yourself to lift the 10,000-record cap:
+
+```rust
+use rithmic_rs::{TimeBarReplayRequest, TimeBarType};
+
+let request = TimeBarReplayRequest::new()
+    .symbol("ESM6")
+    .exchange("CME")
+    .bar_type(TimeBarType::MinuteBar)
+    .bar_type_period(1)
+    .start_time_sec(start)
+    .end_time_sec(end)
+    .resume_bars(true)
+    .user_max_count(20_000);
+
+let bars = handle.load_time_bar_replay(request).await?;
+```
+
+`load_tick_bar_replay` does the same for a `TickBarReplayRequest`.
+
 All of these validate before sending: an empty symbol or exchange, a bar length
 below 1, a non-positive timestamp, or a window that ends before it starts comes
 back as `RithmicError::InvalidArgument` with no round trip.
@@ -409,6 +431,17 @@ Three strategies for initial connection:
 - **`Simple`**: Single attempt, fast-fail
 - **`Retry`**: Linear backoff (500 ms more per attempt, capped at 60 seconds, jittered ±50%) (recommended default)
 - **`AlternateWithRetry`**: Alternates between primary and alt URLs
+
+The retrying strategies try until they connect. To bound them, set a deadline
+on the config; once it passes, `connect` returns `ConnectionFailed`:
+
+```rust
+let config = RithmicConfigBuilder::from_env(RithmicEnv::Demo)?
+    .connect_deadline(Duration::from_secs(30))
+    .build()?;
+
+let plant = RithmicTickerPlant::connect(&config, ConnectStrategy::Retry).await?;
+```
 
 ### Reconnection
 

@@ -120,6 +120,12 @@ pub(crate) enum ReplayQuery {
 /// | Bars of N trades | [`load_tick_bars`] / [`load_tick_bars_all`] | one per N trades |
 /// | Bars of a fixed duration | [`load_time_bars`] / [`load_time_bars_all`] | one per interval |
 /// | Volume traded at each price | [`load_volume_profile_minute_bars`] | one per minute |
+/// | Tick bars from a [`TickBarReplayRequest`] | [`load_tick_bar_replay`] | one per N trades |
+/// | Time bars from a [`TimeBarReplayRequest`] | [`load_time_bar_replay`] | one per interval |
+///
+/// The struct forms take every field of the request, including
+/// `user_max_count`, and send it as given: set `resume_bars` yourself to lift
+/// the 10,000-record cap.
 ///
 /// # Limits on one replay
 ///
@@ -137,6 +143,8 @@ pub(crate) enum ReplayQuery {
 /// [`load_time_bars`]: RithmicHistoryPlantHandle::load_time_bars
 /// [`load_time_bars_all`]: RithmicHistoryPlantHandle::load_time_bars_all
 /// [`load_volume_profile_minute_bars`]: RithmicHistoryPlantHandle::load_volume_profile_minute_bars
+/// [`load_tick_bar_replay`]: RithmicHistoryPlantHandle::load_tick_bar_replay
+/// [`load_time_bar_replay`]: RithmicHistoryPlantHandle::load_time_bar_replay
 ///
 /// # Example
 ///
@@ -199,16 +207,19 @@ impl RithmicHistoryPlant {
     ///
     /// # Arguments
     /// * `config` - Rithmic configuration
-    /// * `strategy` - Connection strategy (Simple, Retry, or AlternateWithRetry)
+    /// * `strategy` - Connection strategy; see [`ConnectStrategy`]
     ///
     /// # Returns
     /// A `Result` containing the connected `RithmicHistoryPlant` instance, or an error if the connection fails.
     ///
     /// # Errors
-    /// [`RithmicError::ConnectionFailed`] under [`ConnectStrategy::Simple`] only.
-    /// `Retry` and `AlternateWithRetry` never return an error — they retry until
-    /// they connect, so this call can block indefinitely if the server is
-    /// unreachable. Wrap it in `tokio::time::timeout` if you need a deadline.
+    /// [`RithmicError::ConnectionFailed`] under [`ConnectStrategy::Simple`] when
+    /// its one attempt fails. `Retry` and `AlternateWithRetry` return it only
+    /// once the config's
+    /// [`connect_deadline`](crate::RithmicConfigBuilder::connect_deadline)
+    /// passes, with the attempt count and the deadline in the message. Without
+    /// a deadline they retry until they connect, so this call can block
+    /// indefinitely if the server is unreachable.
     pub async fn connect(
         config: &RithmicConfig,
         strategy: ConnectStrategy,
@@ -622,7 +633,7 @@ impl RithmicHistoryPlantHandle {
         start_time_sec: i32,
         end_time_sec: i32,
     ) -> Result<Vec<RithmicResponse>, RithmicError> {
-        self.tick_bar_replay(
+        self.load_tick_bar_replay(
             TickBarReplayRequest::new()
                 .symbol(symbol)
                 .exchange(exchange)
@@ -633,8 +644,50 @@ impl RithmicHistoryPlantHandle {
         .await
     }
 
-    /// One tick bar replay request.
-    async fn tick_bar_replay(
+    /// Load tick bars from a [`TickBarReplayRequest`] you build yourself.
+    ///
+    /// The positional tick loaders all end up here. Use this form to reach
+    /// fields they do not expose, such as
+    /// [`user_max_count`](TickBarReplayRequest::user_max_count) or a raw
+    /// [`bar_type_specifier`](TickBarReplayRequest::bar_type_specifier). The
+    /// request is sent exactly as given.
+    ///
+    /// Without [`.resume_bars(true)`](TickBarReplayRequest::resume_bars), the
+    /// server caps the reply at 10,000 records and gives no sign it did. The
+    /// `_all` loaders set that flag for you. See
+    /// [`load_ticks_all`](Self::load_ticks_all) for how truncated replies are
+    /// continued.
+    ///
+    /// The window here is always Unix seconds. Only daily and weekly time bars
+    /// take `YYYYMMDD` dates; see [`load_time_bar_replay`](Self::load_time_bar_replay).
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use rithmic_rs::{RithmicHistoryPlantHandle, TickBarReplayRequest};
+    /// # async fn example(handle: RithmicHistoryPlantHandle) -> Result<(), Box<dyn std::error::Error>> {
+    /// let request = TickBarReplayRequest::new()
+    ///     .symbol("ESU6")
+    ///     .exchange("CME")
+    ///     .bar_length(5)
+    ///     .start_time_sec(1_750_000_000)
+    ///     .end_time_sec(1_750_003_600)
+    ///     .resume_bars(true)
+    ///     .user_max_count(50_000);
+    ///
+    /// let bars = handle.load_tick_bar_replay(request).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Returns
+    /// One response per bar, followed by an end marker carrying no data.
+    ///
+    /// # Errors
+    /// * [`RithmicError::InvalidArgument`] if the request fails
+    ///   [`validate`](TickBarReplayRequest::validate). Nothing is sent.
+    /// * [`RithmicError::ConnectionClosed`] if the history plant has shut down.
+    pub async fn load_tick_bar_replay(
         &self,
         request: TickBarReplayRequest,
     ) -> Result<Vec<RithmicResponse>, RithmicError> {
@@ -717,7 +770,7 @@ impl RithmicHistoryPlantHandle {
         start_time_sec: i32,
         end_time_sec: i32,
     ) -> Result<Vec<RithmicResponse>, RithmicError> {
-        self.tick_bar_replay(
+        self.load_tick_bar_replay(
             TickBarReplayRequest::new()
                 .symbol(symbol)
                 .exchange(exchange)
@@ -750,7 +803,7 @@ impl RithmicHistoryPlantHandle {
         start_time_sec: i32,
         end_time_sec: i32,
     ) -> Result<Vec<RithmicResponse>, RithmicError> {
-        self.time_bar_replay(
+        self.load_time_bar_replay(
             TimeBarReplayRequest::new()
                 .symbol(symbol)
                 .exchange(exchange)
@@ -804,7 +857,7 @@ impl RithmicHistoryPlantHandle {
         start_time_sec: i32,
         end_time_sec: i32,
     ) -> Result<Vec<RithmicResponse>, RithmicError> {
-        self.time_bar_replay(
+        self.load_time_bar_replay(
             TimeBarReplayRequest::new()
                 .symbol(symbol)
                 .exchange(exchange)
@@ -816,8 +869,51 @@ impl RithmicHistoryPlantHandle {
         .await
     }
 
-    /// One time bar replay request.
-    async fn time_bar_replay(
+    /// Load time bars from a [`TimeBarReplayRequest`] you build yourself.
+    ///
+    /// The positional time bar loaders all end up here. Use this form to reach
+    /// fields they do not expose, such as
+    /// [`user_max_count`](TimeBarReplayRequest::user_max_count). The request is
+    /// sent exactly as given.
+    ///
+    /// Without [`.resume_bars(true)`](TimeBarReplayRequest::resume_bars), the
+    /// server caps the reply at 10,000 records and gives no sign it did. The
+    /// `_all` loaders set that flag for you. See
+    /// [`load_ticks_all`](Self::load_ticks_all) for how truncated replies are
+    /// continued.
+    ///
+    /// For daily and weekly bars the window is `YYYYMMDD` dates (e.g.
+    /// `20260914`), not Unix seconds; see
+    /// [`load_time_bars`](Self::load_time_bars).
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use rithmic_rs::{RithmicHistoryPlantHandle, TimeBarReplayRequest, TimeBarType};
+    /// # async fn example(handle: RithmicHistoryPlantHandle) -> Result<(), Box<dyn std::error::Error>> {
+    /// let request = TimeBarReplayRequest::new()
+    ///     .symbol("ESU6")
+    ///     .exchange("CME")
+    ///     .bar_type(TimeBarType::MinuteBar)
+    ///     .bar_type_period(1)
+    ///     .start_time_sec(1_750_000_000)
+    ///     .end_time_sec(1_750_086_400)
+    ///     .resume_bars(true)
+    ///     .user_max_count(20_000);
+    ///
+    /// let bars = handle.load_time_bar_replay(request).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Returns
+    /// One response per bar, followed by an end marker carrying no data.
+    ///
+    /// # Errors
+    /// * [`RithmicError::InvalidArgument`] if the request fails
+    ///   [`validate`](TimeBarReplayRequest::validate). Nothing is sent.
+    /// * [`RithmicError::ConnectionClosed`] if the history plant has shut down.
+    pub async fn load_time_bar_replay(
         &self,
         request: TimeBarReplayRequest,
     ) -> Result<Vec<RithmicResponse>, RithmicError> {

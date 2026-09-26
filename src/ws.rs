@@ -35,6 +35,11 @@ const BACKOFF_MS_BASE: u64 = 500;
 const MAX_BACKOFF_SECS: u64 = 60;
 
 /// Connection strategy for connecting to Rithmic servers.
+///
+/// The retrying strategies try indefinitely unless
+/// [`RithmicConfigBuilder::connect_deadline`](crate::RithmicConfigBuilder::connect_deadline)
+/// sets a limit, after which `connect` returns
+/// [`RithmicError::ConnectionFailed`](crate::RithmicError::ConnectionFailed).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ConnectStrategy {
@@ -149,17 +154,55 @@ fn jittered(ms: u64) -> u64 {
     ms / 2 + ms * (nanos % 1024) / 1024
 }
 
-/// Connect with indefinite retry and linear backoff — 500 ms more per
-/// attempt, capped at [`MAX_BACKOFF_SECS`] and then jittered by ±50%, so
-/// the spread survives a long outage (delays range 30–90 s at the cap).
+/// The backoff after failed attempt `attempt`, before jitter.
+fn backoff_ms(attempt: u64) -> u64 {
+    BACKOFF_MS_BASE
+        .saturating_mul(attempt)
+        .min(MAX_BACKOFF_SECS * 1000)
+}
+
+/// Why a deadline-bounded retry gave up. Carried inside the
+/// `ErrorKind::TimedOut` I/O error that [`connect_with_retry`] returns.
+#[derive(Debug)]
+struct RetryDeadlineExceeded {
+    attempts: u64,
+    within: Duration,
+}
+
+impl std::fmt::Display for RetryDeadlineExceeded {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "gave up connecting after {} attempt{} within {:?}",
+            self.attempts,
+            if self.attempts == 1 { "" } else { "s" },
+            self.within
+        )
+    }
+}
+
+impl std::error::Error for RetryDeadlineExceeded {}
+
+/// Connect with retry and linear backoff — 500 ms more per attempt, capped
+/// at [`MAX_BACKOFF_SECS`] and then jittered by ±50%, so the spread
+/// survives a long outage (delays range 30–90 s at the cap).
 ///
 /// The jitter keeps plants that lost the same connection from retrying in
 /// lockstep against a recovering server.
 ///
 /// `urls` is cycled by attempt number: pass one URL to retry it, or
-/// primary + beta to alternate between them. Never returns until a
-/// connection succeeds.
-async fn connect_with_retry(urls: &[&str]) -> WebSocketStream<MaybeTlsStream<TcpStream>> {
+/// primary + beta to alternate between them.
+///
+/// With no `deadline`, never returns until a connection succeeds. With one,
+/// each attempt's timeout is capped at the time remaining, and once the
+/// next backoff would run past the deadline this returns an
+/// `ErrorKind::TimedOut` I/O error naming the attempt count instead of
+/// sleeping.
+async fn connect_with_retry(
+    urls: &[&str],
+    deadline: Option<Instant>,
+) -> Result<WebSocketStream<MaybeTlsStream<TcpStream>>, Error> {
+    let started = Instant::now();
     let mut attempt: u64 = 1;
 
     loop {
@@ -167,24 +210,43 @@ async fn connect_with_retry(urls: &[&str]) -> WebSocketStream<MaybeTlsStream<Tcp
 
         info!("Attempt {}: connecting to {}", attempt, url);
 
-        match timeout(
-            Duration::from_secs(CONNECT_TIMEOUT_SECS),
-            connect_async_with_config(url, None, true),
-        )
-        .await
-        {
+        let attempt_timeout = match deadline {
+            Some(deadline) => Duration::from_secs(CONNECT_TIMEOUT_SECS)
+                .min(deadline.saturating_duration_since(Instant::now())),
+            None => Duration::from_secs(CONNECT_TIMEOUT_SECS),
+        };
+
+        match timeout(attempt_timeout, connect_async_with_config(url, None, true)).await {
             Ok(Ok((ws_stream, _))) => {
                 info!("Successfully connected to {}", url);
-                return ws_stream;
+                return Ok(ws_stream);
             }
             Ok(Err(e)) => warn!("connect_async failed for {}: {:?}", url, e),
             Err(e) => warn!("connect_async to {} timed out: {:?}", url, e),
         }
 
-        let backoff_ms = BACKOFF_MS_BASE
-            .saturating_mul(attempt)
-            .min(MAX_BACKOFF_SECS * 1000);
-        let backoff_duration = Duration::from_millis(jittered(backoff_ms));
+        let backoff_duration = Duration::from_millis(jittered(backoff_ms(attempt)));
+
+        if let Some(deadline) = deadline {
+            if Instant::now() + backoff_duration >= deadline {
+                let reason = RetryDeadlineExceeded {
+                    attempts: attempt,
+                    // Rounded to the millisecond: `started` is read a moment
+                    // after the caller set the deadline.
+                    within: Duration::from_millis(
+                        (deadline.saturating_duration_since(started) + Duration::from_micros(500))
+                            .as_millis() as u64,
+                    ),
+                };
+
+                warn!("{}", reason);
+
+                return Err(Error::Io(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    reason,
+                )));
+            }
+        }
 
         info!("Backing off for {:?} before retry", backoff_duration);
 
@@ -199,20 +261,27 @@ async fn connect_with_retry(urls: &[&str]) -> WebSocketStream<MaybeTlsStream<Tcp
 /// * `primary_url` - Primary WebSocket URL
 /// * `beta_url` - Beta WebSocket URL (only used for AlternateWithRetry)
 /// * `strategy` - Connection strategy to use
+/// * `deadline` - How long the retrying strategies keep trying; `None` for
+///   no limit. `Simple` makes its one attempt and ignores it.
 ///
 /// # Returns
-/// WebSocketStream on success; an error only for `Simple`, since the retry
-/// strategies keep trying until they connect.
+/// WebSocketStream on success. `Simple` errors when its one attempt fails;
+/// `Retry` and `AlternateWithRetry` error only once a `deadline` passes, and
+/// without one keep trying until they connect.
 pub(crate) async fn connect_with_strategy(
     primary_url: &str,
     beta_url: &str,
     strategy: ConnectStrategy,
+    deadline: Option<Duration>,
 ) -> Result<WebSocketStream<MaybeTlsStream<TcpStream>>, Error> {
+    // A duration too large to add is as good as no deadline.
+    let deadline = deadline.and_then(|duration| Instant::now().checked_add(duration));
+
     match strategy {
         ConnectStrategy::Simple => connect(primary_url).await,
-        ConnectStrategy::Retry => Ok(connect_with_retry(&[primary_url]).await),
+        ConnectStrategy::Retry => connect_with_retry(&[primary_url], deadline).await,
         ConnectStrategy::AlternateWithRetry => {
-            Ok(connect_with_retry(&[primary_url, beta_url]).await)
+            connect_with_retry(&[primary_url, beta_url], deadline).await
         }
     }
 }
@@ -366,5 +435,100 @@ mod tests {
 
         assert_eq!(get_heartbeat_interval(None).period(), default);
         assert_eq!(get_heartbeat_interval(Some(0)).period(), default);
+    }
+
+    /// A local URL nothing listens on, so every connect is refused at once.
+    async fn refusing_url() -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind a loopback port");
+        let port = listener.local_addr().expect("local address").port();
+        drop(listener);
+
+        format!("ws://127.0.0.1:{port}")
+    }
+
+    /// The attempt count a deadline-bounded retry reported when it gave up.
+    fn attempts_of(error: &Error) -> u64 {
+        let Error::Io(io) = error else {
+            panic!("expected an I/O error, got {error:?}");
+        };
+        assert_eq!(io.kind(), std::io::ErrorKind::TimedOut);
+
+        io.get_ref()
+            .and_then(|inner| inner.downcast_ref::<RetryDeadlineExceeded>())
+            .expect("the error must say why the retry gave up")
+            .attempts
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn retry_gives_up_at_the_deadline() {
+        let url = refusing_url().await;
+        let limit = Duration::from_secs(10);
+        let started = Instant::now();
+
+        let error = connect_with_strategy(&url, &url, ConnectStrategy::Retry, Some(limit))
+            .await
+            .expect_err("nothing listens, so the deadline must end the retry");
+
+        let elapsed = started.elapsed();
+        let attempts = attempts_of(&error);
+        // The retry stops when the next backoff would cross the deadline, so
+        // it can stop short by at most that backoff at its jittered maximum.
+        let last_backoff = Duration::from_millis(backoff_ms(attempts) * 3 / 2);
+
+        assert!(
+            elapsed >= limit.saturating_sub(last_backoff),
+            "gave up after {elapsed:?}, more than one backoff ({last_backoff:?}) early"
+        );
+        assert!(
+            elapsed <= limit + Duration::from_secs(CONNECT_TIMEOUT_SECS),
+            "gave up after {elapsed:?}, past the deadline plus one connect timeout"
+        );
+        assert!(
+            error.to_string().contains(&format!("{attempts} attempts")),
+            "the message must give the attempt count: {error}"
+        );
+        assert!(
+            error.to_string().contains("10s"),
+            "the message must give the duration: {error}"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn retry_with_a_deadline_shorter_than_the_first_backoff_makes_one_attempt() {
+        let url = refusing_url().await;
+        // Below the first backoff's jittered minimum of half BACKOFF_MS_BASE.
+        let limit = Duration::from_millis(BACKOFF_MS_BASE / 4);
+
+        let error = connect_with_strategy(&url, &url, ConnectStrategy::Retry, Some(limit))
+            .await
+            .expect_err("nothing listens, so the deadline must end the retry");
+
+        assert_eq!(attempts_of(&error), 1);
+        assert!(
+            error.to_string().contains("after 1 attempt within"),
+            "the message must give the attempt count: {error}"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn alternate_with_retry_gives_up_at_the_deadline() {
+        let primary = refusing_url().await;
+        let beta = refusing_url().await;
+        let limit = Duration::from_secs(5);
+        let started = Instant::now();
+
+        let error = connect_with_strategy(
+            &primary,
+            &beta,
+            ConnectStrategy::AlternateWithRetry,
+            Some(limit),
+        )
+        .await
+        .expect_err("nothing listens, so the deadline must end the retry");
+
+        assert!(attempts_of(&error) >= 1);
+        assert!(started.elapsed() <= limit + Duration::from_secs(CONNECT_TIMEOUT_SECS));
     }
 }

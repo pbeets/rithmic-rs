@@ -89,9 +89,14 @@ impl PlantCore<WsSink> {
         strategy: ConnectStrategy,
         source: &'static str,
     ) -> Result<PlantCore, RithmicError> {
-        let ws_stream = connect_with_strategy(&config.url, &config.beta_url, strategy)
-            .await
-            .map_err(|e| RithmicError::ConnectionFailed(e.to_string()))?;
+        let ws_stream = connect_with_strategy(
+            &config.url,
+            &config.beta_url,
+            strategy,
+            config.connect_deadline,
+        )
+        .await
+        .map_err(|e| RithmicError::ConnectionFailed(e.to_string()))?;
 
         let (rithmic_sender, rithmic_reader) = ws_stream.split();
         let rithmic_sender_api = RithmicSenderApi::new(config);
@@ -1998,5 +2003,38 @@ mod tests {
             &result[0].error,
             Some(RithmicError::ProtocolError(_))
         ));
+    }
+
+    /// A retry that runs out of time surfaces as `ConnectionFailed`, like a
+    /// failed `Simple` attempt.
+    #[tokio::test(start_paused = true)]
+    async fn a_passed_connect_deadline_is_reported_as_connection_failed() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("ws://127.0.0.1:{}", listener.local_addr().unwrap().port());
+        drop(listener);
+
+        let config = RithmicConfig::builder(RithmicEnv::Demo)
+            .user("test_user")
+            .password("test_password")
+            .url(url.clone())
+            .beta_url(url)
+            .app_name("test_app")
+            .app_version("1.0")
+            .connect_deadline(std::time::Duration::from_secs(3))
+            .build()
+            .unwrap();
+        let (subscription_sender, _) = broadcast::channel(4);
+
+        let err = PlantCore::new(subscription_sender, &config, ConnectStrategy::Retry, "test")
+            .await
+            .expect_err("nothing listens, so the deadline must end the retry");
+
+        match err {
+            RithmicError::ConnectionFailed(message) => assert!(
+                message.contains("gave up connecting after"),
+                "unexpected message: {message}"
+            ),
+            other => panic!("expected ConnectionFailed, got {other:?}"),
+        }
     }
 }

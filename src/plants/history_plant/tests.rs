@@ -299,6 +299,119 @@ async fn load_tick_bars_all_rejects_a_zero_bar_length() {
     assert!(matches!(err, RithmicError::InvalidArgument(_)));
 }
 
+#[tokio::test]
+async fn load_tick_bar_replay_sends_the_request_as_given() {
+    let (handle, actor, mut client) = running_plant_with_handle().await;
+
+    // Unset, off and on: the struct form must forward `resume_bars` untouched
+    // rather than defaulting it either way.
+    for resume_bars in [None, Some(false), Some(true)] {
+        let mut request = TickBarReplayRequest::new()
+            .symbol("ESH6")
+            .exchange("CME")
+            .bar_length(1)
+            .start_time_sec(1)
+            .end_time_sec(1000)
+            .user_max_count(500);
+        request.resume_bars = resume_bars;
+
+        let loader = {
+            let handle = handle.clone();
+            tokio::spawn(async move { handle.load_tick_bar_replay(request).await })
+        };
+
+        let sent = RequestTickBarReplay::decode(read_wire_request(&mut client).await.as_slice())
+            .expect("the request must be a tick bar replay");
+        assert_eq!(sent.template_id, 206);
+        assert_eq!(sent.user_max_count, Some(500));
+        assert_eq!(sent.resume_bars, resume_bars);
+
+        write_wire_response(&mut client, &tick_page_end(&sent.user_msg[0])).await;
+        reply_of(loader).await.expect("the load must succeed");
+    }
+
+    actor.abort();
+}
+
+#[tokio::test]
+async fn load_time_bar_replay_sends_the_request_as_given() {
+    let (handle, actor, mut client) = running_plant_with_handle().await;
+
+    let loader = tokio::spawn(async move {
+        handle
+            .load_time_bar_replay(
+                TimeBarReplayRequest::new()
+                    .symbol("ESH6")
+                    .exchange("CME")
+                    .bar_type(BarType::DailyBar)
+                    .bar_type_period(1)
+                    .start_time_sec(20260901)
+                    .end_time_sec(20260914)
+                    .user_max_count(500),
+            )
+            .await
+    });
+
+    let sent = RequestTimeBarReplay::decode(read_wire_request(&mut client).await.as_slice())
+        .expect("the request must be a time bar replay");
+    assert_eq!(sent.template_id, 202);
+    assert_eq!(sent.user_max_count, Some(500));
+    assert_eq!(sent.resume_bars, None);
+    assert_eq!(sent.start_index, Some(20260901));
+    assert_eq!(sent.finish_index, Some(20260914));
+
+    write_wire_response(&mut client, &time_bar_replay_end(&sent.user_msg[0])).await;
+    reply_of(loader).await.expect("the load must succeed");
+
+    actor.abort();
+}
+
+#[tokio::test]
+async fn load_tick_bar_replay_refuses_an_invalid_request_without_sending_it() {
+    let (handle, actor, mut client) = running_plant_with_handle().await;
+
+    // No exchange, and a window that ends before it starts.
+    let err = handle
+        .load_tick_bar_replay(
+            TickBarReplayRequest::new()
+                .symbol("ESH6")
+                .bar_length(1)
+                .start_time_sec(1000)
+                .end_time_sec(1)
+                .user_max_count(500),
+        )
+        .await
+        .expect_err("an invalid request must be refused");
+
+    assert!(matches!(err, RithmicError::InvalidArgument(_)));
+    assert_wire_silent(&mut client).await;
+
+    actor.abort();
+}
+
+#[tokio::test]
+async fn load_time_bar_replay_refuses_an_invalid_request_without_sending_it() {
+    let (handle, actor, mut client) = running_plant_with_handle().await;
+
+    // No bar type.
+    let err = handle
+        .load_time_bar_replay(
+            TimeBarReplayRequest::new()
+                .symbol("ESH6")
+                .exchange("CME")
+                .bar_type_period(1)
+                .start_time_sec(1)
+                .end_time_sec(1000),
+        )
+        .await
+        .expect_err("an invalid request must be refused");
+
+    assert!(matches!(err, RithmicError::InvalidArgument(_)));
+    assert_wire_silent(&mut client).await;
+
+    actor.abort();
+}
+
 fn test_handle() -> (
     RithmicHistoryPlantHandle,
     mpsc::Receiver<HistoryPlantCommand>,

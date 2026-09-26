@@ -209,16 +209,19 @@ impl RithmicTickerPlant {
     ///
     /// # Arguments
     /// * `config` - Rithmic configuration with credentials and server URLs
-    /// * `strategy` - Connection strategy (Simple, Retry, or AlternateWithRetry)
+    /// * `strategy` - Connection strategy; see [`ConnectStrategy`]
     ///
     /// # Returns
     /// A `Result` containing the connected `RithmicTickerPlant` instance, or an error if the connection fails.
     ///
     /// # Errors
-    /// [`RithmicError::ConnectionFailed`] under [`ConnectStrategy::Simple`] only.
-    /// `Retry` and `AlternateWithRetry` never return an error — they retry until
-    /// they connect, so this call can block indefinitely if the server is
-    /// unreachable. Wrap it in `tokio::time::timeout` if you need a deadline.
+    /// [`RithmicError::ConnectionFailed`] under [`ConnectStrategy::Simple`] when
+    /// its one attempt fails. `Retry` and `AlternateWithRetry` return it only
+    /// once the config's
+    /// [`connect_deadline`](crate::RithmicConfigBuilder::connect_deadline)
+    /// passes, with the attempt count and the deadline in the message. Without
+    /// a deadline they retry until they connect, so this call can block
+    /// indefinitely if the server is unreachable.
     ///
     /// # Example
     /// ```no_run
