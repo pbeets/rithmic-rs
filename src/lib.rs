@@ -262,8 +262,6 @@ mod ping_manager;
 /// reconnecting them independently.
 pub mod plants;
 
-mod replay;
-
 mod request_handler;
 
 /// Rithmic protocol message definitions (protobuf-generated).
@@ -298,9 +296,6 @@ pub use plants::ticker_plant::{RithmicTickerPlant, RithmicTickerPlantHandle};
 pub use config::{ConfigError, RithmicAccount, RithmicConfig, RithmicConfigBuilder, RithmicEnv};
 #[allow(deprecated)]
 pub use request_handler::DEFAULT_REQUEST_TIMEOUT;
-
-// Re-export request-scoped replay types
-pub use replay::{ReplayEnd, ReplayHandle, ReplayOutcome, ReplayProgress};
 
 // Re-export error types
 pub use error::{RithmicError, RithmicRequestError};

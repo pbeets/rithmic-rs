@@ -1,16 +1,52 @@
 use super::{Resume, RithmicRequestHandler};
-use std::sync::Arc;
-use tokio::time::Instant;
+use std::collections::HashSet;
+use tokio::sync::oneshot;
+use tracing::info;
 
-use crate::{
-    ReplayEnd, RithmicError, RithmicResponse,
-    replay::{ReplayControl, ReplayRequest},
-    rti::messages::RithmicMessage,
-};
+use crate::{RithmicError, RithmicResponse, rti::messages::RithmicMessage};
+
+type Reply = Result<Vec<RithmicResponse>, RithmicError>;
+
+/// A history replay the plant is collecting for a caller.
+///
+/// Unlike other multi-part replies, a replay can be cut short by the server
+/// and continued on the same request id, so it keeps its own frames and the
+/// resume keys it has used.
+#[derive(Debug)]
+pub(crate) struct PendingReplay {
+    responder: oneshot::Sender<Reply>,
+    responses: Vec<RithmicResponse>,
+    /// Resume keys used since the last data frame. The server can hand out
+    /// the same key again after new data.
+    used_keys: HashSet<String>,
+    /// Whether the request reached the socket, so the server may still be
+    /// sending frames for it after it is released.
+    sent: bool,
+}
+
+impl PendingReplay {
+    pub(crate) fn new(responder: oneshot::Sender<Reply>) -> Self {
+        Self {
+            responder,
+            responses: Vec::new(),
+            used_keys: HashSet::new(),
+            sent: false,
+        }
+    }
+
+    /// Whether the caller stopped waiting (it dropped its future).
+    fn abandoned(&self) -> bool {
+        self.responder.is_closed()
+    }
+
+    fn finish(self, reply: Reply) {
+        let _ = self.responder.send(reply);
+    }
+}
 
 /// Whether this frame carries replay data (a `marker`, or tick bar
 /// timestamps).
-pub(super) fn carries_replay_data(response: &RithmicResponse) -> bool {
+fn carries_replay_data(response: &RithmicResponse) -> bool {
     match &response.message {
         RithmicMessage::ResponseTimeBarReplay(m) => m.marker.is_some(),
         RithmicMessage::ResponseTickBarReplay(m) => !m.data_bar_ssboe.is_empty(),
@@ -20,27 +56,30 @@ pub(super) fn carries_replay_data(response: &RithmicResponse) -> bool {
 }
 
 impl RithmicRequestHandler {
-    /// Track a `start_*` replay. Returns `false` if it was cancelled while
-    /// queued, in which case nothing should be sent.
-    pub(crate) fn register_replay(&mut self, id: String, request: ReplayRequest) -> bool {
-        if request.cancelled() {
-            request.finish(ReplayEnd::Cancelled);
+    /// Track a replay. Returns `false` if the caller stopped waiting while the
+    /// request was queued, in which case nothing should be sent.
+    pub(crate) fn register_replay(&mut self, id: String, replay: PendingReplay) -> bool {
+        if replay.abandoned() {
             return false;
         }
-        self.replay_map.insert(id, request);
+
+        self.replay_map.insert(id, replay);
+
         true
     }
 
-    /// `false` if `id` is a replay that has been cancelled.
+    /// `false` if `id` is a replay whose caller has stopped waiting.
     pub(crate) fn replay_send_allowed(&mut self, id: &str) -> bool {
-        let cancelled = self
+        let abandoned = self
             .replay_map
             .get(id)
-            .is_some_and(ReplayRequest::cancelled);
-        if cancelled {
-            self.release_cancelled_replays();
+            .is_some_and(PendingReplay::abandoned);
+
+        if abandoned {
+            self.release_abandoned_replays();
         }
-        !cancelled
+
+        !abandoned
     }
 
     /// Forget a resume that was never sent.
@@ -48,65 +87,100 @@ impl RithmicRequestHandler {
         self.resumes.remove(id);
     }
 
-    /// Record when replay `id` was first written to the socket.
+    /// Record that replay `id` reached the socket.
     pub(crate) fn mark_sent(&mut self, id: &str) {
-        if let Some(request) = self.replay_map.get_mut(id) {
-            request.progress.send_if_modified(|progress| {
-                if progress.sent_at.is_some() {
-                    return false;
-                }
-                let now = Instant::now();
-                progress.sent_at = Some(now);
-                progress.last_progress_at = Some(now);
-                true
-            });
+        if let Some(replay) = self.replay_map.get_mut(id) {
+            replay.sent = true;
         }
     }
 
-    /// Cancel and release the replay behind `control`.
-    pub(crate) fn cancel_replay(&mut self, control: &Arc<ReplayControl>) {
-        control.cancel();
-        self.release_cancelled_replays();
-    }
-
-    /// End every cancelled replay, handing it the frames received so far.
-    /// Called on every loop turn.
-    pub(crate) fn release_cancelled_replays(&mut self) {
-        let cancelled: Vec<_> = self
+    /// Drop every replay whose caller stopped waiting, and count whatever the
+    /// server still sends for it. Called on every loop turn.
+    pub(crate) fn release_abandoned_replays(&mut self) {
+        let abandoned: Vec<_> = self
             .replay_map
             .iter()
-            .filter(|(_, request)| request.cancelled())
+            .filter(|(_, replay)| replay.abandoned())
             .map(|(id, _)| id.clone())
             .collect();
 
-        for id in cancelled {
-            if let Some(request) = self.replay_map.remove(&id) {
-                if request.was_sent() {
-                    self.expect_late_frames(id);
-                }
+        for id in abandoned {
+            let Some(replay) = self.replay_map.remove(&id) else {
+                continue;
+            };
 
-                request.finish(ReplayEnd::Cancelled);
+            info!(
+                "request_id {}: the caller stopped waiting after {} parts; the rest of this reply \
+                 is counted, not kept",
+                id,
+                replay.responses.len()
+            );
+
+            if replay.sent {
+                self.expect_late_frames(id);
             }
         }
     }
 
-    /// Route a frame for a `start_*` replay. Returns a [`Resume`] if the
-    /// replay should be continued.
+    /// Fail a replay with `error`. Returns `false` if `request_id` is not a
+    /// replay.
+    pub(super) fn fail_replay(&mut self, request_id: &str, error: RithmicError) -> bool {
+        let Some(replay) = self.replay_map.remove(request_id) else {
+            return false;
+        };
+
+        // Only a request the server saw can still be streaming.
+        if replay.sent {
+            self.expect_late_frames(request_id);
+        }
+
+        self.resumes.retain(|_, id| id != request_id);
+        replay.finish(Err(error));
+
+        true
+    }
+
+    /// End a replay because the server refused to continue it.
+    pub(super) fn refuse_replay(&mut self, request_id: String, error: RithmicError) -> usize {
+        let Some(replay) = self.replay_map.remove(&request_id) else {
+            return 0;
+        };
+
+        let parts = replay.responses.len();
+        replay.finish(Err(error));
+        self.expect_late_frames(request_id);
+
+        parts
+    }
+
+    /// Fail every replay because the connection is gone.
+    pub(super) fn drain_replays(&mut self) {
+        for (_, replay) in self.replay_map.drain() {
+            replay.finish(Err(RithmicError::ConnectionClosed));
+        }
+    }
+
+    /// Route a frame for a replay. Returns a [`Resume`] if the server cut the
+    /// reply short and should be asked to continue.
     pub(super) fn handle_replay_response(&mut self, response: RithmicResponse) -> Option<Resume> {
         let id = response.request_id.clone();
-        let request = self.replay_map.get_mut(&id)?;
+        let replay = self.replay_map.get_mut(&id)?;
 
         if response.is_truncated() {
             let key = response.resume_key()?.to_owned();
 
             // Ignore a key already used since the last data.
-            if !request.continuation_keys.insert(key.clone()) {
+            if !replay.used_keys.insert(key.clone()) {
                 return None;
             }
 
-            request.record_progress(|progress| {
-                progress.continuations = progress.continuations.saturating_add(1);
-            });
+            info!(
+                "request_id {}: the venue truncated this reply after {} parts (request_key {:?}); \
+                 asking it to resume",
+                id,
+                replay.responses.len(),
+                key
+            );
 
             return Some(Resume {
                 request_id: id,
@@ -116,68 +190,41 @@ impl RithmicRequestHandler {
 
         if carries_replay_data(&response) && response.error.is_none() {
             // The server can reuse a key after new data, so forget used keys.
-            request.continuation_keys.clear();
-            request.record_progress(|progress| {
-                progress.data_frames = progress.data_frames.saturating_add(1);
-            });
+            replay.used_keys.clear();
         }
 
-        if response.has_more && response.error.is_none() {
-            request.responses.push(response);
+        if response.has_more {
+            replay.responses.push(response);
             return None;
         }
 
-        // Unless this is the server's own final response, more may follow.
-        let end = replay_end(&response);
-        let final_from_server =
-            !response.has_more && response.rp_code().is_some_and(|code| !code.is_empty());
+        // The server ended the reply, whatever its code says, so the caller
+        // gets every frame. Without a code, more may still follow.
+        let final_from_server = response.rp_code().is_some_and(|code| !code.is_empty());
+        let mut replay = self.replay_map.remove(&id)?;
 
-        if let Some(mut request) = self.replay_map.remove(&id) {
-            request.responses.push(response);
-            request.finish(end);
+        replay.responses.push(response);
+        let responses = std::mem::take(&mut replay.responses);
+        replay.finish(Ok(responses));
 
-            if !final_from_server {
-                self.expect_late_frames(id);
-            }
+        if !final_from_server {
+            self.expect_late_frames(id);
         }
 
         None
     }
 }
 
-/// How a replay ended, judged from its last frame.
-fn replay_end(response: &RithmicResponse) -> ReplayEnd {
-    if response.rp_code_num() == Some("12") {
-        return ReplayEnd::Truncated;
-    }
-
-    match &response.error {
-        Some(error @ RithmicError::RequestRejected(_)) => ReplayEnd::Refused(error.clone()),
-        Some(error) => ReplayEnd::Failed(error.clone()),
-        // "7" without an error is "no data": the window is empty.
-        None if matches!(response.rp_code_num(), Some("0" | "7")) => ReplayEnd::Complete,
-        None => ReplayEnd::Failed(RithmicError::ProtocolError(
-            "replay ended without a successful terminal marker".into(),
-        )),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Duration;
-    use tokio::sync::mpsc;
 
-    use crate::{
-        ReplayHandle,
-        rti::{ResponseResumeBars, ResponseTimeBarReplay},
-    };
+    use crate::rti::{ResponseResumeBars, ResponseTimeBarReplay};
 
-    fn registered(handler: &mut RithmicRequestHandler, id: &str) -> ReplayHandle {
-        let (sender, _receiver) = mpsc::channel(4);
-        let (handle, request) = ReplayRequest::new(sender);
-        assert!(handler.register_replay(id.into(), request));
-        handle
+    fn registered(handler: &mut RithmicRequestHandler, id: &str) -> oneshot::Receiver<Reply> {
+        let (tx, rx) = oneshot::channel();
+        assert!(handler.register_replay(id.into(), PendingReplay::new(tx)));
+        rx
     }
 
     fn frame(id: &str, marker: Option<i32>, code: &[&str], key: Option<&str>) -> RithmicResponse {
@@ -207,20 +254,20 @@ mod tests {
         response
     }
 
-    #[tokio::test(start_paused = true)]
-    async fn a_reused_continuation_key_resumes_again_after_new_replay_data() {
+    #[test]
+    fn a_reused_continuation_key_resumes_again_after_new_replay_data() {
         let mut handler = RithmicRequestHandler::new();
-        let mut replay = registered(&mut handler, "original");
+        let mut rx = registered(&mut handler, "original");
         let _other = registered(&mut handler, "other");
-        let progress = replay.subscribe_progress();
         handler.mark_sent("original");
+
         handler.handle_response(frame("original", Some(1), &[], None));
         let first = handler
             .handle_response(frame("original", None, &[], Some("0")))
             .expect("first cut asks to resume");
         handler.register_resume("resume-one".into(), first.request_id);
         handler.handle_response(ack("resume-one", None));
-        let acknowledged = *progress.borrow();
+
         handler.handle_response(frame("other", Some(1), &[], None));
         assert!(
             handler
@@ -228,246 +275,198 @@ mod tests {
                 .is_none(),
             "an acknowledgement or another replay cannot rearm the key"
         );
-        assert_eq!(*progress.borrow(), acknowledged);
 
-        tokio::time::advance(Duration::from_secs(1)).await;
         handler.handle_response(frame("original", Some(2), &[], None));
         let continued = handler
             .handle_response(frame("original", None, &[], Some("0")))
             .expect("the venue reuses the same key after another chunk of data");
         assert_eq!(continued.request_id, "original");
         assert_eq!(continued.key, "0");
-        let second = *progress.borrow();
-        assert_eq!(second.continuations, 2);
-        assert!(second.last_progress_at > acknowledged.last_progress_at);
         assert!(
             handler
                 .handle_response(frame("original", None, &[], Some("0")))
                 .is_none(),
-            "the repeated notice remains inert until data advances again"
+            "the repeated notice stays inert until data advances again"
         );
-        assert_eq!(*progress.borrow(), second);
-        handler.handle_response(frame("original", None, &["0"], None));
-        let outcome = replay.result().await.unwrap();
-        assert_eq!(outcome.end, ReplayEnd::Complete);
-        assert_eq!(outcome.responses.len(), 3);
-    }
 
-    #[tokio::test(start_paused = true)]
-    async fn progress_is_request_scoped_and_only_meaningful_continuations_advance_it() {
-        let mut handler = RithmicRequestHandler::new();
-        let mut replay = registered(&mut handler, "original");
-        let other = registered(&mut handler, "other");
-        let progress = replay.subscribe_progress();
-        assert_eq!(progress.borrow().sent_at, None);
-        handler.mark_sent("original");
-        let sent = *progress.borrow();
-        assert!(sent.sent_at.is_some());
-        tokio::time::advance(Duration::from_secs(70)).await;
-        handler.handle_response(frame("other", Some(1), &[], None));
-        assert_eq!(*progress.borrow(), sent);
-        let mut empty = frame("original", None, &[], None);
-        empty.has_more = true;
-        handler.handle_response(empty);
-        assert_eq!(*progress.borrow(), sent);
-        handler.handle_response(frame("original", Some(1), &[], None));
-        let data = *progress.borrow();
-        assert_eq!(data.data_frames, 1);
-        assert!(data.last_progress_at > sent.last_progress_at);
-        tokio::time::advance(Duration::from_secs(70)).await;
-        let resume = handler
-            .handle_response(frame("original", None, &[], Some("key")))
-            .unwrap();
-        assert_eq!(resume.request_id, "original");
-        let notice = *progress.borrow();
-        assert_eq!(notice.continuations, 1);
-        tokio::time::advance(Duration::from_secs(70)).await;
-        assert!(
-            handler
-                .handle_response(frame("original", None, &[], Some("key")))
-                .is_none()
-        );
-        assert_eq!(*progress.borrow(), notice);
-        handler.register_resume("resume".into(), resume.request_id);
-        handler.mark_sent("original");
-        assert_eq!(
-            *progress.borrow(),
-            notice,
-            "resume send is not original send"
-        );
-        handler.handle_response(ack("resume", None));
-        let acknowledged = *progress.borrow();
-        assert!(acknowledged.last_progress_at > notice.last_progress_at);
-        handler.handle_response(ack("resume", None));
-        assert_eq!(
-            *progress.borrow(),
-            acknowledged,
-            "duplicate acknowledgement is inert"
-        );
         handler.handle_response(frame("original", None, &["0"], None));
-        let outcome = replay.result().await.unwrap();
-        assert_eq!(outcome.end, ReplayEnd::Complete);
+        let reply = rx.try_recv().unwrap().unwrap();
         assert_eq!(
-            outcome.responses.len(),
+            reply.len(),
             3,
-            "empty intermediate, data, and real end only"
+            "two data frames and the end; notices are left out"
         );
-        drop(other);
     }
 
-    #[tokio::test]
-    async fn cancellation_releases_payload_but_keeps_original_and_resume_correlations_until_their_ends()
-     {
-        let mut handler = RithmicRequestHandler::new();
-        let mut replay = registered(&mut handler, "original");
-        let other = registered(&mut handler, "other");
-        handler.mark_sent("original");
-        handler.handle_response(frame("original", Some(1), &[], None));
-        handler.handle_response(frame("original", None, &[], Some("key")));
-        handler.register_resume("resume".into(), "original".into());
-        handler.replay_map["original"].control.cancel();
-        handler.release_cancelled_replays();
-        assert!(!handler.replay_map.contains_key("original"));
-        assert!(handler.replay_map.contains_key("other"));
-        assert_eq!(replay.result().await.unwrap().end, ReplayEnd::Cancelled);
-        assert!(handler.late_continuations.contains_key("original"));
-        assert!(
-            handler
-                .handle_response(frame("original", None, &[], Some("late")))
-                .is_none()
-        );
-        assert!(
-            handler.late_continuations.contains_key("original"),
-            "a cut is not remote end"
-        );
-        handler.handle_response(frame("original", None, &[], None));
-        assert!(
-            handler.late_continuations.contains_key("original"),
-            "a malformed dataless frame is not remote end"
-        );
-        handler.handle_response(frame("original", Some(2), &[], None));
-        assert_eq!(handler.late_continuations.get("original"), Some(&1));
-        handler.handle_response(ack("resume", None));
-        assert!(handler.resumes.is_empty());
-        handler.handle_response(frame("original", None, &["12"], None));
-        assert!(handler.late_continuations.is_empty());
-        assert!(handler.response_vec_map.is_empty());
-        drop(other);
-    }
-
-    #[tokio::test]
-    async fn refused_resume_is_explicit_and_retains_only_one_owned_prefix() {
-        let mut handler = RithmicRequestHandler::new();
-        let mut replay = registered(&mut handler, "original");
-        handler.handle_response(frame("original", Some(1), &[], None));
-        handler.handle_response(frame("original", None, &[], Some("key")));
-        handler.register_resume("resume".into(), "original".into());
-        let error = RithmicError::ProtocolError("refused".into());
-        handler.handle_response(ack("resume", Some(error.clone())));
-        let outcome = replay.result().await.unwrap();
-        assert_eq!(outcome.end, ReplayEnd::Refused(error));
-        assert_eq!(
-            outcome.responses.len(),
-            2,
-            "prefix plus refusal acknowledgement"
-        );
-        assert!(handler.replay_map.is_empty());
-        assert!(handler.response_vec_map.is_empty());
-        assert!(handler.late_continuations.contains_key("original"));
-    }
-
-    #[tokio::test]
-    async fn truncated_and_malformed_terminal_frames_never_complete() {
-        for (code, expected) in [
-            (&["12"][..], ReplayEnd::Truncated),
-            (
-                &[][..],
-                ReplayEnd::Failed(RithmicError::ProtocolError(
-                    "replay ended without a successful terminal marker".into(),
-                )),
-            ),
+    #[test]
+    fn every_reply_the_server_ends_is_returned_whole() {
+        let rejected = crate::api::rp_code::classify_rp_code_error(&["5".into(), "denied".into()]);
+        for (code, error, late) in [
+            (&["0"][..], None, false),
+            (&["12", "output inhibited"][..], None, false),
+            (&["5", "denied"][..], rejected, false),
+            // No code: not proof the server has finished.
+            (&[][..], None, true),
         ] {
             let mut handler = RithmicRequestHandler::new();
-            let mut replay = registered(&mut handler, "original");
+            let mut rx = registered(&mut handler, "original");
+
             handler.handle_response(frame("original", Some(1), &[], None));
-            handler.handle_response(frame("original", None, code, None));
-            let outcome = replay.result().await.unwrap();
-            assert_eq!(outcome.end, expected);
-            assert_eq!(outcome.responses.len(), 2);
+            let mut last = frame("original", None, code, None);
+            last.error = error.clone();
+            handler.handle_response(last);
+
+            let reply = rx.try_recv().unwrap().unwrap();
+            assert_eq!(reply.len(), 2, "{code:?}");
+            assert_eq!(reply[1].error, error, "{code:?}");
+            assert_eq!(
+                handler.late_continuations.contains_key("original"),
+                late,
+                "{code:?}"
+            );
+            assert!(handler.replay_map.is_empty());
         }
     }
 
-    #[tokio::test]
-    async fn an_empty_window_completes_but_another_code_7_is_refused() {
-        for (code, complete) in [
-            (&["7", "no data"][..], true),
-            (&["7", "an error occurred while parsing data."][..], false),
+    #[test]
+    fn an_empty_window_is_one_final_frame() {
+        for code in [
+            &["7", "no data"][..],
+            &["7", "an error occurred while parsing data."][..],
         ] {
             let mut handler = RithmicRequestHandler::new();
-            let mut replay = registered(&mut handler, "original");
+            let mut rx = registered(&mut handler, "original");
+
             let mut last = frame("original", None, code, None);
             // As the decoder classifies it.
             last.error = crate::api::rp_code::classify_rp_code_error(last.rp_code().unwrap());
             handler.handle_response(last);
-            let outcome = replay.result().await.unwrap();
-            if complete {
-                assert_eq!(outcome.end, ReplayEnd::Complete, "{code:?}");
-            } else {
-                assert!(matches!(outcome.end, ReplayEnd::Refused(_)), "{code:?}");
-            }
-            assert_eq!(outcome.responses.len(), 1);
+
+            let reply = rx.try_recv().unwrap().unwrap();
+            assert_eq!(reply.len(), 1, "{code:?}");
         }
     }
 
-    #[tokio::test]
-    async fn a_cancelled_request_is_never_admitted_and_transport_failure_never_claims_sent() {
+    #[test]
+    fn a_decode_failure_mid_replay_keeps_the_earlier_frames() {
         let mut handler = RithmicRequestHandler::new();
-        let (sender, _receiver) = mpsc::channel(4);
-        let (mut replay, request) = ReplayRequest::new(sender);
-        request.control.cancel();
-        assert!(!handler.register_replay("unsent".into(), request));
-        assert_eq!(replay.result().await.unwrap().end, ReplayEnd::Cancelled);
-        assert!(handler.late_continuations.is_empty(), "nothing was sent");
-        let mut failed = registered(&mut handler, "failed");
-        let progress = failed.subscribe_progress();
-        handler.fail_request("failed", RithmicError::SendFailed);
-        assert_eq!(
-            failed.result().await.unwrap().end,
-            ReplayEnd::Failed(RithmicError::SendFailed)
+        let mut rx = registered(&mut handler, "original");
+
+        handler.handle_response(frame("original", Some(1), &[], None));
+        handler.handle_response(RithmicResponse {
+            request_id: "original".into(),
+            message: RithmicMessage::Unknown,
+            is_update: false,
+            has_more: false,
+            multi_response: false,
+            error: Some(RithmicError::ProtocolError("bad frame".into())),
+            source: "test".into(),
+        });
+
+        let reply = rx.try_recv().unwrap().unwrap();
+        assert_eq!(reply.len(), 2, "the data frame is not dropped");
+        assert!(reply[1].error.is_some());
+        assert!(
+            handler.late_continuations.contains_key("original"),
+            "a decode failure is not proof the server has finished"
         );
-        assert_eq!(progress.borrow().sent_at, None);
+    }
+
+    #[test]
+    fn a_refused_resume_returns_the_refusal_not_the_frames_so_far() {
+        let mut handler = RithmicRequestHandler::new();
+        let mut rx = registered(&mut handler, "original");
+
+        handler.handle_response(frame("original", Some(1), &[], None));
+        handler.handle_response(frame("original", None, &[], Some("key")));
+        handler.register_resume("resume".into(), "original".into());
+
+        let error = RithmicError::ProtocolError("refused".into());
+        handler.handle_response(ack("resume", Some(error.clone())));
+
+        assert_eq!(rx.try_recv().unwrap(), Err(error));
+        assert!(handler.replay_map.is_empty());
+        assert!(handler.late_continuations.contains_key("original"));
+    }
+
+    #[test]
+    fn an_abandoned_replay_is_released_and_its_late_frames_are_counted() {
+        let mut handler = RithmicRequestHandler::new();
+        let rx = registered(&mut handler, "original");
+        let _other = registered(&mut handler, "other");
+        handler.mark_sent("original");
+
+        handler.handle_response(frame("original", Some(1), &[], None));
+        handler.handle_response(frame("original", None, &[], Some("key")));
+        handler.register_resume("resume".into(), "original".into());
+
+        drop(rx);
+        handler.release_abandoned_replays();
+        assert!(!handler.replay_map.contains_key("original"));
+        assert!(handler.replay_map.contains_key("other"));
+        assert!(handler.late_continuations.contains_key("original"));
+
+        assert!(
+            handler
+                .handle_response(frame("original", None, &[], Some("late")))
+                .is_none(),
+            "an abandoned replay is never continued"
+        );
+        handler.handle_response(frame("original", None, &[], None));
+        assert!(
+            handler.late_continuations.contains_key("original"),
+            "a frame without a code is not the server's end"
+        );
+
+        handler.handle_response(frame("original", Some(2), &[], None));
+        assert_eq!(handler.late_continuations.get("original"), Some(&1));
+
+        handler.handle_response(ack("resume", None));
+        assert!(handler.resumes.is_empty());
+
+        handler.handle_response(frame("original", None, &["12"], None));
+        assert!(handler.late_continuations.is_empty());
+    }
+
+    #[test]
+    fn an_abandoned_request_is_not_admitted_and_an_unsent_one_expects_no_late_frames() {
+        let mut handler = RithmicRequestHandler::new();
+
+        let (tx, rx) = oneshot::channel();
+        drop(rx);
+        assert!(!handler.register_replay("unsent".into(), PendingReplay::new(tx)));
+        assert!(handler.replay_map.is_empty());
+
+        let mut failed = registered(&mut handler, "failed");
+        handler.fail_request("failed", RithmicError::SendFailed);
+        assert_eq!(failed.try_recv().unwrap(), Err(RithmicError::SendFailed));
         assert!(
             !handler.late_continuations.contains_key("failed"),
-            "the venue never saw a request that failed to send"
+            "the server never saw a request that failed to send"
         );
 
         let mut sent = registered(&mut handler, "sent");
         handler.mark_sent("sent");
         handler.fail_request("sent", RithmicError::SendFailed);
-        assert_eq!(
-            sent.result().await.unwrap().end,
-            ReplayEnd::Failed(RithmicError::SendFailed)
-        );
+        assert_eq!(sent.try_recv().unwrap(), Err(RithmicError::SendFailed));
         assert_eq!(
             handler.late_continuations.get("sent"),
             Some(&0),
-            "a request the venue saw can still be streaming for its id"
+            "a request the server saw can still be streaming"
         );
     }
 
-    #[tokio::test]
-    async fn local_connection_shutdown_releases_all_replays_and_inert_correlations() {
+    #[test]
+    fn a_dropped_connection_fails_every_replay() {
         let mut handler = RithmicRequestHandler::new();
-        let mut replay = registered(&mut handler, "original");
+        let mut rx = registered(&mut handler, "original");
+
         handler.handle_response(frame("original", Some(1), &[], None));
         handler.register_resume("resume".into(), "original".into());
         handler.drain_and_drop();
-        assert_eq!(
-            replay.result().await.unwrap().end,
-            ReplayEnd::Failed(RithmicError::ConnectionClosed)
-        );
+
+        assert_eq!(rx.try_recv().unwrap(), Err(RithmicError::ConnectionClosed));
         assert!(handler.replay_map.is_empty());
         assert!(handler.resumes.is_empty());
-        assert!(handler.late_continuations.is_empty());
     }
 }

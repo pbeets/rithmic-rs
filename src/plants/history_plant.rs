@@ -1,4 +1,3 @@
-use std::sync::Arc;
 use tracing::{debug, error, info};
 
 use tokio::{
@@ -15,7 +14,7 @@ use crate::{
         await_all_responses, await_first_response,
         core::{PlantActor, PlantCore, SelectResult},
     },
-    replay::{ReplayControl, ReplayHandle, ReplayRequest},
+    request_handler::PendingReplay,
     rti::{
         messages::RithmicMessage, request_login::SysInfraType, request_tick_bar_update,
         request_time_bar_replay::BarType, request_time_bar_update,
@@ -40,28 +39,9 @@ pub(crate) enum HistoryPlantCommand {
     UpdateHeartbeat {
         seconds: u64,
     },
-    SetResumeTruncated {
-        resume: bool,
-    },
-    LoadTicks {
-        request: TickBarReplayRequest,
-        response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
-    },
-    LoadTimeBars {
-        request: TimeBarReplayRequest,
-        response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
-    },
-    LoadVolumeProfileMinuteBars {
-        request: VolumeProfileMinuteBarsRequest,
-        response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
-    },
-    StartReplay {
+    Replay {
         query: ReplayQuery,
-        request: ReplayRequest,
-    },
-    CancelReplay {
-        control: Arc<ReplayControl>,
-        acknowledged: Option<oneshot::Sender<()>>,
+        response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
     },
     ResumeBars {
         request_key: String,
@@ -86,7 +66,7 @@ pub(crate) enum HistoryPlantCommand {
     },
 }
 
-/// The request behind a [`HistoryPlantCommand::StartReplay`].
+/// The request behind a [`HistoryPlantCommand::Replay`].
 pub(crate) enum ReplayQuery {
     Time(TimeBarReplayRequest),
     Tick(TickBarReplayRequest),
@@ -99,10 +79,6 @@ pub(crate) enum ReplayQuery {
 /// plant runs on its own background task; you talk to it through a
 /// [`RithmicHistoryPlantHandle`], which is cheap to clone and safe to share
 /// between tasks.
-///
-/// The `load_*` methods return every record once the replay is over. The
-/// `start_*` methods return a [`ReplayHandle`] straight away, which lets you
-/// watch progress, cancel, and tell a complete window from a partial one.
 ///
 /// # Getting data out
 ///
@@ -138,17 +114,17 @@ pub(crate) enum ReplayQuery {
 ///
 /// # Which loader do I want?
 ///
-/// | You want | Use | Or, to watch and cancel | Records |
-/// |---|---|---|---|
-/// | Individual trades | [`load_ticks`] / [`load_ticks_all`] | [`start_tick_bar_replay`], `bar_length` 1 | one per trade |
-/// | Bars of N trades | [`load_tick_bars`] / [`load_tick_bars_all`] | [`start_tick_bar_replay`] | one per N trades |
-/// | Bars of a fixed duration | [`load_time_bars`] / [`load_time_bars_all`] | [`start_time_bar_replay`] | one per interval |
-/// | Volume traded at each price | [`load_volume_profile_minute_bars`] | [`start_volume_profile_minute_bars`] | one per minute |
+/// | You want | Use | Records |
+/// |---|---|---|
+/// | Individual trades | [`load_ticks`] / [`load_ticks_all`] | one per trade |
+/// | Bars of N trades | [`load_tick_bars`] / [`load_tick_bars_all`] | one per N trades |
+/// | Bars of a fixed duration | [`load_time_bars`] / [`load_time_bars_all`] | one per interval |
+/// | Volume traded at each price | [`load_volume_profile_minute_bars`] | one per minute |
 ///
 /// # Limits on one replay
 ///
 /// - **10,000 records.** The plain methods stop there without saying so. The
-///   `_all` and `start_*` methods lift the cap; prefer them.
+///   `_all` methods lift the cap; prefer them.
 /// - **About four seconds of streaming.** The server then cuts the reply short
 ///   and the plant asks it to continue, so you still get the whole window.
 ///   Time bar replays can occasionally stop here without warning, so check the
@@ -161,9 +137,6 @@ pub(crate) enum ReplayQuery {
 /// [`load_time_bars`]: RithmicHistoryPlantHandle::load_time_bars
 /// [`load_time_bars_all`]: RithmicHistoryPlantHandle::load_time_bars_all
 /// [`load_volume_profile_minute_bars`]: RithmicHistoryPlantHandle::load_volume_profile_minute_bars
-/// [`start_tick_bar_replay`]: RithmicHistoryPlantHandle::start_tick_bar_replay
-/// [`start_time_bar_replay`]: RithmicHistoryPlantHandle::start_time_bar_replay
-/// [`start_volume_profile_minute_bars`]: RithmicHistoryPlantHandle::start_volume_profile_minute_bars
 ///
 /// # Example
 ///
@@ -300,7 +273,7 @@ impl PlantActor for HistoryPlant {
 
     async fn run(&mut self) {
         loop {
-            self.core.request_handler.release_cancelled_replays();
+            self.core.request_handler.release_abandoned_replays();
             let result = self.core.next_event(&mut self.request_receiver).await;
 
             let stop = match result {
@@ -334,9 +307,7 @@ impl PlantActor for HistoryPlant {
                 HistoryPlantCommand::Close
                     | HistoryPlantCommand::SetLogin
                     | HistoryPlantCommand::UpdateHeartbeat { .. }
-                    | HistoryPlantCommand::SetResumeTruncated { .. }
                     | HistoryPlantCommand::Abort
-                    | HistoryPlantCommand::CancelReplay { .. }
             )
         {
             debug!("history_plant: dropping a command queued after close was requested");
@@ -368,47 +339,10 @@ impl PlantActor for HistoryPlant {
             HistoryPlantCommand::UpdateHeartbeat { seconds } => {
                 self.core.handle_update_heartbeat(seconds);
             }
-            HistoryPlantCommand::SetResumeTruncated { resume } => {
-                self.core.request_handler.set_resume_truncated(resume);
-            }
-            HistoryPlantCommand::LoadTicks {
-                request,
+            HistoryPlantCommand::Replay {
+                query,
                 response_sender,
             } => {
-                let (tick_bar_replay_buf, id) = self
-                    .core
-                    .rithmic_sender_api
-                    .request_tick_bar_replay(&request);
-
-                self.core
-                    .register_and_send(tick_bar_replay_buf, id, response_sender)
-                    .await;
-            }
-            HistoryPlantCommand::LoadTimeBars {
-                request,
-                response_sender,
-            } => {
-                let (time_bar_replay_buf, id) = self
-                    .core
-                    .rithmic_sender_api
-                    .request_time_bar_replay(&request);
-
-                self.core
-                    .register_and_send(time_bar_replay_buf, id, response_sender)
-                    .await;
-            }
-            HistoryPlantCommand::LoadVolumeProfileMinuteBars {
-                request,
-                response_sender,
-            } => {
-                let (buf, id) = self
-                    .core
-                    .rithmic_sender_api
-                    .request_volume_profile_minute_bars(&request);
-
-                self.core.register_and_send(buf, id, response_sender).await;
-            }
-            HistoryPlantCommand::StartReplay { query, request } => {
                 let (buf, id) = match query {
                     ReplayQuery::Time(query) => {
                         self.core.rithmic_sender_api.request_time_bar_replay(&query)
@@ -421,16 +355,10 @@ impl PlantActor for HistoryPlant {
                         .rithmic_sender_api
                         .request_volume_profile_minute_bars(&query),
                 };
-                self.core.register_replay_and_send(buf, id, request).await;
-            }
-            HistoryPlantCommand::CancelReplay {
-                control,
-                acknowledged,
-            } => {
-                self.core.request_handler.cancel_replay(&control);
-                if let Some(acknowledged) = acknowledged {
-                    let _ = acknowledged.send(());
-                }
+
+                self.core
+                    .register_replay_and_send(buf, id, PendingReplay::new(response_sender))
+                    .await;
             }
             HistoryPlantCommand::ResumeBars {
                 request_key,
@@ -727,16 +655,7 @@ impl RithmicHistoryPlantHandle {
     ) -> Result<Vec<RithmicResponse>, RithmicError> {
         request.validate()?;
 
-        let (tx, rx) = oneshot::channel::<Result<Vec<RithmicResponse>, RithmicError>>();
-
-        let command = HistoryPlantCommand::LoadTicks {
-            request,
-            response_sender: tx,
-        };
-
-        let _ = self.sender.send(command).await;
-
-        await_all_responses(rx).await
+        self.replay(ReplayQuery::Tick(request)).await
     }
 
     /// Load every trade in the window, however many there are.
@@ -755,20 +674,19 @@ impl RithmicHistoryPlantHandle {
     ///
     /// # Truncation
     ///
-    /// The server also stops streaming a reply after about four seconds. It
-    /// usually says so with a truncation notice
-    /// ([`RithmicResponse::is_truncated`]), and the plant asks it to continue,
-    /// so this call still returns the whole window. Each continuation adds about
-    /// four seconds. [`resume_truncated_replays`](Self::resume_truncated_replays)
-    /// turns this off.
+    /// The server also stops streaming a reply after about four seconds and
+    /// sends a truncation notice. The plant asks it to continue, so this call
+    /// still returns the whole window; each continuation adds about four
+    /// seconds. If the server refuses to continue, this returns
+    /// [`RithmicError::RequestRejected`] rather than a partial window.
     ///
     /// Time bar replays have also been seen to stop early with no notice (a
     /// 60-day window of one-minute bars came back 7.5 days short). Check that
     /// the last record reaches the end of your window, and request the rest if
     /// not.
     ///
-    /// A very large window may get no reply at all, so set a timeout of your
-    /// own, or use a `start_*` method and stop when progress stalls.
+    /// A very large window may get no reply at all, so wrap the call in a
+    /// timeout of your own.
     ///
     /// This is observed behaviour, not documented by Rithmic, and may change.
     ///
@@ -918,10 +836,16 @@ impl RithmicHistoryPlantHandle {
     ) -> Result<Vec<RithmicResponse>, RithmicError> {
         request.validate()?;
 
-        let (tx, rx) = oneshot::channel::<Result<Vec<RithmicResponse>, RithmicError>>();
+        self.replay(ReplayQuery::Time(request)).await
+    }
 
-        let command = HistoryPlantCommand::LoadTimeBars {
-            request,
+    /// Send a replay request and wait for the whole reply. The plant continues
+    /// the replay if the server cuts it short.
+    async fn replay(&self, query: ReplayQuery) -> Result<Vec<RithmicResponse>, RithmicError> {
+        let (tx, rx) = oneshot::channel();
+
+        let command = HistoryPlantCommand::Replay {
+            query,
             response_sender: tx,
         };
 
@@ -950,38 +874,15 @@ impl RithmicHistoryPlantHandle {
         &self,
         request: VolumeProfileMinuteBarsRequest,
     ) -> Result<Vec<RithmicResponse>, RithmicError> {
-        let (tx, rx) = oneshot::channel::<Result<Vec<RithmicResponse>, RithmicError>>();
-
-        let command = HistoryPlantCommand::LoadVolumeProfileMinuteBars {
-            request,
-            response_sender: tx,
-        };
-
-        let _ = self.sender.send(command).await;
-
-        await_all_responses(rx).await
-    }
-
-    /// Choose whether `load_*` replays the server cuts short are continued
-    /// automatically (the default).
-    ///
-    /// When off, the reply ends at the server's truncation notice
-    /// ([`RithmicResponse::is_truncated`]) and holds only part of the window.
-    /// Turn it off if you page through history yourself. `start_*` replays are
-    /// always continued.
-    pub async fn resume_truncated_replays(&self, resume: bool) {
-        let _ = self
-            .sender
-            .send(HistoryPlantCommand::SetResumeTruncated { resume })
-            .await;
+        self.replay(ReplayQuery::Volume(request)).await
     }
 
     /// Ask the server to continue a replay it cut short.
     ///
-    /// You rarely need this: the plant does it automatically (see
-    /// [`resume_truncated_replays`](Self::resume_truncated_replays)). Called by
-    /// hand, it returns only the server's acknowledgement; the rest of the
-    /// replay arrives on the original request and is discarded.
+    /// You don't need this for the `load_*` methods: the plant continues their
+    /// replays automatically. Called by hand, it returns only the server's
+    /// acknowledgement; the rest of the replay arrives on the original request
+    /// and is discarded.
     ///
     /// Not the same as the `resume_bars` request flag, which lifts the
     /// 10,000-record cap.
@@ -1082,74 +983,6 @@ impl RithmicHistoryPlantHandle {
         let _ = self.sender.send(command).await;
 
         await_first_response(rx).await
-    }
-
-    /// Start a time bar replay that you can watch and cancel.
-    ///
-    /// Returns a [`ReplayHandle`] once the request is queued. Like
-    /// [`load_time_bars_all`](Self::load_time_bars_all), it lifts the
-    /// 10,000-record cap and continues replays the server cuts short.
-    ///
-    /// Daily and weekly bars use `YYYYMMDD` dates; see
-    /// [`load_time_bars`](Self::load_time_bars).
-    ///
-    /// # Errors
-    /// * [`RithmicError::InvalidArgument`] if the request is incomplete or its
-    ///   window is out of order. Nothing is sent.
-    /// * [`RithmicError::ConnectionClosed`] if the plant has shut down.
-    ///
-    /// # Example
-    /// See [`ReplayHandle`].
-    pub async fn start_time_bar_replay(
-        &self,
-        request: TimeBarReplayRequest,
-    ) -> Result<ReplayHandle, RithmicError> {
-        request.validate()?;
-        self.start_replay(ReplayQuery::Time(request.resume_bars(true)))
-            .await
-    }
-
-    /// Start a tick bar replay that you can watch and cancel.
-    ///
-    /// The [`ReplayHandle`] form of [`load_tick_bars_all`](Self::load_tick_bars_all).
-    /// Use a `bar_length` of 1 for individual trades.
-    ///
-    /// # Errors
-    /// As [`start_time_bar_replay`](Self::start_time_bar_replay).
-    pub async fn start_tick_bar_replay(
-        &self,
-        request: TickBarReplayRequest,
-    ) -> Result<ReplayHandle, RithmicError> {
-        request.validate()?;
-        self.start_replay(ReplayQuery::Tick(request.resume_bars(true)))
-            .await
-    }
-
-    /// Start a volume profile replay that you can watch and cancel.
-    ///
-    /// The [`ReplayHandle`] form of
-    /// [`load_volume_profile_minute_bars`](Self::load_volume_profile_minute_bars).
-    ///
-    /// # Errors
-    /// As [`start_time_bar_replay`](Self::start_time_bar_replay).
-    pub async fn start_volume_profile_minute_bars(
-        &self,
-        request: VolumeProfileMinuteBarsRequest,
-    ) -> Result<ReplayHandle, RithmicError> {
-        request.validate()?;
-        self.start_replay(ReplayQuery::Volume(request.resume_bars(true)))
-            .await
-    }
-
-    async fn start_replay(&self, query: ReplayQuery) -> Result<ReplayHandle, RithmicError> {
-        // Create the handle first, so that if this future is dropped while
-        // queued, dropping the handle cancels the replay.
-        let (handle, request) = ReplayRequest::new(self.sender.clone());
-        self.sender
-            .send(HistoryPlantCommand::StartReplay { query, request })
-            .await
-            .map_err(|_| RithmicError::ConnectionClosed)?;
-        Ok(handle)
     }
 }
 

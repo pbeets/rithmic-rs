@@ -67,8 +67,10 @@ impl RithmicResponse {
 
     /// The key for continuing a replay the server cut short.
     ///
-    /// Only a truncation notice carries one ([`is_truncated`](Self::is_truncated));
-    /// every other frame returns `None`. The plant uses it automatically.
+    /// Only the server's truncation notice carries one; every other frame
+    /// returns `None`. The `load_*` methods use it automatically, so you only
+    /// need it to call
+    /// [`resume_bars`](crate::RithmicHistoryPlantHandle::resume_bars) yourself.
     pub fn resume_key(&self) -> Option<&str> {
         let key = match &self.message {
             RithmicMessage::ResponseTickBarReplay(m) => m.request_key.as_deref(),
@@ -80,15 +82,9 @@ impl RithmicResponse {
         key.filter(|k| !k.is_empty())
     }
 
-    /// `true` if this frame is the server's notice that it cut a replay short.
-    ///
-    /// The notice carries no data, only a [`resume_key`](Self::resume_key). The
-    /// plant normally continues the replay and leaves the notice out, so you
-    /// only see one when
-    /// [`resume_truncated_replays`](crate::RithmicHistoryPlantHandle::resume_truncated_replays)
-    /// is off. It is then the last frame, and the reply holds only part of the
-    /// window.
-    pub fn is_truncated(&self) -> bool {
+    /// `true` if this frame is the server's notice that it cut a replay short:
+    /// a [`resume_key`](Self::resume_key), no response code and no data.
+    pub(crate) fn is_truncated(&self) -> bool {
         self.multi_response
             && !self.has_more
             && self.rp_code().is_none_or(|code| code.is_empty())

@@ -26,8 +26,7 @@ use crate::{
     config::{LoginConfig, RithmicConfig},
     error::RithmicError,
     ping_manager::PingManager,
-    replay::ReplayRequest,
-    request_handler::{Resume, RithmicRequest, RithmicRequestHandler},
+    request_handler::{PendingReplay, Resume, RithmicRequest, RithmicRequestHandler},
     rti::{messages::RithmicMessage, request_login::SysInfraType},
     ws::{
         PING_TIMEOUT_SECS, SEND_TIMEOUT_SECS, WebSocketSendError, connect_with_strategy,
@@ -148,7 +147,8 @@ where
     }
 
     /// Send `msg`, failing `request_id` if the write fails. Returns `false`
-    /// only if nothing was written because the replay was cancelled.
+    /// only if nothing was written because the replay's caller stopped
+    /// waiting.
     pub(crate) async fn send_or_fail(&mut self, msg: Message, request_id: &str) -> bool {
         if !self.request_handler.replay_send_allowed(request_id) {
             return false;
@@ -610,15 +610,15 @@ where
         self.send_or_fail(Message::Binary(buf.into()), &id).await;
     }
 
-    /// Register a `start_*` replay and send it, unless it was cancelled while
-    /// queued.
+    /// Register a history replay and send it, unless its caller stopped
+    /// waiting while it was queued.
     pub(crate) async fn register_replay_and_send(
         &mut self,
         buf: Vec<u8>,
         id: String,
-        request: ReplayRequest,
+        replay: PendingReplay,
     ) {
-        if self.request_handler.register_replay(id.clone(), request) {
+        if self.request_handler.register_replay(id.clone(), replay) {
             self.send_or_fail(Message::Binary(buf.into()), &id).await;
         }
     }
@@ -912,6 +912,18 @@ mod tests {
         rx
     }
 
+    fn register_replay(
+        core: &mut PlantCore<MockMessageSink>,
+        id: &str,
+    ) -> oneshot::Receiver<Result<Vec<RithmicResponse>, RithmicError>> {
+        let (tx, rx) = oneshot::channel();
+        assert!(
+            core.request_handler
+                .register_replay(id.to_string(), PendingReplay::new(tx))
+        );
+        rx
+    }
+
     /// A truncation notice for a pending replay puts `RequestResumeBars`
     /// on the wire with the notice's key, the caller keeps waiting, and the
     /// venue's real end marker resolves the reply.
@@ -922,7 +934,7 @@ mod tests {
 
         let reader = make_dormant_ws_reader().await;
         let (mut core, _sub_rx) = make_test_core(MockMessageSink::ready(), reader);
-        let mut rx = register_request(&mut core, "vp-1");
+        let mut rx = register_replay(&mut core, "vp-1");
 
         let frame_of = |message: &ResponseVolumeProfileMinuteBars| {
             let mut payload = Vec::new();
@@ -1021,34 +1033,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn scoped_progress_is_not_sent_while_the_socket_write_is_pending() {
-        use crate::replay::ReplayRequest;
+    async fn a_replay_whose_write_fails_is_not_marked_sent() {
         let reader = make_dormant_ws_reader().await;
-        let (mut core, _sub_rx) = make_test_core(MockMessageSink::pending(), reader);
-        let (sender, _receiver) = tokio::sync::mpsc::channel(4);
-        let (mut replay, request) = ReplayRequest::new(sender);
-        let progress = replay.subscribe_progress();
+        let (mut core, _sub_rx) = make_test_core(MockMessageSink::error(), reader);
+        let mut rx = register_replay(&mut core, "failed");
+
+        core.send_or_fail(Message::Binary(Vec::new().into()), "failed")
+            .await;
+
+        assert_eq!(rx.try_recv().unwrap(), Err(RithmicError::SendFailed));
         assert!(
-            core.request_handler
-                .register_replay("pending".into(), request)
-        );
-        tokio::time::pause();
-        let writer = tokio::spawn(async move {
-            core.send_or_fail(Message::Binary(Vec::new().into()), "pending")
-                .await;
-        });
-        tokio::task::yield_now().await;
-        assert_eq!(progress.borrow().sent_at, None);
-        tokio::time::advance(std::time::Duration::from_secs(SEND_TIMEOUT_SECS + 1)).await;
-        writer.await.unwrap();
-        assert!(matches!(
-            replay.result().await.unwrap().end,
-            crate::ReplayEnd::Failed(_)
-        ));
-        assert_eq!(
-            progress.borrow().sent_at,
-            None,
-            "a failed write is not successful admission"
+            !core.request_handler.expects_late_frames("failed"),
+            "the server never saw a write that failed"
         );
     }
 

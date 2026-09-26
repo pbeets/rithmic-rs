@@ -9,23 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `start_time_bar_replay`, `start_tick_bar_replay` and
-  `start_volume_profile_minute_bars` on `RithmicHistoryPlantHandle`. They
-  return a `ReplayHandle` you can use to watch a replay's progress, cancel it,
-  and see whether you got the whole window (`ReplayEnd::Complete`) or only part.
-- The plant now continues replays the server cuts short after about four
-  seconds of streaming, so the `load_*` methods return the whole window.
-  `RithmicResponse::is_truncated` identifies the server's notice.
-- `RithmicHistoryPlantHandle::resume_truncated_replays(bool)` turns that off
-  for the `load_*` methods.
 - `RithmicOrderPlant::subscribe_all()`: every account's messages, unfiltered,
   for proxies that relay a multi-account login.
-- `examples/replay_frames.rs`: a diagnostic that prints every frame of a replay.
 
 ### Changed
 
+- The history plant now continues replays the server cuts short after about
+  four seconds of streaming, so the `load_*` methods return the whole window.
 - A `load_*` replay the server refuses to continue now returns
   `Err(RithmicError::RequestRejected)` instead of the partial data.
+- A frame that fails to decode mid-replay no longer discards the frames
+  received before it.
 - Frames that arrive after a request is answered are counted and logged once
   at `INFO`, instead of a `WARN` per frame and a full dump at `ERROR`.
 - If a caller stops waiting mid-reply, the rest of the reply is no longer held

@@ -308,28 +308,11 @@ loop {
 ```
 
 **Set your own time limit.** The crate never times out a request, and a very
-large window may get no reply at all. Wrap `load_*` calls in
-`tokio::time::timeout`, or use a replay you can watch.
+large window may get no reply at all, so wrap `load_*` calls in
+`tokio::time::timeout`.
 
-**Replays you can watch and cancel.** `start_time_bar_replay`,
-`start_tick_bar_replay` and `start_volume_profile_minute_bars` return a
-`ReplayHandle` straight away:
-
-```rust
-let mut replay = handle.start_time_bar_replay(request).await?;
-let mut progress = replay.subscribe_progress(); // updates as data arrives
-
-// ... select on replay.result(), progress.changed() and your own timer ...
-
-replay.cancel().await?; // stops this replay only
-let outcome = replay.result().await?; // frames so far, and why it ended
-```
-
-`outcome.end` is `ReplayEnd::Complete` only if you have the whole window. See
-the `ReplayHandle` docs for a full example.
-
-Either way, the whole window is held in memory until you receive it, so ask for
-the window you need rather than a day at a time.
+The whole window is held in memory until the call returns, so ask for the
+window you need rather than a day at a time.
 
 Volume profile bars take a request struct:
 
@@ -446,7 +429,6 @@ Every example is runnable against a Demo account once `.env` is filled in from
 | [`trade_routes.rs`](examples/trade_routes.rs) | Inspecting the routes orders will take |
 | [`load_historical_bars.rs`](examples/load_historical_bars.rs) | Time bar replay |
 | [`load_historical_ticks.rs`](examples/load_historical_ticks.rs) | Tick replay |
-| [`replay_frames.rs`](examples/replay_frames.rs) | Diagnostic: every frame of one replay |
 | [`pnl.rs`](examples/pnl.rs) | Position and P&L updates |
 | [`error_handling.rs`](examples/error_handling.rs) | Every error the crate can hand you, in one file |
 | [`reconnect.rs`](examples/reconnect.rs) | A reconnection loop that restores subscriptions |

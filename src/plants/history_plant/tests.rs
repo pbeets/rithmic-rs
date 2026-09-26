@@ -21,13 +21,15 @@ async fn plant_with_wire() -> (HistoryPlant, mpsc::Sender<HistoryPlantCommand>, 
 }
 
 fn load_ticks(response_sender: Responder) -> HistoryPlantCommand {
-    HistoryPlantCommand::LoadTicks {
-        request: TickBarReplayRequest::new()
-            .symbol("ESH6")
-            .exchange("CME")
-            .bar_length(1)
-            .start_time_sec(1)
-            .end_time_sec(1000),
+    HistoryPlantCommand::Replay {
+        query: ReplayQuery::Tick(
+            TickBarReplayRequest::new()
+                .symbol("ESH6")
+                .exchange("CME")
+                .bar_length(1)
+                .start_time_sec(1)
+                .end_time_sec(1000),
+        ),
         response_sender,
     }
 }
@@ -328,56 +330,50 @@ async fn disconnect_sends_close_even_when_logout_fails() {
     ));
 }
 
-fn tick_replay_request() -> TickBarReplayRequest {
-    TickBarReplayRequest::new()
-        .symbol("ESH6")
-        .exchange("CME")
-        .bar_length(1)
-        .start_time_sec(1)
-        .end_time_sec(1000)
-}
-
-#[tokio::test]
-async fn scoped_replay_reports_sent_only_after_actor_writes_and_cancel_preserves_the_session() {
-    let (mut plant, command_sender, mut client) = plant_with_wire().await;
+fn handle_for(
+    plant: &HistoryPlant,
+    command_sender: mpsc::Sender<HistoryPlantCommand>,
+) -> RithmicHistoryPlantHandle {
     let subscription_sender = plant.core.subscription_sender.clone();
-    let handle = RithmicHistoryPlantHandle {
+
+    RithmicHistoryPlantHandle {
         sender: command_sender,
         subscription_receiver: subscription_sender.subscribe(),
         subscription_sender,
-    };
-    let mut replay = handle
-        .start_tick_bar_replay(tick_replay_request())
+    }
+}
+
+/// Wait for a spawned `load_*` call, with a deadline so a hang fails the test.
+async fn reply_of(
+    task: tokio::task::JoinHandle<Result<Vec<RithmicResponse>, RithmicError>>,
+) -> Result<Vec<RithmicResponse>, RithmicError> {
+    tokio::time::timeout(std::time::Duration::from_secs(2), task)
         .await
-        .unwrap();
-    let mut progress = replay.subscribe_progress();
-    assert_eq!(
-        progress.borrow().sent_at,
-        None,
-        "queue admission is not a send"
-    );
-    let command = plant.request_receiver.recv().await.unwrap();
-    plant.handle_command(command).await;
+        .expect("the load call returned")
+        .expect("the load task did not panic")
+}
+
+#[tokio::test]
+async fn a_dropped_load_leaves_the_session_usable() {
+    let (handle, actor, mut client) = running_plant_with_handle().await;
+
+    let load = {
+        let handle = handle.clone();
+        tokio::spawn(async move {
+            handle
+                .load_ticks_all("ESH6".into(), "CME".into(), 1, 1000)
+                .await
+        })
+    };
     let (resume_bars, original) = read_tick_replay(&mut client).await;
     assert_eq!(resume_bars, Some(true));
-    assert!(progress.borrow().sent_at.is_some());
-    let actor = tokio::spawn(async move { plant.run().await });
+
     write_wire_response(&mut client, &tick_at(&original, 100, 1)).await;
-    tokio::time::timeout(std::time::Duration::from_secs(2), async {
-        while progress.borrow().data_frames == 0 {
-            progress.changed().await.unwrap();
-        }
-    })
-    .await
-    .expect("the first data frame reaches progress");
-    tokio::time::timeout(std::time::Duration::from_secs(2), replay.cancel())
-        .await
-        .unwrap()
-        .unwrap();
-    let outcome = scoped_outcome(&mut replay).await;
-    assert_eq!(outcome.end, crate::ReplayEnd::Cancelled);
-    assert_eq!(outcome.responses.len(), 1);
-    // Late data and a cut cannot revive or re-resume the cancelled replay.
+    load.abort();
+    let _ = load.await;
+
+    // Late data and a late cut cannot revive the dropped replay or trigger a
+    // continuation.
     write_wire_response(&mut client, &tick_at(&original, 200, 1)).await;
     write_wire_response(
         &mut client,
@@ -390,102 +386,71 @@ async fn scoped_replay_reports_sent_only_after_actor_writes_and_cancel_preserves
     )
     .await;
     write_wire_response(&mut client, &tick_page_end(&original)).await;
-    // A second request uses the same healthy plant, without logout or close.
-    let mut next = handle
-        .start_tick_bar_replay(tick_replay_request())
-        .await
-        .unwrap();
+
+    // The next request uses the same plant, without logout or reconnect.
+    let next = {
+        let handle = handle.clone();
+        tokio::spawn(async move {
+            handle
+                .load_ticks_all("ESH6".into(), "CME".into(), 1, 1000)
+                .await
+        })
+    };
     let (_, next_id) = read_tick_replay(&mut client).await;
     assert_ne!(original, next_id);
+
     write_wire_response(&mut client, &tick_page_end(&next_id)).await;
-    assert_eq!(
-        scoped_outcome(&mut next).await.end,
-        crate::ReplayEnd::Complete
-    );
+    assert_eq!(reply_of(next).await.unwrap().len(), 1);
     assert_wire_silent(&mut client).await;
+
     handle.abort();
     actor.await.unwrap();
 }
 
 #[tokio::test]
-async fn dropping_an_admitted_handle_before_actor_send_keeps_the_wire_silent_even_when_queue_full()
-{
+async fn a_load_dropped_before_the_plant_sends_it_is_never_sent() {
+    use futures_util::FutureExt as _;
+
     let (mut plant, command_sender, mut client) = plant_with_wire().await;
-    let subscription_sender = plant.core.subscription_sender.clone();
-    let handle = RithmicHistoryPlantHandle {
-        sender: command_sender,
-        subscription_receiver: subscription_sender.subscribe(),
-        subscription_sender,
-    };
-    let replay = handle
-        .start_tick_bar_replay(tick_replay_request())
-        .await
-        .unwrap();
-    for _ in 0..3 {
-        handle
-            .sender
-            .try_send(HistoryPlantCommand::SetLogin)
-            .unwrap();
-    }
-    assert_eq!(handle.sender.capacity(), 0);
-    drop(replay); // Its cancellation command cannot enter the full queue.
+    let handle = handle_for(&plant, command_sender);
+
+    // Queue the request, then drop the call before the plant picks it up.
+    let mut load = Box::pin(handle.load_ticks_all("ESH6".into(), "CME".into(), 1, 1000));
+    assert!(load.as_mut().now_or_never().is_none());
+    drop(load);
+
     let command = plant.request_receiver.recv().await.unwrap();
     plant.handle_command(command).await;
+
     assert_wire_silent(&mut client).await;
 }
 
 #[tokio::test]
-async fn cancelling_before_actor_send_is_acknowledged_and_never_claims_sent() {
-    use futures_util::FutureExt as _;
-    let (mut plant, command_sender, mut client) = plant_with_wire().await;
-    let subscription_sender = plant.core.subscription_sender.clone();
-    let handle = RithmicHistoryPlantHandle {
-        sender: command_sender,
-        subscription_receiver: subscription_sender.subscribe(),
-        subscription_sender,
-    };
-    let mut replay = handle
-        .start_tick_bar_replay(tick_replay_request())
-        .await
-        .unwrap();
-    let progress = replay.subscribe_progress();
-    // Poll cancellation through admission, then prove the actor answers it.
-    let mut cancellation = Box::pin(replay.cancel());
-    assert!(cancellation.as_mut().now_or_never().is_none());
-    let start = plant.request_receiver.recv().await.unwrap();
-    plant.handle_command(start).await;
-    let cancel = plant.request_receiver.recv().await.unwrap();
-    plant.handle_command(cancel).await;
-    cancellation.await.unwrap();
-    assert_eq!(
-        scoped_outcome(&mut replay).await.end,
-        crate::ReplayEnd::Cancelled
-    );
-    assert_eq!(progress.borrow().sent_at, None);
-    assert_wire_silent(&mut client).await;
-}
-
-#[tokio::test]
-async fn scoped_time_replay_uses_original_correlation_through_native_continuation() {
+async fn load_time_bars_all_continues_a_cut_reply_on_the_original_request() {
     use crate::rti::{RequestResumeBars, ResponseResumeBars};
+
     let (handle, actor, mut client) = running_plant_with_handle().await;
-    handle.resume_truncated_replays(false).await;
-    let mut replay = handle
-        .start_time_bar_replay(
-            TimeBarReplayRequest::new()
-                .symbol("ESH6")
-                .exchange("CME")
-                .bar_type(crate::TimeBarType::MinuteBar)
-                .bar_type_period(1)
-                .start_time_sec(1)
-                .end_time_sec(1000),
-        )
-        .await
-        .unwrap();
+
+    let load = {
+        let handle = handle.clone();
+        tokio::spawn(async move {
+            handle
+                .load_time_bars_all(
+                    "ESH6".into(),
+                    "CME".into(),
+                    crate::TimeBarType::MinuteBar,
+                    1,
+                    1,
+                    1000,
+                )
+                .await
+        })
+    };
     let request =
         RequestTimeBarReplay::decode(read_wire_request(&mut client).await.as_slice()).unwrap();
     assert_eq!(request.resume_bars, Some(true));
     let id = &request.user_msg[0];
+
     write_wire_response(&mut client, &time_bar_at(id, 10)).await;
     write_wire_response(
         &mut client,
@@ -497,11 +462,13 @@ async fn scoped_time_replay_uses_original_correlation_through_native_continuatio
         },
     )
     .await;
+
     let resume =
         RequestResumeBars::decode(read_wire_request(&mut client).await.as_slice()).unwrap();
     assert_eq!(resume.template_id, 210);
     assert_eq!(resume.request_key.as_deref(), Some("first-cut"));
     assert_ne!(resume.user_msg[0], *id);
+
     write_wire_response(
         &mut client,
         &ResponseResumeBars {
@@ -514,45 +481,48 @@ async fn scoped_time_replay_uses_original_correlation_through_native_continuatio
     .await;
     write_wire_response(&mut client, &time_bar_at(id, 20)).await;
     write_wire_response(&mut client, &time_bar_replay_end(id)).await;
-    let outcome = scoped_outcome(&mut replay).await;
-    assert_eq!(outcome.end, crate::ReplayEnd::Complete);
-    assert_eq!(outcome.responses.len(), 3);
-    assert!(
-        outcome
-            .responses
-            .iter()
-            .all(|response| response.request_id == *id)
+
+    let reply = reply_of(load).await.unwrap();
+    assert_eq!(
+        reply.len(),
+        3,
+        "two bars and the end; the notice is left out"
     );
-    let progress = *replay.subscribe_progress().borrow();
-    assert_eq!(progress.data_frames, 2);
-    assert_eq!(progress.continuations, 1);
+    assert!(reply.iter().all(|response| response.request_id == *id));
+
     handle.abort();
     actor.await.unwrap();
 }
 
 #[tokio::test]
-async fn scoped_volume_replay_refusal_cannot_turn_a_prefix_into_success() {
+async fn a_refused_continuation_fails_the_load() {
     use crate::rti::{
         RequestResumeBars, RequestVolumeProfileMinuteBars, ResponseResumeBars,
         ResponseVolumeProfileMinuteBars,
     };
+
     let (handle, actor, mut client) = running_plant_with_handle().await;
-    let mut replay = handle
-        .start_volume_profile_minute_bars(
-            VolumeProfileMinuteBarsRequest::new()
-                .symbol("ESH6")
-                .exchange("CME")
-                .bar_type_period(1)
-                .start_time_sec(1)
-                .end_time_sec(1000),
-        )
-        .await
-        .unwrap();
+
+    let load = {
+        let handle = handle.clone();
+        tokio::spawn(async move {
+            handle
+                .load_volume_profile_minute_bars(
+                    VolumeProfileMinuteBarsRequest::new()
+                        .symbol("ESH6")
+                        .exchange("CME")
+                        .bar_type_period(1)
+                        .start_time_sec(1)
+                        .end_time_sec(1000),
+                )
+                .await
+        })
+    };
     let request =
         RequestVolumeProfileMinuteBars::decode(read_wire_request(&mut client).await.as_slice())
             .unwrap();
-    assert_eq!(request.resume_bars, Some(true));
     let id = &request.user_msg[0];
+
     write_wire_response(
         &mut client,
         &ResponseVolumeProfileMinuteBars {
@@ -574,6 +544,7 @@ async fn scoped_volume_replay_refusal_cannot_turn_a_prefix_into_success() {
         },
     )
     .await;
+
     let resume =
         RequestResumeBars::decode(read_wire_request(&mut client).await.as_slice()).unwrap();
     write_wire_response(
@@ -586,93 +557,85 @@ async fn scoped_volume_replay_refusal_cannot_turn_a_prefix_into_success() {
         },
     )
     .await;
-    let outcome = scoped_outcome(&mut replay).await;
+
     assert!(matches!(
-        outcome.end,
-        crate::ReplayEnd::Refused(RithmicError::RequestRejected(_))
+        reply_of(load).await,
+        Err(RithmicError::RequestRejected(_))
     ));
-    assert_eq!(outcome.responses.len(), 2);
-    assert_eq!(replay.subscribe_progress().borrow().data_frames, 1);
+
     handle.abort();
     actor.await.unwrap();
 }
 
-async fn scoped_outcome(replay: &mut crate::ReplayHandle) -> crate::ReplayOutcome {
-    tokio::time::timeout(std::time::Duration::from_secs(2), replay.result())
-        .await
-        .expect("the mock server or local cancellation supplied a terminal outcome")
-        .expect("the actor is alive")
-}
-
 #[tokio::test]
-async fn dropping_an_active_replay_with_a_full_command_queue_releases_it_without_another_frame() {
+async fn a_load_dropped_mid_replay_is_released_without_another_frame() {
+    use futures_util::FutureExt as _;
+
     let (mut plant, command_sender, mut client) = plant_with_wire().await;
-    let subscription_sender = plant.core.subscription_sender.clone();
-    let handle = RithmicHistoryPlantHandle {
-        sender: command_sender,
-        subscription_receiver: subscription_sender.subscribe(),
-        subscription_sender,
-    };
-    let replay = handle
-        .start_tick_bar_replay(tick_replay_request())
-        .await
-        .unwrap();
-    let mut progress = replay.subscribe_progress();
+    let handle = handle_for(&plant, command_sender);
+
+    let mut load = Box::pin(handle.load_ticks_all("ESH6".into(), "CME".into(), 1, 1000));
+    assert!(load.as_mut().now_or_never().is_none());
+
     let command = plant.request_receiver.recv().await.unwrap();
     plant.handle_command(command).await;
     let (_, id) = read_tick_replay(&mut client).await;
-    // Give the actor an actual accumulated part, then fill its control queue.
-    let response = crate::api::receiver_api::RithmicResponse {
-        request_id: id,
+
+    // Give the replay a collected part, then fill the command queue.
+    plant.core.request_handler.handle_response(RithmicResponse {
+        request_id: id.clone(),
         message: RithmicMessage::ResponseTickBarReplay(tick_at("", 100, 1)),
         is_update: false,
         has_more: true,
         multi_response: true,
         error: None,
         source: "test".into(),
-    };
-    plant.core.request_handler.handle_response(response);
+    });
     for _ in 0..4 {
         handle
             .sender
             .try_send(HistoryPlantCommand::SetLogin)
             .unwrap();
     }
-    drop(replay);
-    let actor = tokio::spawn(async move { plant.run().await });
-    tokio::time::timeout(std::time::Duration::from_secs(2), async {
-        while progress.changed().await.is_ok() {}
-    })
-    .await
-    .expect("the actor sweep drops the progress writer and payload even without a new frame");
+    drop(load);
+
+    // The plant releases the replay on its next loop turn, with no new frame.
+    let actor = tokio::spawn(async move {
+        let _ = tokio::time::timeout(std::time::Duration::from_millis(200), plant.run()).await;
+        plant
+    });
+    let plant = actor.await.unwrap();
+
+    assert!(
+        plant.core.request_handler.expects_late_frames(&id),
+        "the replay was released and its late frames are counted"
+    );
     assert_wire_silent(&mut client).await;
-    handle.abort();
-    actor.await.unwrap();
 }
 
 #[tokio::test]
-async fn dropping_a_start_future_waiting_for_admission_never_sends_a_replay() {
+async fn a_load_dropped_while_waiting_for_room_in_the_queue_is_never_sent() {
     use futures_util::FutureExt as _;
+
     let (mut plant, command_sender, mut client) = plant_with_wire().await;
-    let subscription_sender = plant.core.subscription_sender.clone();
-    let handle = RithmicHistoryPlantHandle {
-        sender: command_sender,
-        subscription_receiver: subscription_sender.subscribe(),
-        subscription_sender,
-    };
+    let handle = handle_for(&plant, command_sender);
+
     for _ in 0..4 {
         handle
             .sender
             .try_send(HistoryPlantCommand::SetLogin)
             .unwrap();
     }
-    let mut start = Box::pin(handle.start_tick_bar_replay(tick_replay_request()));
-    assert!(start.as_mut().now_or_never().is_none());
-    drop(start);
+
+    let mut load = Box::pin(handle.load_ticks_all("ESH6".into(), "CME".into(), 1, 1000));
+    assert!(load.as_mut().now_or_never().is_none());
+    drop(load);
+
     for _ in 0..4 {
         let command = plant.request_receiver.recv().await.unwrap();
         plant.handle_command(command).await;
     }
+
     assert!(plant.request_receiver.try_recv().is_err());
     assert_wire_silent(&mut client).await;
 }
