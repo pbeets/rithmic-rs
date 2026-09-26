@@ -283,6 +283,11 @@ pub struct RithmicConfig {
         note = "the library no longer times out requests; wrap the call in tokio::time::timeout"
     )]
     pub request_timeout: Duration,
+    /// Capacity of each plant's subscription broadcast channel, or `None` for
+    /// the default of 10,000. Set with
+    /// [`RithmicConfigBuilder::subscription_capacity`], which explains what
+    /// the capacity costs.
+    pub subscription_capacity: Option<usize>,
 }
 
 impl fmt::Debug for RithmicConfig {
@@ -298,6 +303,7 @@ impl fmt::Debug for RithmicConfig {
             .field("app_name", &self.app_name)
             .field("app_version", &self.app_version)
             .field("request_timeout", &self.request_timeout)
+            .field("subscription_capacity", &self.subscription_capacity)
             .finish()
     }
 }
@@ -400,6 +406,7 @@ impl RithmicConfig {
             app_name,
             app_version,
             request_timeout,
+            subscription_capacity: None,
         })
     }
 
@@ -436,6 +443,7 @@ pub struct RithmicConfigBuilder {
     app_name: Option<String>,
     app_version: Option<String>,
     request_timeout: Duration,
+    subscription_capacity: Option<usize>,
 }
 
 impl RithmicConfigBuilder {
@@ -465,6 +473,7 @@ impl RithmicConfigBuilder {
             app_name: Some(config.app_name),
             app_version: Some(config.app_version),
             request_timeout: config.request_timeout,
+            subscription_capacity: config.subscription_capacity,
         })
     }
 
@@ -483,6 +492,7 @@ impl RithmicConfigBuilder {
             app_name: None,
             app_version: None,
             request_timeout: DEFAULT_REQUEST_TIMEOUT,
+            subscription_capacity: None,
         }
     }
 
@@ -545,6 +555,26 @@ impl RithmicConfigBuilder {
         self
     }
 
+    /// Set the capacity of each plant's subscription broadcast channel.
+    ///
+    /// Every plant allocates its channel up front, when it connects. Tokio
+    /// rounds the capacity up to the next power of two and allocates every
+    /// slot eagerly, and each slot holds a
+    /// [`RithmicResponse`](crate::RithmicResponse) of about 1.3 KB. The default
+    /// of 10,000 becomes 16,384 slots, about 22 MB per plant. Lower the
+    /// capacity to save memory when you run many plants.
+    ///
+    /// A subscriber that falls more than `capacity` messages behind misses
+    /// the oldest ones: its next `recv` returns
+    /// [`RecvError::Lagged`](tokio::sync::broadcast::error::RecvError::Lagged)
+    /// with the number skipped. Raise the capacity if your consumer is bursty.
+    ///
+    /// `0` leaves the plant defaults in place.
+    pub fn subscription_capacity(mut self, capacity: usize) -> Self {
+        self.subscription_capacity = if capacity == 0 { None } else { Some(capacity) };
+        self
+    }
+
     /// Build the configuration.
     ///
     /// Returns an error if any required fields are missing.
@@ -574,6 +604,7 @@ impl RithmicConfigBuilder {
                 .app_version
                 .ok_or_else(|| ConfigError::MissingField("app_version".to_string()))?,
             request_timeout: self.request_timeout,
+            subscription_capacity: self.subscription_capacity,
         })
     }
 }
@@ -746,6 +777,50 @@ mod tests {
             .unwrap();
 
         assert_eq!(config.request_timeout, DEFAULT_REQUEST_TIMEOUT);
+    }
+
+    fn builder_with_required_fields() -> RithmicConfigBuilder {
+        RithmicConfig::builder(RithmicEnv::Demo)
+            .user("u")
+            .password("p")
+            .url("ws://localhost:9999")
+            .beta_url("ws://localhost:9998")
+            .app_name("a")
+            .app_version("1")
+    }
+
+    #[test]
+    fn the_builder_sets_the_subscription_capacity() {
+        let config = builder_with_required_fields()
+            .subscription_capacity(1_024)
+            .build()
+            .unwrap();
+
+        assert_eq!(config.subscription_capacity, Some(1_024));
+    }
+
+    #[test]
+    fn the_builder_treats_a_zero_subscription_capacity_as_unset() {
+        let config = builder_with_required_fields()
+            .subscription_capacity(0)
+            .build()
+            .unwrap();
+
+        assert_eq!(config.subscription_capacity, None);
+    }
+
+    #[test]
+    fn from_env_leaves_the_subscription_capacity_unset() {
+        temp_env::with_vars(demo_env_vars(), || {
+            let config = RithmicConfig::from_env(RithmicEnv::Demo).unwrap();
+            assert_eq!(config.subscription_capacity, None);
+
+            let config = RithmicConfigBuilder::from_env(RithmicEnv::Demo)
+                .unwrap()
+                .build()
+                .unwrap();
+            assert_eq!(config.subscription_capacity, None);
+        });
     }
 
     #[test]

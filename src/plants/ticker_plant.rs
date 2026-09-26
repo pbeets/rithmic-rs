@@ -19,6 +19,9 @@ use crate::{
     },
 };
 
+/// Default subscription channel capacity.
+const DEFAULT_SUBSCRIPTION_CAPACITY: usize = 10_000;
+
 pub(crate) enum TickerPlantCommand {
     Close,
     Abort,
@@ -237,7 +240,10 @@ impl RithmicTickerPlant {
         strategy: ConnectStrategy,
     ) -> Result<RithmicTickerPlant, RithmicError> {
         let (req_tx, req_rx) = mpsc::channel::<TickerPlantCommand>(64);
-        let (sub_tx, _sub_rx) = broadcast::channel(10_000);
+        let capacity = config
+            .subscription_capacity
+            .unwrap_or(DEFAULT_SUBSCRIPTION_CAPACITY);
+        let (sub_tx, _sub_rx) = broadcast::channel(capacity);
         let mut ticker_plant = TickerPlant::new(req_rx, sub_tx.clone(), config, strategy).await?;
 
         let connection_handle = tokio::spawn(async move {

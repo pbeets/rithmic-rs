@@ -22,6 +22,9 @@ use crate::{
     types::{TickBarReplayRequest, TimeBarReplayRequest, VolumeProfileMinuteBarsRequest},
 };
 
+/// Default subscription channel capacity.
+const DEFAULT_SUBSCRIPTION_CAPACITY: usize = 10_000;
+
 pub(crate) enum HistoryPlantCommand {
     Close,
     Abort,
@@ -215,7 +218,10 @@ impl RithmicHistoryPlant {
         strategy: ConnectStrategy,
     ) -> Result<RithmicHistoryPlant, RithmicError> {
         let (req_tx, req_rx) = mpsc::channel::<HistoryPlantCommand>(32);
-        let (sub_tx, _sub_rx) = broadcast::channel::<RithmicResponse>(20_000);
+        let capacity = config
+            .subscription_capacity
+            .unwrap_or(DEFAULT_SUBSCRIPTION_CAPACITY);
+        let (sub_tx, _sub_rx) = broadcast::channel::<RithmicResponse>(capacity);
         let mut history_plant = HistoryPlant::new(req_rx, sub_tx.clone(), config, strategy).await?;
 
         let connection_handle = tokio::spawn(async move {

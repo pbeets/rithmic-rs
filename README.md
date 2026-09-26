@@ -122,6 +122,15 @@ This library uses the actor pattern where each Rithmic service runs independentl
 - **`RithmicHistoryPlant`** - Historical tick and bar data
 - **`RithmicPnlPlant`** - Position and P&L tracking
 
+### Subscription channels
+
+Live updates arrive on each handle's `subscription_receiver`, a channel that
+holds 10,000 messages by default. A reader that falls further behind misses
+messages and gets `RecvError::Lagged`. Set `subscription_capacity` on the config
+builder to change the size; see the
+[crate docs](https://docs.rs/rithmic-rs/latest/rithmic_rs/#subscription-channels)
+for details.
+
 ### Ticker Plant
 
 ```rust

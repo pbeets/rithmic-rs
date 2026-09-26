@@ -29,6 +29,9 @@ use crate::{
     types::{EasyToBorrowRequest, FillHistoryRange, RmsUpdateBits},
 };
 
+/// Default subscription channel capacity.
+const DEFAULT_SUBSCRIPTION_CAPACITY: usize = 10_000;
+
 pub(crate) enum OrderPlantCommand {
     Close,
     Abort,
@@ -347,7 +350,10 @@ impl RithmicOrderPlant {
         strategy: ConnectStrategy,
     ) -> Result<RithmicOrderPlant, RithmicError> {
         let (req_tx, req_rx) = mpsc::channel::<OrderPlantCommand>(64);
-        let (sub_tx, _sub_rx) = broadcast::channel(10_000);
+        let capacity = config
+            .subscription_capacity
+            .unwrap_or(DEFAULT_SUBSCRIPTION_CAPACITY);
+        let (sub_tx, _sub_rx) = broadcast::channel(capacity);
         let login_scope = Arc::new(OnceLock::new());
         let mut order_plant = OrderPlant::new(
             req_rx,

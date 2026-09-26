@@ -15,6 +15,9 @@ use crate::{
     rti::{messages::RithmicMessage, request_login::SysInfraType, request_pn_l_position_updates},
 };
 
+/// Default subscription channel capacity.
+const DEFAULT_SUBSCRIPTION_CAPACITY: usize = 10_000;
+
 pub(crate) enum PnlPlantCommand {
     Close,
     Abort,
@@ -131,7 +134,10 @@ impl RithmicPnlPlant {
         strategy: ConnectStrategy,
     ) -> Result<RithmicPnlPlant, RithmicError> {
         let (req_tx, req_rx) = mpsc::channel::<PnlPlantCommand>(64);
-        let (sub_tx, _sub_rx) = broadcast::channel(10_000);
+        let capacity = config
+            .subscription_capacity
+            .unwrap_or(DEFAULT_SUBSCRIPTION_CAPACITY);
+        let (sub_tx, _sub_rx) = broadcast::channel(capacity);
         let mut pnl_plant = PnlPlant::new(req_rx, sub_tx.clone(), config, strategy).await?;
 
         let connection_handle = tokio::spawn(async move {

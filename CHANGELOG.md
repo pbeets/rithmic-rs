@@ -12,6 +12,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `RithmicOrderPlant::subscribe_all()` and `RithmicPnlPlant::subscribe_all()`:
   every account's updates, unfiltered, for proxies that relay a multi-account
   login.
+- `RithmicConfigBuilder::subscription_capacity()` sets the capacity of each
+  plant's subscription broadcast channel, which is allocated up front
+  (roughly 22 MB per plant at the default of 10,000). The history plant's
+  default drops from 20,000 to 10,000, the same as the other plants: that
+  channel carries only live bar updates and connection events, not `load_*`
+  or replay results.
 - `examples/backfill.rs`: backfills large windows for the front-month
   contract and reports, for each, whether you got all of it.
 

@@ -105,6 +105,33 @@
 //! }
 //! ```
 //!
+//! ## Subscription Channels
+//!
+//! Each plant sends its live updates (quotes, fills, bars, PnL) and connection
+//! events over a tokio [`broadcast`](tokio::sync::broadcast) channel. Every
+//! handle gets its own receiver on it.
+//!
+//! The channel holds 10,000 messages by default. The plant never waits for
+//! you: if your receiver falls more than that far behind, it misses the
+//! oldest messages, and its next `recv` returns
+//! [`RecvError::Lagged(n)`](tokio::sync::broadcast::error::RecvError::Lagged)
+//! with the number it missed. Keep your receive loop fast, hand slow work to
+//! another task, and treat `Lagged` as a sign to resync (for example,
+//! re-request open orders and positions).
+//!
+//! The channel is allocated in full when the plant connects, about 22 MB at
+//! the default size. Raise the capacity for more headroom during bursts, or
+//! lower it to save memory:
+//!
+//! ```no_run
+//! use rithmic_rs::{RithmicConfigBuilder, RithmicEnv};
+//!
+//! let config = RithmicConfigBuilder::from_env(RithmicEnv::Demo)?
+//!     .subscription_capacity(50_000)
+//!     .build()?;
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
+//!
 //! ## Error Handling
 //!
 //! An error reaches you in one of two places: the call you made, or the
