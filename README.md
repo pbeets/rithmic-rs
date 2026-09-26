@@ -429,6 +429,7 @@ Every example is runnable against a Demo account once `.env` is filled in from
 | [`trade_routes.rs`](examples/trade_routes.rs) | Inspecting the routes orders will take |
 | [`load_historical_bars.rs`](examples/load_historical_bars.rs) | Time bar replay |
 | [`load_historical_ticks.rs`](examples/load_historical_ticks.rs) | Tick replay |
+| [`backfill.rs`](examples/backfill.rs) | Backfilling large windows and checking you got all of them |
 | [`pnl.rs`](examples/pnl.rs) | Position and P&L updates |
 | [`error_handling.rs`](examples/error_handling.rs) | Every error the crate can hand you, in one file |
 | [`reconnect.rs`](examples/reconnect.rs) | A reconnection loop that restores subscriptions |

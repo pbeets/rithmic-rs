@@ -180,6 +180,8 @@ pub(crate) enum ReplayQuery {
 ///
 /// - [`load_historical_ticks.rs`](https://github.com/pbeets/rithmic-rs/blob/main/examples/load_historical_ticks.rs)
 ///   — load a window of trades
+/// - [`backfill.rs`](https://github.com/pbeets/rithmic-rs/blob/main/examples/backfill.rs)
+///   — backfill large windows and check you got all of them
 /// - [`load_historical_bars.rs`](https://github.com/pbeets/rithmic-rs/blob/main/examples/load_historical_bars.rs)
 ///   — load five-minute bars
 /// - [`reconnect.rs`](https://github.com/pbeets/rithmic-rs/blob/main/examples/reconnect.rs)
