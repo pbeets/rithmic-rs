@@ -906,6 +906,8 @@ impl RithmicHistoryPlantHandle {
     /// # }
     /// ```
     ///
+    /// See also [`load_historical_bars.rs`](https://github.com/pbeets/rithmic-rs/blob/main/examples/load_historical_bars.rs).
+    ///
     /// # Returns
     /// One response per bar, followed by an end marker carrying no data.
     ///

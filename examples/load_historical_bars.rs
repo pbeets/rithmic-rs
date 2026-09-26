@@ -1,5 +1,9 @@
 //! Example: Load historical time bars
 //!
+//! Loads the same window twice: with the positional `load_time_bars_all`, and
+//! with `load_time_bar_replay` and a `TimeBarReplayRequest` you build, which
+//! reaches fields such as `user_max_count`.
+//!
 //! Run with: cargo run --example load_historical_bars
 //!
 //! Optional env vars: SYMBOL, EXCHANGE, START_TIME (unix seconds)
@@ -8,8 +12,8 @@ use std::{env, time::SystemTime};
 use tracing::info;
 
 use rithmic_rs::{
-    ConnectStrategy, RithmicConfig, RithmicEnv, RithmicHistoryPlant, TimeBarType,
-    rti::messages::RithmicMessage,
+    ConnectStrategy, RithmicConfig, RithmicEnv, RithmicHistoryPlant, TimeBarReplayRequest,
+    TimeBarType, rti::messages::RithmicMessage,
 };
 
 fn default_start_time() -> i32 {
@@ -52,8 +56,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // leaves the cap in place.
     let bars = handle
         .load_time_bars_all(
-            symbol,
-            exchange,
+            symbol.clone(),
+            exchange.clone(),
             TimeBarType::MinuteBar,
             5,
             start_time,
@@ -64,6 +68,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("Received {} bars", bars.len());
 
     for r in bars.iter().take(5) {
+        if let RithmicMessage::ResponseTimeBarReplay(bar) = &r.message {
+            info!("Bar: {:?}", bar);
+        }
+    }
+
+    // The struct form sends the request exactly as built. Unlike the `_all`
+    // loaders it does not set `resume_bars` for you, so set it to lift the
+    // 10,000 record cap. `user_max_count` caps the reply at your own limit.
+    let request = TimeBarReplayRequest::new()
+        .symbol(symbol)
+        .exchange(exchange)
+        .bar_type(TimeBarType::MinuteBar)
+        .bar_type_period(1)
+        .start_time_sec(start_time)
+        .end_time_sec(end_time)
+        .resume_bars(true)
+        .user_max_count(100);
+
+    info!("Loading the first 100 one-minute bars of the same window");
+
+    let minute_bars = handle.load_time_bar_replay(request).await?;
+
+    // The last response is the replay's end marker, not a bar.
+    info!("Received {} bars", minute_bars.len().saturating_sub(1));
+
+    for r in minute_bars.iter().take(5) {
         if let RithmicMessage::ResponseTimeBarReplay(bar) = &r.message {
             info!("Bar: {:?}", bar);
         }
