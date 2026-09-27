@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use tracing::{debug, error, info, warn};
+use tracing::{error, info, warn};
 
 use tokio::{
     sync::{broadcast, mpsc, oneshot},
@@ -15,14 +15,14 @@ use crate::{
             RithmicModifyOrderReferenceData, RithmicOcoOrder, RithmicOrder,
         },
         receiver_api::RithmicResponse,
-        sender_api::{LoginScope, RithmicSenderApi},
+        sender_api::LoginScope,
     },
     config::{LoginConfig, RithmicAccount, RithmicConfig},
     error::RithmicError,
     plants::{
         await_all_responses, await_first_response,
-        core::{PlantActor, PlantCore, SelectResult, WsSink},
-        session::PlantKind,
+        core::Plant,
+        kind::{Cx, PlantCommand, PlantKind},
         subscription::SubscriptionFilter,
         tag::answer_caller,
         trade_routes::TradeRouteCache,
@@ -353,7 +353,14 @@ impl RithmicOrderPlant {
             .subscription_capacity
             .unwrap_or(DEFAULT_SUBSCRIPTION_CAPACITY);
         let (sub_tx, _sub_rx) = broadcast::channel(capacity);
-        let mut order_plant = OrderPlant::new(req_rx, sub_tx.clone(), config, strategy).await?;
+        let mut order_plant = Plant::new(
+            OrderPlant::default(),
+            req_rx,
+            sub_tx.clone(),
+            config,
+            strategy,
+        )
+        .await?;
 
         let connection_handle = tokio::spawn(async move {
             order_plant.run().await;
@@ -411,10 +418,10 @@ enum OrderTag {
     TradeRoutes,
 }
 
-/// What the order plant loads after login and keeps for the connection. Only
-/// the actor writes it.
+/// The order plant's commands, and what it loads after login and keeps for
+/// the connection. Only the actor writes it.
 #[derive(Debug, Default)]
-struct OrderState {
+struct OrderPlant {
     /// Scopes the requests that carry a user type. Set by the first login
     /// info that has one.
     login_scope: Option<LoginScope>,
@@ -426,7 +433,7 @@ struct OrderState {
     loading_trade_routes: bool,
 }
 
-impl OrderState {
+impl OrderPlant {
     /// Scope later requests with the login info in `reply`, unless a scope is
     /// already set. A rejected response has no usable identity in it.
     fn record_login_info(&mut self, reply: &Reply) {
@@ -465,32 +472,399 @@ impl OrderState {
     }
 }
 
-impl PlantKind for OrderState {
+impl PlantKind for OrderPlant {
+    type Command = OrderPlantCommand;
     type Tag = OrderTag;
+
+    const SOURCE: &'static str = "order_plant";
+    const INFRA: SysInfraType = SysInfraType::OrderPlant;
+
+    fn shared(command: OrderPlantCommand) -> Result<PlantCommand, OrderPlantCommand> {
+        match command {
+            OrderPlantCommand::Close => Ok(PlantCommand::Close),
+            OrderPlantCommand::Abort => Ok(PlantCommand::Abort),
+            OrderPlantCommand::GetSystemInfo { response_sender } => {
+                Ok(PlantCommand::GetSystemInfo { response_sender })
+            }
+            OrderPlantCommand::Login {
+                config,
+                response_sender,
+            } => Ok(PlantCommand::Login {
+                config,
+                response_sender,
+            }),
+            OrderPlantCommand::Logout { response_sender } => {
+                Ok(PlantCommand::Logout { response_sender })
+            }
+            command => Err(command),
+        }
+    }
 
     /// Load the login info and the routes orders are sent on. The routes are
     /// the snapshot orders route from for the life of the connection. The
     /// request subscribes, so updates reach the subscription channel, but only
     /// `record_trade_route` applies one.
-    fn after_login(&mut self, api: &mut RithmicSenderApi) -> Vec<(Vec<u8>, String, OrderTag)> {
-        let (login_info_buf, login_info_id) = api.request_login_info();
-        let (trade_routes_buf, trade_routes_id) = api.request_trade_routes(true);
-
+    fn after_login(&mut self, cx: &mut Cx<'_, OrderTag>) {
         self.loading_login_info = true;
         self.loading_trade_routes = true;
 
-        vec![
-            (
-                login_info_buf,
-                login_info_id,
-                OrderTag::LoginInfo { caller: None },
-            ),
-            (trade_routes_buf, trade_routes_id, OrderTag::TradeRoutes),
-        ]
+        cx.send(
+            |api| api.request_login_info(),
+            OrderTag::LoginInfo { caller: None },
+        );
+        cx.send(|api| api.request_trade_routes(true), OrderTag::TradeRoutes);
     }
 
     fn is_ready(&self) -> bool {
         !self.loading_login_info && !self.loading_trade_routes
+    }
+
+    fn on_command(&mut self, command: OrderPlantCommand, cx: &mut Cx<'_, OrderTag>) {
+        match command {
+            OrderPlantCommand::AccountList { response_sender } => {
+                // Warn here too, not just at login: this is where the wider list
+                // comes back.
+                if self.login_scope.is_none() {
+                    warn!("order_plant: no login info retained, listing accounts unscoped");
+                }
+
+                cx.send_for(
+                    |api| api.request_account_list(self.login_scope.as_ref()),
+                    response_sender,
+                );
+            }
+            OrderPlantCommand::SubscribeOrderUpdates {
+                account,
+                response_sender,
+            } => cx.send_for(
+                |api| api.request_subscribe_for_order_updates(&account),
+                response_sender,
+            ),
+            OrderPlantCommand::SubscribeBracketUpdates {
+                account,
+                response_sender,
+            } => cx.send_for(
+                |api| api.request_subscribe_to_bracket_updates(&account),
+                response_sender,
+            ),
+            OrderPlantCommand::PlaceBracketOrder {
+                bracket_order,
+                account,
+                response_sender,
+            } => {
+                let trade_route = match self.trade_routes.resolve(
+                    bracket_order.trade_route.as_deref(),
+                    &bracket_order.exchange,
+                ) {
+                    Ok(trade_route) => trade_route,
+                    Err(err) => {
+                        let _ = response_sender.send(Err(err));
+                        return;
+                    }
+                };
+
+                cx.send_for(
+                    |api| {
+                        api.request_bracket_order(
+                            *bracket_order,
+                            &account,
+                            self.login_scope.as_ref(),
+                            &trade_route,
+                        )
+                    },
+                    response_sender,
+                );
+            }
+            OrderPlantCommand::ModifyOrder {
+                order,
+                account,
+                response_sender,
+            } => cx.send_for(
+                |api| api.request_modify_order(&order, &account),
+                response_sender,
+            ),
+            OrderPlantCommand::CancelOrder {
+                order,
+                account,
+                response_sender,
+            } => cx.send_for(
+                |api| api.request_cancel_order(&order, &account),
+                response_sender,
+            ),
+            OrderPlantCommand::ModifyStop {
+                adjustment,
+                account,
+                response_sender,
+            } => cx.send_for(
+                |api| api.request_update_stop_bracket_level(&adjustment, &account),
+                response_sender,
+            ),
+            OrderPlantCommand::ModifyTarget {
+                adjustment,
+                account,
+                response_sender,
+            } => cx.send_for(
+                |api| api.request_update_target_bracket_level(&adjustment, &account),
+                response_sender,
+            ),
+            OrderPlantCommand::ShowOrders {
+                account,
+                response_sender,
+            } => cx.send_for(|api| api.request_show_orders(&account), response_sender),
+            OrderPlantCommand::CancelAllOrders {
+                command,
+                account,
+                response_sender,
+            } => cx.send_for(
+                |api| api.request_cancel_all_orders(&command, &account, self.login_scope.as_ref()),
+                response_sender,
+            ),
+            OrderPlantCommand::GetAccountRmsInfo {
+                account,
+                response_sender,
+            } => cx.send_for(
+                |api| api.request_account_rms_info(&account, self.login_scope.as_ref()),
+                response_sender,
+            ),
+            OrderPlantCommand::GetProductRmsInfo {
+                account,
+                response_sender,
+            } => cx.send_for(
+                |api| api.request_product_rms_info(&account),
+                response_sender,
+            ),
+            OrderPlantCommand::GetTradeRoutes {
+                subscribe_for_updates,
+                response_sender,
+            } => cx.send_for(
+                |api| api.request_trade_routes(subscribe_for_updates),
+                response_sender,
+            ),
+            OrderPlantCommand::RecordTradeRouteUpdate(update) => {
+                self.trade_routes.record_update(&update);
+            }
+            OrderPlantCommand::TradeRouteFor {
+                exchange,
+                response_sender,
+            } => {
+                let _ = response_sender.send(self.trade_routes.resolve(None, &exchange));
+            }
+            OrderPlantCommand::ShowOrderHistoryDates { response_sender } => cx.send_for(
+                |api| api.request_show_order_history_dates(),
+                response_sender,
+            ),
+            OrderPlantCommand::ShowOrderHistorySummary {
+                date,
+                account,
+                response_sender,
+            } => cx.send_for(
+                |api| api.request_show_order_history_summary(&date, &account),
+                response_sender,
+            ),
+            OrderPlantCommand::ShowOrderHistoryDetail {
+                basket_id,
+                date,
+                account,
+                response_sender,
+            } => cx.send_for(
+                |api| api.request_show_order_history_detail(&basket_id, &date, &account),
+                response_sender,
+            ),
+            OrderPlantCommand::ShowOrderHistory {
+                basket_id,
+                account,
+                response_sender,
+            } => cx.send_for(
+                |api| api.request_show_order_history(basket_id.as_deref(), &account),
+                response_sender,
+            ),
+            OrderPlantCommand::PlaceOrder {
+                order,
+                account,
+                response_sender,
+            } => {
+                let trade_route = match self
+                    .trade_routes
+                    .resolve(order.trade_route.as_deref(), &order.exchange)
+                {
+                    Ok(trade_route) => trade_route,
+                    Err(err) => {
+                        let _ = response_sender.send(Err(err));
+                        return;
+                    }
+                };
+
+                cx.send_for(
+                    |api| api.request_order(&order, &account, &trade_route),
+                    response_sender,
+                );
+            }
+            OrderPlantCommand::PlaceOcoOrder {
+                order,
+                account,
+                response_sender,
+            } => {
+                let timing = order.cancel_timing();
+
+                let legs = match self.trade_routes.resolve_legs(order.legs) {
+                    Ok(legs) => legs,
+                    Err(err) => {
+                        let _ = response_sender.send(Err(err));
+                        return;
+                    }
+                };
+
+                cx.try_send_for(
+                    |api| api.request_oco_order(legs, timing, &account),
+                    response_sender,
+                );
+            }
+            OrderPlantCommand::ShowBrackets {
+                account,
+                response_sender,
+            } => cx.send_for(|api| api.request_show_brackets(&account), response_sender),
+            OrderPlantCommand::ShowBracketStops {
+                account,
+                response_sender,
+            } => cx.send_for(
+                |api| api.request_show_bracket_stops(&account),
+                response_sender,
+            ),
+            OrderPlantCommand::ExitPosition {
+                command,
+                account,
+                response_sender,
+            } => cx.send_for(
+                |api| api.request_exit_position(&command, &account),
+                response_sender,
+            ),
+            OrderPlantCommand::LinkOrders {
+                command,
+                account,
+                response_sender,
+            } => cx.send_for(
+                |api| api.request_link_orders(command, &account),
+                response_sender,
+            ),
+            OrderPlantCommand::GetEasyToBorrowList {
+                request_type,
+                response_sender,
+            } => cx.send_for(
+                |api| api.request_easy_to_borrow_list(request_type),
+                response_sender,
+            ),
+            OrderPlantCommand::ModifyOrderReferenceData {
+                command,
+                account,
+                response_sender,
+            } => cx.send_for(
+                |api| api.request_modify_order_reference_data(&command, &account),
+                response_sender,
+            ),
+            OrderPlantCommand::GetOrderSessionConfig {
+                should_defer_request,
+                response_sender,
+            } => cx.send_for(
+                |api| api.request_order_session_config(should_defer_request),
+                response_sender,
+            ),
+            OrderPlantCommand::ReplayExecutions {
+                start_index_sec,
+                finish_index_sec,
+                account,
+                response_sender,
+            } => cx.send_for(
+                |api| api.request_replay_executions(start_index_sec, finish_index_sec, &account),
+                response_sender,
+            ),
+            OrderPlantCommand::GetUserInfo {
+                user,
+                account,
+                response_sender,
+            } => cx.send_for(
+                |api| api.request_get_user_info(user.as_deref(), &account),
+                response_sender,
+            ),
+            OrderPlantCommand::ShowFillHistory {
+                range,
+                max_record_count,
+                account,
+                response_sender,
+            } => cx.send_for(
+                |api| api.request_show_fill_history(range, max_record_count, &account),
+                response_sender,
+            ),
+            OrderPlantCommand::SubscribeAccountRmsUpdates {
+                subscribe,
+                update_bits,
+                account,
+                response_sender,
+            } => cx.send_for(
+                |api| api.request_account_rms_updates(subscribe, update_bits, &account),
+                response_sender,
+            ),
+            OrderPlantCommand::GetLoginInfo { response_sender } => cx.send(
+                |api| api.request_login_info(),
+                OrderTag::LoginInfo {
+                    caller: Some(response_sender),
+                },
+            ),
+            OrderPlantCommand::ListUnacceptedAgreements { response_sender } => cx.send_for(
+                |api| api.request_list_unaccepted_agreements(),
+                response_sender,
+            ),
+            OrderPlantCommand::ListAcceptedAgreements { response_sender } => cx.send_for(
+                |api| api.request_list_accepted_agreements(),
+                response_sender,
+            ),
+            OrderPlantCommand::AcceptAgreement {
+                agreement_id,
+                market_data_usage_capacity,
+                response_sender,
+            } => cx.send_for(
+                |api| {
+                    api.request_accept_agreement(
+                        &agreement_id,
+                        market_data_usage_capacity.as_deref(),
+                    )
+                },
+                response_sender,
+            ),
+            OrderPlantCommand::ShowAgreement {
+                agreement_id,
+                response_sender,
+            } => cx.send_for(
+                |api| api.request_show_agreement(&agreement_id),
+                response_sender,
+            ),
+            OrderPlantCommand::SetRithmicMrktDataSelfCertStatus {
+                agreement_id,
+                market_data_usage_capacity,
+                response_sender,
+            } => cx.send_for(
+                |api| {
+                    api.request_set_rithmic_mrkt_data_self_cert_status(
+                        &agreement_id,
+                        &market_data_usage_capacity,
+                    )
+                },
+                response_sender,
+            ),
+            OrderPlantCommand::ListExchangePermissions {
+                user,
+                response_sender,
+            } => cx.send_for(
+                |api| api.request_list_exchange_permissions(&user),
+                response_sender,
+            ),
+            OrderPlantCommand::Close
+            | OrderPlantCommand::Abort
+            | OrderPlantCommand::GetSystemInfo { .. }
+            | OrderPlantCommand::Login { .. }
+            | OrderPlantCommand::Logout { .. } => {
+                unreachable!("the plant handles the commands every plant shares")
+            }
+        }
     }
 
     /// A failure here is only logged: the login already succeeded, so it
@@ -546,646 +920,6 @@ impl PlantKind for OrderState {
                         err
                     ),
                 }
-            }
-        }
-    }
-}
-
-#[derive(Debug)]
-struct OrderPlant {
-    core: PlantCore<WsSink, OrderState>,
-    request_receiver: mpsc::Receiver<OrderPlantCommand>,
-}
-
-impl OrderPlant {
-    async fn new(
-        request_receiver: mpsc::Receiver<OrderPlantCommand>,
-        subscription_sender: broadcast::Sender<RithmicResponse>,
-        config: &RithmicConfig,
-        strategy: ConnectStrategy,
-    ) -> Result<OrderPlant, RithmicError> {
-        let core = PlantCore::new(
-            subscription_sender,
-            config,
-            strategy,
-            "order_plant",
-            OrderState::default(),
-        )
-        .await?;
-
-        Ok(OrderPlant {
-            core,
-            request_receiver,
-        })
-    }
-}
-
-impl PlantActor for OrderPlant {
-    type Command = OrderPlantCommand;
-
-    async fn run(&mut self) {
-        loop {
-            let result = self.core.next_event(&mut self.request_receiver).await;
-
-            let stop = match result {
-                SelectResult::HeartbeatFired => self.core.send_heartbeat().await,
-                SelectResult::PingFired => self.core.send_ping().await,
-                SelectResult::PingTimeout => self.core.handle_ping_timeout(),
-                SelectResult::Command(cmd) => {
-                    if matches!(cmd, OrderPlantCommand::Abort) {
-                        self.core.handle_abort()
-                    } else {
-                        self.handle_command(cmd).await;
-                        false
-                    }
-                }
-                SelectResult::RithmicMessage(msg) => self.core.handle_rithmic_message(msg).await,
-                SelectResult::StreamClosed => self.core.handle_stream_closed(),
-            };
-
-            if stop {
-                break;
-            }
-        }
-    }
-
-    async fn handle_command(&mut self, command: OrderPlantCommand) {
-        // Disconnect race guard — see `TickerPlant::handle_command`.
-        if self.core.close_requested()
-            && !matches!(command, OrderPlantCommand::Close | OrderPlantCommand::Abort)
-        {
-            debug!("order_plant: dropping a command queued after close was requested");
-
-            return;
-        }
-
-        match command {
-            OrderPlantCommand::Close => {
-                self.core.handle_close().await;
-            }
-            OrderPlantCommand::GetSystemInfo { response_sender } => {
-                self.core.handle_get_system_info(response_sender).await;
-            }
-            OrderPlantCommand::Login {
-                config,
-                response_sender,
-            } => {
-                self.core
-                    .handle_login(config, SysInfraType::OrderPlant, response_sender)
-                    .await;
-            }
-            OrderPlantCommand::Logout { response_sender } => {
-                self.core.handle_logout(response_sender).await;
-            }
-            OrderPlantCommand::AccountList { response_sender } => {
-                // Warn here too, not just at login: this is where the wider list
-                // comes back.
-                if self.core.kind.login_scope.is_none() {
-                    warn!("order_plant: no login info retained, listing accounts unscoped");
-                }
-
-                let (req_buf, id) = self
-                    .core
-                    .rithmic_sender_api
-                    .request_account_list(self.core.kind.login_scope.as_ref());
-
-                self.core
-                    .register_and_send(req_buf, id, response_sender)
-                    .await;
-            }
-            OrderPlantCommand::SubscribeOrderUpdates {
-                account,
-                response_sender,
-            } => {
-                let (req_buf, id) = self
-                    .core
-                    .rithmic_sender_api
-                    .request_subscribe_for_order_updates(&account);
-
-                self.core
-                    .register_and_send(req_buf, id, response_sender)
-                    .await;
-            }
-            OrderPlantCommand::SubscribeBracketUpdates {
-                account,
-                response_sender,
-            } => {
-                let (req_buf, id) = self
-                    .core
-                    .rithmic_sender_api
-                    .request_subscribe_to_bracket_updates(&account);
-
-                self.core
-                    .register_and_send(req_buf, id, response_sender)
-                    .await;
-            }
-            OrderPlantCommand::PlaceBracketOrder {
-                bracket_order,
-                account,
-                response_sender,
-            } => {
-                let trade_route = match self.core.kind.trade_routes.resolve(
-                    bracket_order.trade_route.as_deref(),
-                    &bracket_order.exchange,
-                ) {
-                    Ok(trade_route) => trade_route,
-                    Err(err) => {
-                        let _ = response_sender.send(Err(err));
-                        return;
-                    }
-                };
-
-                let (req_buf, id) = self.core.rithmic_sender_api.request_bracket_order(
-                    *bracket_order,
-                    &account,
-                    self.core.kind.login_scope.as_ref(),
-                    &trade_route,
-                );
-
-                self.core
-                    .register_and_send(req_buf, id, response_sender)
-                    .await;
-            }
-            OrderPlantCommand::ModifyOrder {
-                order,
-                account,
-                response_sender,
-            } => {
-                let (req_buf, id) = self
-                    .core
-                    .rithmic_sender_api
-                    .request_modify_order(&order, &account);
-
-                self.core
-                    .register_and_send(req_buf, id, response_sender)
-                    .await;
-            }
-            OrderPlantCommand::CancelOrder {
-                order,
-                account,
-                response_sender,
-            } => {
-                let (req_buf, id) = self
-                    .core
-                    .rithmic_sender_api
-                    .request_cancel_order(&order, &account);
-
-                self.core
-                    .register_and_send(req_buf, id, response_sender)
-                    .await;
-            }
-            OrderPlantCommand::ModifyStop {
-                adjustment,
-                account,
-                response_sender,
-            } => {
-                let (req_buf, id) = self
-                    .core
-                    .rithmic_sender_api
-                    .request_update_stop_bracket_level(&adjustment, &account);
-
-                self.core
-                    .register_and_send(req_buf, id, response_sender)
-                    .await;
-            }
-            OrderPlantCommand::ModifyTarget {
-                adjustment,
-                account,
-                response_sender,
-            } => {
-                let (req_buf, id) = self
-                    .core
-                    .rithmic_sender_api
-                    .request_update_target_bracket_level(&adjustment, &account);
-
-                self.core
-                    .register_and_send(req_buf, id, response_sender)
-                    .await;
-            }
-            OrderPlantCommand::ShowOrders {
-                account,
-                response_sender,
-            } => {
-                let (req_buf, id) = self.core.rithmic_sender_api.request_show_orders(&account);
-
-                self.core
-                    .register_and_send(req_buf, id, response_sender)
-                    .await;
-            }
-            OrderPlantCommand::CancelAllOrders {
-                command,
-                account,
-                response_sender,
-            } => {
-                let (req_buf, id) = self.core.rithmic_sender_api.request_cancel_all_orders(
-                    &command,
-                    &account,
-                    self.core.kind.login_scope.as_ref(),
-                );
-
-                self.core
-                    .register_and_send(req_buf, id, response_sender)
-                    .await;
-            }
-            OrderPlantCommand::GetAccountRmsInfo {
-                account,
-                response_sender,
-            } => {
-                let (req_buf, id) = self
-                    .core
-                    .rithmic_sender_api
-                    .request_account_rms_info(&account, self.core.kind.login_scope.as_ref());
-
-                self.core
-                    .register_and_send(req_buf, id, response_sender)
-                    .await;
-            }
-            OrderPlantCommand::GetProductRmsInfo {
-                account,
-                response_sender,
-            } => {
-                let (req_buf, id) = self
-                    .core
-                    .rithmic_sender_api
-                    .request_product_rms_info(&account);
-
-                self.core
-                    .register_and_send(req_buf, id, response_sender)
-                    .await;
-            }
-            OrderPlantCommand::GetTradeRoutes {
-                subscribe_for_updates,
-                response_sender,
-            } => {
-                let (req_buf, id) = self
-                    .core
-                    .rithmic_sender_api
-                    .request_trade_routes(subscribe_for_updates);
-
-                self.core
-                    .register_and_send(req_buf, id, response_sender)
-                    .await;
-            }
-            OrderPlantCommand::RecordTradeRouteUpdate(update) => {
-                self.core.kind.trade_routes.record_update(&update);
-            }
-            OrderPlantCommand::TradeRouteFor {
-                exchange,
-                response_sender,
-            } => {
-                let _ = response_sender.send(self.core.kind.trade_routes.resolve(None, &exchange));
-            }
-            OrderPlantCommand::ShowOrderHistoryDates { response_sender } => {
-                let (req_buf, id) = self
-                    .core
-                    .rithmic_sender_api
-                    .request_show_order_history_dates();
-
-                self.core
-                    .register_and_send(req_buf, id, response_sender)
-                    .await;
-            }
-            OrderPlantCommand::ShowOrderHistorySummary {
-                date,
-                account,
-                response_sender,
-            } => {
-                let (req_buf, id) = self
-                    .core
-                    .rithmic_sender_api
-                    .request_show_order_history_summary(&date, &account);
-
-                self.core
-                    .register_and_send(req_buf, id, response_sender)
-                    .await;
-            }
-            OrderPlantCommand::ShowOrderHistoryDetail {
-                basket_id,
-                date,
-                account,
-                response_sender,
-            } => {
-                let (req_buf, id) = self
-                    .core
-                    .rithmic_sender_api
-                    .request_show_order_history_detail(&basket_id, &date, &account);
-
-                self.core
-                    .register_and_send(req_buf, id, response_sender)
-                    .await;
-            }
-            OrderPlantCommand::ShowOrderHistory {
-                basket_id,
-                account,
-                response_sender,
-            } => {
-                let (req_buf, id) = self
-                    .core
-                    .rithmic_sender_api
-                    .request_show_order_history(basket_id.as_deref(), &account);
-
-                self.core
-                    .register_and_send(req_buf, id, response_sender)
-                    .await;
-            }
-            OrderPlantCommand::PlaceOrder {
-                order,
-                account,
-                response_sender,
-            } => {
-                let trade_route = match self
-                    .core
-                    .kind
-                    .trade_routes
-                    .resolve(order.trade_route.as_deref(), &order.exchange)
-                {
-                    Ok(trade_route) => trade_route,
-                    Err(err) => {
-                        let _ = response_sender.send(Err(err));
-                        return;
-                    }
-                };
-
-                let (req_buf, id) =
-                    self.core
-                        .rithmic_sender_api
-                        .request_order(&order, &account, &trade_route);
-
-                self.core
-                    .register_and_send(req_buf, id, response_sender)
-                    .await;
-            }
-            OrderPlantCommand::PlaceOcoOrder {
-                order,
-                account,
-                response_sender,
-            } => {
-                let timing = order.cancel_timing();
-
-                let legs = match self.core.kind.trade_routes.resolve_legs(order.legs) {
-                    Ok(legs) => legs,
-                    Err(err) => {
-                        let _ = response_sender.send(Err(err));
-                        return;
-                    }
-                };
-
-                let (req_buf, id) = match self
-                    .core
-                    .rithmic_sender_api
-                    .request_oco_order(legs, timing, &account)
-                {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let _ = response_sender.send(Err(err));
-                        return;
-                    }
-                };
-
-                self.core
-                    .register_and_send(req_buf, id, response_sender)
-                    .await;
-            }
-            OrderPlantCommand::ShowBrackets {
-                account,
-                response_sender,
-            } => {
-                let (req_buf, id) = self.core.rithmic_sender_api.request_show_brackets(&account);
-
-                self.core
-                    .register_and_send(req_buf, id, response_sender)
-                    .await;
-            }
-            OrderPlantCommand::ShowBracketStops {
-                account,
-                response_sender,
-            } => {
-                let (req_buf, id) = self
-                    .core
-                    .rithmic_sender_api
-                    .request_show_bracket_stops(&account);
-
-                self.core
-                    .register_and_send(req_buf, id, response_sender)
-                    .await;
-            }
-            OrderPlantCommand::ExitPosition {
-                command,
-                account,
-                response_sender,
-            } => {
-                let (req_buf, id) = self
-                    .core
-                    .rithmic_sender_api
-                    .request_exit_position(&command, &account);
-
-                self.core
-                    .register_and_send(req_buf, id, response_sender)
-                    .await;
-            }
-            OrderPlantCommand::LinkOrders {
-                command,
-                account,
-                response_sender,
-            } => {
-                let (req_buf, id) = self
-                    .core
-                    .rithmic_sender_api
-                    .request_link_orders(command, &account);
-
-                self.core
-                    .register_and_send(req_buf, id, response_sender)
-                    .await;
-            }
-            OrderPlantCommand::GetEasyToBorrowList {
-                request_type,
-                response_sender,
-            } => {
-                let (req_buf, id) = self
-                    .core
-                    .rithmic_sender_api
-                    .request_easy_to_borrow_list(request_type);
-
-                self.core
-                    .register_and_send(req_buf, id, response_sender)
-                    .await;
-            }
-            OrderPlantCommand::ModifyOrderReferenceData {
-                command,
-                account,
-                response_sender,
-            } => {
-                let (req_buf, id) = self
-                    .core
-                    .rithmic_sender_api
-                    .request_modify_order_reference_data(&command, &account);
-
-                self.core
-                    .register_and_send(req_buf, id, response_sender)
-                    .await;
-            }
-            OrderPlantCommand::GetOrderSessionConfig {
-                should_defer_request,
-                response_sender,
-            } => {
-                let (req_buf, id) = self
-                    .core
-                    .rithmic_sender_api
-                    .request_order_session_config(should_defer_request);
-
-                self.core
-                    .register_and_send(req_buf, id, response_sender)
-                    .await;
-            }
-            OrderPlantCommand::ReplayExecutions {
-                start_index_sec,
-                finish_index_sec,
-                account,
-                response_sender,
-            } => {
-                let (req_buf, id) = self.core.rithmic_sender_api.request_replay_executions(
-                    start_index_sec,
-                    finish_index_sec,
-                    &account,
-                );
-
-                self.core
-                    .register_and_send(req_buf, id, response_sender)
-                    .await;
-            }
-            OrderPlantCommand::GetUserInfo {
-                user,
-                account,
-                response_sender,
-            } => {
-                let (req_buf, id) = self
-                    .core
-                    .rithmic_sender_api
-                    .request_get_user_info(user.as_deref(), &account);
-
-                self.core
-                    .register_and_send(req_buf, id, response_sender)
-                    .await;
-            }
-            OrderPlantCommand::ShowFillHistory {
-                range,
-                max_record_count,
-                account,
-                response_sender,
-            } => {
-                let (req_buf, id) = self.core.rithmic_sender_api.request_show_fill_history(
-                    range,
-                    max_record_count,
-                    &account,
-                );
-
-                self.core
-                    .register_and_send(req_buf, id, response_sender)
-                    .await;
-            }
-            OrderPlantCommand::SubscribeAccountRmsUpdates {
-                subscribe,
-                update_bits,
-                account,
-                response_sender,
-            } => {
-                let (req_buf, id) = self.core.rithmic_sender_api.request_account_rms_updates(
-                    subscribe,
-                    update_bits,
-                    &account,
-                );
-
-                self.core
-                    .register_and_send(req_buf, id, response_sender)
-                    .await;
-            }
-            OrderPlantCommand::GetLoginInfo { response_sender } => {
-                let (req_buf, id) = self.core.rithmic_sender_api.request_login_info();
-                let tag = OrderTag::LoginInfo {
-                    caller: Some(response_sender),
-                };
-
-                self.core.register_kind_and_send(req_buf, id, tag).await;
-            }
-            OrderPlantCommand::ListUnacceptedAgreements { response_sender } => {
-                let (req_buf, id) = self
-                    .core
-                    .rithmic_sender_api
-                    .request_list_unaccepted_agreements();
-
-                self.core
-                    .register_and_send(req_buf, id, response_sender)
-                    .await;
-            }
-            OrderPlantCommand::ListAcceptedAgreements { response_sender } => {
-                let (req_buf, id) = self
-                    .core
-                    .rithmic_sender_api
-                    .request_list_accepted_agreements();
-
-                self.core
-                    .register_and_send(req_buf, id, response_sender)
-                    .await;
-            }
-            OrderPlantCommand::AcceptAgreement {
-                agreement_id,
-                market_data_usage_capacity,
-                response_sender,
-            } => {
-                let (req_buf, id) = self
-                    .core
-                    .rithmic_sender_api
-                    .request_accept_agreement(&agreement_id, market_data_usage_capacity.as_deref());
-
-                self.core
-                    .register_and_send(req_buf, id, response_sender)
-                    .await;
-            }
-            OrderPlantCommand::ShowAgreement {
-                agreement_id,
-                response_sender,
-            } => {
-                let (req_buf, id) = self
-                    .core
-                    .rithmic_sender_api
-                    .request_show_agreement(&agreement_id);
-
-                self.core
-                    .register_and_send(req_buf, id, response_sender)
-                    .await;
-            }
-            OrderPlantCommand::SetRithmicMrktDataSelfCertStatus {
-                agreement_id,
-                market_data_usage_capacity,
-                response_sender,
-            } => {
-                let (req_buf, id) = self
-                    .core
-                    .rithmic_sender_api
-                    .request_set_rithmic_mrkt_data_self_cert_status(
-                        &agreement_id,
-                        &market_data_usage_capacity,
-                    );
-
-                self.core
-                    .register_and_send(req_buf, id, response_sender)
-                    .await;
-            }
-            OrderPlantCommand::ListExchangePermissions {
-                user,
-                response_sender,
-            } => {
-                let (req_buf, id) = self
-                    .core
-                    .rithmic_sender_api
-                    .request_list_exchange_permissions(&user);
-
-                self.core
-                    .register_and_send(req_buf, id, response_sender)
-                    .await;
-            }
-            OrderPlantCommand::Abort => {
-                unreachable!("Abort is handled in run() before handle_command");
             }
         }
     }

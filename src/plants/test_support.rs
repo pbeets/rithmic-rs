@@ -18,10 +18,7 @@ use crate::{
     config::{LoginConfig, RithmicAccount, RithmicConfig, RithmicEnv},
     error::RithmicError,
     ping_manager::PingManager,
-    plants::{
-        core::{PlantActor, PlantCore, WsSink},
-        session::{PlantKind, Session},
-    },
+    plants::{core::Plant, kind::PlantKind, session::Session},
     request_handler::RithmicRequestHandler,
     rti::{ResponseLogin, messages::RithmicMessage},
     ws::{PING_TIMEOUT_SECS, get_heartbeat_interval, get_ping_interval},
@@ -59,14 +56,14 @@ pub(crate) fn logged_in_session() -> Session {
     }
 }
 
-/// A logged-in `PlantCore` writing to the server half of a live loopback
-/// connection, returned with the client half so a test can watch the wire.
+/// A logged-in plant actor writing to the server half of a live loopback
+/// connection, returned with its command sender and the client half so a test
+/// can watch the wire.
 ///
-/// A test that needs the core as `connect` leaves it sets its `session` to
+/// A test that needs the plant as `connect` leaves it sets its `session` to
 /// [`Session::Connected`].
-pub(crate) async fn core_with_wire<K: PlantKind + Default>(
-    source: &str,
-) -> (PlantCore<WsSink, K>, TcpStream) {
+pub(crate) async fn plant_with_wire<K: PlantKind + Default>()
+-> (Plant<K>, mpsc::Sender<K::Command>, TcpStream) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let (client, server) =
@@ -88,21 +85,23 @@ pub(crate) async fn core_with_wire<K: PlantKind + Default>(
         .build()
         .unwrap();
 
+    let (command_sender, request_receiver) = mpsc::channel(4);
     let (subscription_sender, _sub_rx) = broadcast::channel(16);
     let rithmic_sender_api = RithmicSenderApi::new(&config);
 
     let request_handler = RithmicRequestHandler::new();
 
-    let core = PlantCore {
+    let plant = Plant {
         config,
         interval: get_heartbeat_interval(None),
         kind: K::default(),
         ping_interval: get_ping_interval(),
         ping_manager: PingManager::new(PING_TIMEOUT_SECS),
         request_handler,
+        request_receiver,
         rithmic_reader,
         rithmic_receiver_api: RithmicReceiverApi {
-            source: source.to_string(),
+            source: K::SOURCE.to_string(),
         },
         rithmic_sender,
         rithmic_sender_api,
@@ -110,27 +109,15 @@ pub(crate) async fn core_with_wire<K: PlantKind + Default>(
         subscription_sender,
     };
 
-    (core, client)
-}
-
-/// A plant actor built on `core_with_wire`, returned with its command sender and
-/// the client half of the socket.
-pub(crate) async fn plant_with_wire<P, C, K: PlantKind + Default>(
-    source: &str,
-    build: impl FnOnce(PlantCore<WsSink, K>, mpsc::Receiver<C>) -> P,
-) -> (P, mpsc::Sender<C>, TcpStream) {
-    let (core, client) = core_with_wire(source).await;
-    let (command_sender, request_receiver) = mpsc::channel(4);
-
-    (build(core, request_receiver), command_sender, client)
+    (plant, command_sender, client)
 }
 
 /// Feeds a request to a plant whose close is already requested: it must put no
 /// bytes on the wire, and its caller must be answered `ConnectionClosed`.
-pub(crate) async fn assert_rejected_after_close<P: PlantActor>(
-    plant: &mut P,
+pub(crate) async fn assert_rejected_after_close<K: PlantKind>(
+    plant: &mut Plant<K>,
     client: &mut TcpStream,
-    build: impl FnOnce(Responder) -> P::Command,
+    build: impl FnOnce(Responder) -> K::Command,
 ) {
     let (tx, rx) = oneshot::channel();
     plant.handle_command(build(tx)).await;
@@ -143,9 +130,9 @@ pub(crate) async fn assert_rejected_after_close<P: PlantActor>(
 }
 
 /// `Close` carries no responder and must still reach `handle_close()`.
-pub(crate) async fn assert_close_still_sent<P: PlantActor>(
-    plant: &mut P,
-    close: P::Command,
+pub(crate) async fn assert_close_still_sent<K: PlantKind>(
+    plant: &mut Plant<K>,
+    close: K::Command,
     client: &mut TcpStream,
 ) {
     plant.handle_command(close).await;
@@ -182,10 +169,10 @@ pub(crate) async fn assert_close_follows_failed_logout<C>(
 
 /// Positive control — the same request on an open connection does reach the
 /// wire, so a silent wire above is evidence rather than a blind harness.
-pub(crate) async fn assert_sent_while_open<P: PlantActor>(
-    plant: &mut P,
+pub(crate) async fn assert_sent_while_open<K: PlantKind>(
+    plant: &mut Plant<K>,
     client: &mut TcpStream,
-    build: impl FnOnce(Responder) -> P::Command,
+    build: impl FnOnce(Responder) -> K::Command,
 ) {
     let (tx, _rx) = oneshot::channel();
     plant.handle_command(build(tx)).await;

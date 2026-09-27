@@ -55,12 +55,12 @@ fn leg(tag: &str) -> RithmicOcoOrderLeg {
     }
 }
 
-async fn plant_with_wire() -> (OrderPlant, mpsc::Sender<OrderPlantCommand>, TcpStream) {
-    test_support::plant_with_wire("order_plant", |core, request_receiver| OrderPlant {
-        core,
-        request_receiver,
-    })
-    .await
+async fn plant_with_wire() -> (
+    Plant<OrderPlant>,
+    mpsc::Sender<OrderPlantCommand>,
+    TcpStream,
+) {
+    test_support::plant_with_wire().await
 }
 
 /// Carries an explicit route, so a silent wire below is the close guard rather
@@ -207,7 +207,7 @@ async fn adjust_target_and_stop_forward_the_bracket_level() {
 #[tokio::test]
 async fn place_order_after_close_requested_is_not_sent() {
     let (mut plant, _command_sender, mut client) = plant_with_wire().await;
-    plant.core.session = Session::Closing;
+    plant.session = Session::Closing;
 
     assert_rejected_after_close(&mut plant, &mut client, place_order).await;
 }
@@ -215,7 +215,7 @@ async fn place_order_after_close_requested_is_not_sent() {
 #[tokio::test]
 async fn cancel_order_after_close_requested_is_not_sent() {
     let (mut plant, _command_sender, mut client) = plant_with_wire().await;
-    plant.core.session = Session::Closing;
+    plant.session = Session::Closing;
 
     assert_rejected_after_close(&mut plant, &mut client, cancel_order).await;
 }
@@ -223,7 +223,7 @@ async fn cancel_order_after_close_requested_is_not_sent() {
 #[tokio::test]
 async fn close_still_reaches_the_wire_after_close_requested() {
     let (mut plant, _command_sender, mut client) = plant_with_wire().await;
-    plant.core.session = Session::Closing;
+    plant.session = Session::Closing;
 
     assert_close_still_sent(&mut plant, OrderPlantCommand::Close, &mut client).await;
 }
@@ -233,7 +233,7 @@ async fn close_still_reaches_the_wire_after_close_requested() {
 #[tokio::test]
 async fn place_order_through_the_handle_after_close_requested_reports_connection_closed() {
     let (mut plant, command_sender, mut client) = plant_with_wire().await;
-    plant.core.session = Session::Closing;
+    plant.session = Session::Closing;
 
     let account = test_account();
     let handle = RithmicOrderPlantHandle {
@@ -241,7 +241,7 @@ async fn place_order_through_the_handle_after_close_requested_reports_connection
         sender: command_sender,
         subscription_receiver: SubscriptionFilter::new(
             account,
-            plant.core.subscription_sender.subscribe(),
+            plant.subscription_sender.subscribe(),
         ),
     };
 
@@ -329,9 +329,9 @@ fn trade_route_response(exchange: &str, trade_route: &str) -> RithmicResponse {
 /// returned with the client half of the socket.
 async fn running_plant() -> (RithmicOrderPlant, TcpStream) {
     let (mut plant, sender, client) = plant_with_wire().await;
-    plant.core.session = Session::Connected;
+    plant.session = Session::Connected;
 
-    let subscription_sender = plant.core.subscription_sender.clone();
+    let subscription_sender = plant.subscription_sender.clone();
     let connection_handle = tokio::spawn(async move { plant.run().await });
 
     let plant = RithmicOrderPlant {
@@ -853,7 +853,7 @@ async fn a_login_in_flight_fails_when_the_connection_ends() {
 #[tokio::test]
 async fn login_after_close_requested_is_not_sent() {
     let (mut plant, _command_sender, mut client) = plant_with_wire().await;
-    plant.core.session = Session::Closing;
+    plant.session = Session::Closing;
 
     assert_rejected_after_close(&mut plant, &mut client, |response_sender| {
         OrderPlantCommand::Login {
@@ -903,21 +903,24 @@ async fn get_login_info_scopes_only_a_plant_without_a_scope() {
 
 /// Record the route the server would have published for `exchange`, as a login on
 /// this connection would have left it.
-fn cache_route(plant: &mut OrderPlant, exchange: &str, trade_route: &str) {
+fn cache_route(plant: &mut Plant<OrderPlant>, exchange: &str, trade_route: &str) {
     plant
-        .core
         .kind
         .trade_routes
         .record(Some(exchange), Some(trade_route), None);
 }
 
 /// A plant actor whose connection has logged in, as `login()` would leave it.
-async fn scoped_plant_with_wire() -> (OrderPlant, mpsc::Sender<OrderPlantCommand>, TcpStream) {
+async fn scoped_plant_with_wire() -> (
+    Plant<OrderPlant>,
+    mpsc::Sender<OrderPlantCommand>,
+    TcpStream,
+) {
     let (mut plant, sender, client) = plant_with_wire().await;
 
     cache_route(&mut plant, "CME", "globex");
 
-    plant.core.kind.login_scope =
+    plant.kind.login_scope =
         Some(LoginScope::from_login_info(&login_info()).expect("an IB login is expressible"));
 
     (plant, sender, client)
@@ -925,7 +928,7 @@ async fn scoped_plant_with_wire() -> (OrderPlant, mpsc::Sender<OrderPlantCommand
 
 /// Feeds one command to the actor and decodes the request it put on the wire.
 async fn sent_request<M: prost::Message + Default>(
-    plant: &mut OrderPlant,
+    plant: &mut Plant<OrderPlant>,
     client: &mut TcpStream,
     build: impl FnOnce(Responder) -> OrderPlantCommand,
 ) -> M {
@@ -1356,12 +1359,11 @@ async fn record_trade_routes_populates_the_cache() {
     let (mut plant, _sender, _client) = plant_with_wire().await;
 
     plant
-        .core
         .kind
         .record_trade_routes(&[trade_route_response("CME", "globex")]);
 
     assert_eq!(
-        plant.core.kind.trade_routes.resolve(None, "CME").unwrap(),
+        plant.kind.trade_routes.resolve(None, "CME").unwrap(),
         "globex"
     );
 }
@@ -1420,7 +1422,7 @@ async fn get_trade_routes_does_not_touch_the_cache() {
         .await;
 
     assert_eq!(
-        plant.core.kind.trade_routes.resolve(None, "CME").unwrap(),
+        plant.kind.trade_routes.resolve(None, "CME").unwrap(),
         "globex"
     );
 }

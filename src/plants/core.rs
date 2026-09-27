@@ -1,5 +1,5 @@
 use std::{mem, time::Duration};
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use futures_util::{
     Sink, StreamExt,
@@ -8,7 +8,7 @@ use futures_util::{
 
 use tokio::{
     net::TcpStream,
-    sync::{broadcast, mpsc, oneshot},
+    sync::{broadcast, mpsc},
     time::Interval,
 };
 
@@ -27,11 +27,12 @@ use crate::{
     error::RithmicError,
     ping_manager::PingManager,
     plants::{
-        session::{PlantKind, Session, answer_waiters},
+        kind::{Cx, Outgoing, PlantCommand, PlantKind},
+        session::{Session, answer_waiters},
         tag::{Tag, answer_caller},
     },
-    request_handler::{PendingReplay, Reply, Resume, RithmicRequestHandler, Routed},
-    rti::{messages::RithmicMessage, request_login::SysInfraType},
+    request_handler::{PendingReplay, Reply, Responder, Resume, RithmicRequestHandler, Routed},
+    rti::messages::RithmicMessage,
     ws::{
         PING_TIMEOUT_SECS, SEND_TIMEOUT_SECS, WebSocketSendError, connect_with_strategy,
         get_heartbeat_interval, get_ping_interval, send_with_timeout,
@@ -41,14 +42,6 @@ use crate::{
 pub(crate) type WsStream = WebSocketStream<MaybeTlsStream<TcpStream>>;
 pub(crate) type WsSink = SplitSink<WsStream, Message>;
 pub(crate) type WsReader = SplitStream<WsStream>;
-
-/// The command loop every plant actor implements.
-pub(crate) trait PlantActor {
-    type Command;
-
-    async fn run(&mut self);
-    async fn handle_command(&mut self, command: Self::Command);
-}
 
 /// Result of a single iteration of the plant's `select!` loop.
 pub(crate) enum SelectResult<C> {
@@ -61,24 +54,26 @@ pub(crate) enum SelectResult<C> {
     StreamClosed,
 }
 
-/// Shared infrastructure for all Rithmic plant actors.
+/// The actor every Rithmic plant runs on.
 ///
-/// Holds the WebSocket connection, heartbeat/ping timers, request handler,
-/// the login session, and sender/receiver APIs that every plant uses. Each
-/// plant wraps a `PlantCore` plus its own command receiver.
+/// Holds the WebSocket connection, the command receiver, heartbeat/ping
+/// timers, request handler, the login session, and sender/receiver APIs. It
+/// runs the loop, the session and the close guard the same way for every
+/// plant, and hands the plant's own commands and replies to `K`; see
+/// [`PlantKind`].
 ///
 /// The type parameter `S` is the WebSocket sink type. It defaults to [`WsSink`]
 /// (the concrete split-sink from a real TLS connection) but can be replaced
-/// with a mock sink in tests. `K` is what the plant loads and answers for
-/// itself; see [`PlantKind`].
+/// with a mock sink in tests.
 #[derive(Debug)]
-pub(crate) struct PlantCore<S = WsSink, K: PlantKind = ()> {
+pub(crate) struct Plant<K: PlantKind, S = WsSink> {
     pub(crate) config: RithmicConfig,
     pub(crate) interval: Interval,
     pub(crate) kind: K,
     pub(crate) ping_interval: Interval,
     pub(crate) ping_manager: PingManager,
     pub(crate) request_handler: RithmicRequestHandler<Tag<K::Tag>>,
+    pub(crate) request_receiver: mpsc::Receiver<K::Command>,
     pub(crate) rithmic_reader: WsReader,
     pub(crate) rithmic_receiver_api: RithmicReceiverApi,
     pub(crate) rithmic_sender: S,
@@ -87,14 +82,15 @@ pub(crate) struct PlantCore<S = WsSink, K: PlantKind = ()> {
     pub(crate) subscription_sender: broadcast::Sender<RithmicResponse>,
 }
 
-impl<K: PlantKind> PlantCore<WsSink, K> {
+impl<K: PlantKind> Plant<K> {
+    /// Connect a plant of kind `kind`, taking commands from `request_receiver`.
     pub(crate) async fn new(
+        kind: K,
+        request_receiver: mpsc::Receiver<K::Command>,
         subscription_sender: broadcast::Sender<RithmicResponse>,
         config: &RithmicConfig,
         strategy: ConnectStrategy,
-        source: &'static str,
-        kind: K,
-    ) -> Result<PlantCore<WsSink, K>, RithmicError> {
+    ) -> Result<Plant<K>, RithmicError> {
         let ws_stream = connect_with_strategy(
             &config.url,
             &config.beta_url,
@@ -108,20 +104,21 @@ impl<K: PlantKind> PlantCore<WsSink, K> {
         let rithmic_sender_api = RithmicSenderApi::new(config);
 
         let rithmic_receiver_api = RithmicReceiverApi {
-            source: source.to_string(),
+            source: K::SOURCE.to_string(),
         };
 
         let interval = get_heartbeat_interval(None);
         let ping_interval = get_ping_interval();
         let ping_manager = PingManager::new(PING_TIMEOUT_SECS);
 
-        Ok(PlantCore {
+        Ok(Plant {
             config: config.clone(),
             interval,
             kind,
             ping_interval,
             ping_manager,
             request_handler: RithmicRequestHandler::new(),
+            request_receiver,
             rithmic_reader,
             rithmic_receiver_api,
             rithmic_sender,
@@ -132,11 +129,90 @@ impl<K: PlantKind> PlantCore<WsSink, K> {
     }
 }
 
-impl<S, K> PlantCore<S, K>
+impl<K, S> Plant<K, S>
 where
-    S: Sink<Message, Error = Error> + Unpin,
     K: PlantKind,
+    S: Sink<Message, Error = Error> + Unpin,
 {
+    /// Run the actor until the connection ends or it is aborted.
+    pub(crate) async fn run(&mut self) {
+        loop {
+            // Let go of any replay whose caller stopped waiting since the last
+            // turn, so its late frames are counted rather than kept.
+            self.request_handler.release_abandoned_replays();
+
+            let stop = match self.next_event().await {
+                SelectResult::HeartbeatFired => self.send_heartbeat().await,
+                SelectResult::PingFired => self.send_ping().await,
+                SelectResult::PingTimeout => self.handle_ping_timeout(),
+                SelectResult::Command(command) => self.handle_command(command).await,
+                SelectResult::RithmicMessage(msg) => self.handle_rithmic_message(msg).await,
+                SelectResult::StreamClosed => self.handle_stream_closed(),
+            };
+
+            if stop {
+                break;
+            }
+        }
+    }
+
+    /// Act on a command from a handle. Returns `true` if the actor should stop.
+    pub(crate) async fn handle_command(&mut self, command: K::Command) -> bool {
+        let command = K::shared(command);
+
+        // Drop a request queued after a close was requested; handles report
+        // the dropped responder as `ConnectionClosed`. `Close` and `Abort`
+        // carry none and must still run: `Close` has to reach `handle_close()`.
+        if self.close_requested()
+            && !matches!(command, Ok(PlantCommand::Close | PlantCommand::Abort))
+        {
+            debug!(
+                "{}: dropping a command queued after close was requested",
+                self.rithmic_receiver_api.source
+            );
+
+            return false;
+        }
+
+        match command {
+            Ok(PlantCommand::Close) => self.handle_close().await,
+            Ok(PlantCommand::Abort) => return self.handle_abort(),
+            Ok(PlantCommand::GetSystemInfo { response_sender }) => {
+                self.handle_get_system_info(response_sender).await;
+            }
+            Ok(PlantCommand::Login {
+                config,
+                response_sender,
+            }) => self.handle_login(config, response_sender).await,
+            Ok(PlantCommand::Logout { response_sender }) => {
+                self.handle_logout(response_sender).await;
+            }
+            Err(command) => {
+                let mut cx = Cx::new(&mut self.rithmic_sender_api, self.session.is_closing());
+                self.kind.on_command(command, &mut cx);
+                let outgoing = cx.into_outgoing();
+
+                self.send_outgoing(outgoing).await;
+            }
+        }
+
+        false
+    }
+
+    /// Send what the plant queued through a [`Cx`], in order, and fail what
+    /// its close guard refused.
+    async fn send_outgoing(&mut self, outgoing: Vec<Outgoing<K::Tag>>) {
+        for request in outgoing {
+            match request {
+                Outgoing::Request { buf, id, tag } => self.register_and_send(buf, id, tag).await,
+                Outgoing::Replay { buf, id, replay } => {
+                    self.register_replay_and_send(buf, id, replay).await;
+                }
+                Outgoing::Refused(tag) => self.dispatch(tag, Err(RithmicError::ConnectionClosed)),
+            }
+        }
+    }
+
     pub(crate) fn emit_connection_health_event(&self, request_id: &str, error: RithmicError) {
         let message = error.as_connection_message();
 
@@ -243,13 +319,11 @@ where
     }
 
     /// Await the next thing the actor must react to.
-    pub(crate) async fn next_event<C>(
-        &mut self,
-        receiver: &mut mpsc::Receiver<C>,
-    ) -> SelectResult<C> {
+    pub(crate) async fn next_event(&mut self) -> SelectResult<K::Command> {
         let interval = &mut self.interval;
         let ping_interval = &mut self.ping_interval;
         let ping_manager = &mut self.ping_manager;
+        let receiver = &mut self.request_receiver;
         let reader = &mut self.rithmic_reader;
 
         tokio::select! {
@@ -483,10 +557,11 @@ where
             waiters,
         };
 
-        for (buf, id, tag) in self.kind.after_login(&mut self.rithmic_sender_api) {
-            self.register_kind_and_send(buf, id, tag).await;
-        }
+        let mut cx = Cx::new(&mut self.rithmic_sender_api, self.session.is_closing());
+        self.kind.after_login(&mut cx);
+        let outgoing = cx.into_outgoing();
 
+        self.send_outgoing(outgoing).await;
         self.check_ready();
     }
 
@@ -727,37 +802,17 @@ where
         true
     }
 
-    /// Register `responder` under `id`, then send `buf` as a binary frame,
-    /// failing the request if the send fails.
-    pub(crate) async fn register_and_send(
-        &mut self,
-        buf: Vec<u8>,
-        id: String,
-        responder: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
-    ) {
-        self.request_handler
-            .register_request(id.clone(), Tag::Caller(responder));
-
-        self.send_or_fail(Message::Binary(buf.into()), &id).await;
-    }
-
-    /// Register a request whose reply the plant acts on itself, then send it
-    /// like [`Self::register_and_send`].
-    pub(crate) async fn register_kind_and_send(&mut self, buf: Vec<u8>, id: String, tag: K::Tag) {
-        self.request_handler
-            .register_request(id.clone(), Tag::Kind(tag));
+    /// Register `tag` under `id`, then send `buf` as a binary frame, failing
+    /// the request if the send fails.
+    async fn register_and_send(&mut self, buf: Vec<u8>, id: String, tag: Tag<K::Tag>) {
+        self.request_handler.register_request(id.clone(), tag);
 
         self.send_or_fail(Message::Binary(buf.into()), &id).await;
     }
 
     /// Register a history replay and send it, unless its caller stopped
     /// waiting while it was queued.
-    pub(crate) async fn register_replay_and_send(
-        &mut self,
-        buf: Vec<u8>,
-        id: String,
-        replay: PendingReplay,
-    ) {
+    async fn register_replay_and_send(&mut self, buf: Vec<u8>, id: String, replay: PendingReplay) {
         if self.request_handler.register_replay(id.clone(), replay) {
             self.send_or_fail(Message::Binary(buf.into()), &id).await;
         }
@@ -771,12 +826,9 @@ where
         self.send_close_best_effort().await;
     }
 
-    pub(crate) async fn handle_get_system_info(
-        &mut self,
-        response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
-    ) {
+    async fn handle_get_system_info(&mut self, response_sender: Responder) {
         let (get_system_info_buf, id) = self.rithmic_sender_api.request_rithmic_system_info();
-        self.register_and_send(get_system_info_buf, id, response_sender)
+        self.register_and_send(get_system_info_buf, id, Tag::Caller(response_sender))
             .await;
     }
 
@@ -786,12 +838,7 @@ where
     /// holds its callers. A login with the session's config joins one in
     /// progress, or gets the kept reply once it is done. One with another
     /// config gets [`RithmicError::LoginConflict`]. Neither sends anything.
-    pub(crate) async fn handle_login(
-        &mut self,
-        config: LoginConfig,
-        sys_infra_type: SysInfraType,
-        response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
-    ) {
+    pub(crate) async fn handle_login(&mut self, config: LoginConfig, response_sender: Responder) {
         match &mut self.session {
             Session::Connected => {}
             Session::LoggingIn {
@@ -833,7 +880,7 @@ where
 
         let (login_buf, id) = self.rithmic_sender_api.request_login(
             &self.config.system_name,
-            sys_infra_type,
+            K::INFRA,
             &self.config.user,
             &self.config.password,
             &config,
@@ -856,18 +903,15 @@ where
             .await;
     }
 
-    pub(crate) async fn handle_logout(
-        &mut self,
-        response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
-    ) {
+    pub(crate) async fn handle_logout(&mut self, response_sender: Responder) {
         // Close the session before any later async step: the actor handles
         // commands sequentially, so anything a cloned handle queues after
         // `Logout` was dequeued finds it closing and is dropped by the guard
-        // in every plant's `handle_command`. A login still in flight fails now.
+        // in `handle_command`. A login still in flight fails now.
         self.session.close(Session::Closing);
 
         let (logout_buf, id) = self.rithmic_sender_api.request_logout();
-        self.register_and_send(logout_buf, id, response_sender)
+        self.register_and_send(logout_buf, id, Tag::Caller(response_sender))
             .await;
     }
 }
@@ -875,6 +919,7 @@ where
 #[cfg(test)]
 mod tests {
     use std::{
+        convert::Infallible,
         pin::Pin,
         task::{Context, Poll},
     };
@@ -891,7 +936,7 @@ mod tests {
         ping_manager::PingManager,
         plants::test_support,
         request_handler::RithmicRequestHandler,
-        rti::messages::RithmicMessage,
+        rti::{messages::RithmicMessage, request_login::SysInfraType},
         ws::{PING_TIMEOUT_SECS, get_heartbeat_interval, get_ping_interval},
     };
 
@@ -977,6 +1022,31 @@ mod tests {
         }
     }
 
+    /// A plant with nothing of its own: it takes only the commands every
+    /// plant shares, which these tests call directly.
+    #[derive(Debug)]
+    struct Bare;
+
+    impl PlantKind for Bare {
+        type Command = Infallible;
+        type Tag = Infallible;
+
+        const SOURCE: &'static str = "test";
+        const INFRA: SysInfraType = SysInfraType::TickerPlant;
+
+        fn shared(command: Infallible) -> Result<PlantCommand, Infallible> {
+            match command {}
+        }
+
+        fn on_command(&mut self, command: Infallible, _cx: &mut Cx<'_, Infallible>) {
+            match command {}
+        }
+
+        fn on_reply(&mut self, tag: Infallible, _reply: Reply) {
+            match tag {}
+        }
+    }
+
     fn test_config() -> RithmicConfig {
         RithmicConfig::builder(RithmicEnv::Demo)
             .user("test_user")
@@ -1047,7 +1117,7 @@ mod tests {
         sink: MockMessageSink,
         rithmic_reader: WsReader,
     ) -> (
-        PlantCore<MockMessageSink>,
+        Plant<Bare, MockMessageSink>,
         broadcast::Receiver<RithmicResponse>,
     ) {
         make_test_core_with_config(sink, rithmic_reader, test_config())
@@ -1058,7 +1128,7 @@ mod tests {
         rithmic_reader: WsReader,
         config: RithmicConfig,
     ) -> (
-        PlantCore<MockMessageSink>,
+        Plant<Bare, MockMessageSink>,
         broadcast::Receiver<RithmicResponse>,
     ) {
         let (sub_tx, sub_rx) = broadcast::channel(16);
@@ -1068,14 +1138,17 @@ mod tests {
         };
 
         let request_handler = RithmicRequestHandler::new();
+        // No command is ever sent, so the receiver's sender can go.
+        let (_, request_receiver) = mpsc::channel(1);
 
-        let core = PlantCore {
+        let core = Plant {
             config,
             interval: get_heartbeat_interval(None),
-            kind: (),
+            kind: Bare,
             ping_interval: get_ping_interval(),
             ping_manager: PingManager::new(PING_TIMEOUT_SECS),
             request_handler,
+            request_receiver,
             rithmic_reader,
             rithmic_receiver_api,
             rithmic_sender: sink,
@@ -1088,7 +1161,7 @@ mod tests {
     }
 
     fn register_request(
-        core: &mut PlantCore<MockMessageSink>,
+        core: &mut Plant<Bare, MockMessageSink>,
         id: &str,
     ) -> oneshot::Receiver<Result<Vec<RithmicResponse>, RithmicError>> {
         let (tx, rx) = oneshot::channel();
@@ -1191,18 +1264,17 @@ mod tests {
 
     /// Queue a login with `config`, returning its waiter.
     async fn login(
-        core: &mut PlantCore<MockMessageSink>,
+        core: &mut Plant<Bare, MockMessageSink>,
         config: LoginConfig,
     ) -> oneshot::Receiver<Result<Vec<RithmicResponse>, RithmicError>> {
         let (tx, rx) = oneshot::channel();
-        core.handle_login(config, SysInfraType::TickerPlant, tx)
-            .await;
+        core.handle_login(config, tx).await;
 
         rx
     }
 
     /// The ids of the login requests the core has written so far.
-    fn sent_login_ids(core: &PlantCore<MockMessageSink>) -> Vec<String> {
+    fn sent_login_ids(core: &Plant<Bare, MockMessageSink>) -> Vec<String> {
         use crate::rti::RequestLogin;
         use prost::Message as _;
 
@@ -1655,10 +1727,9 @@ mod tests {
         let (reader, _peer) = make_open_ws_reader().await;
         let (mut core, _sub_rx) = make_test_core(MockMessageSink::ready(), reader);
         let mut rx = register_request(&mut core, "req-1");
-        let (_cmd_tx, mut cmd_rx) = mpsc::channel::<()>(1);
 
         for _ in 0..10 {
-            core.next_event(&mut cmd_rx).await;
+            core.next_event().await;
         }
 
         assert!(rx.try_recv().is_err(), "the request must still be waiting");
@@ -2400,13 +2471,14 @@ mod tests {
             .build()
             .unwrap();
         let (subscription_sender, _) = broadcast::channel(4);
+        let (_, request_receiver) = mpsc::channel(1);
 
-        let err = PlantCore::new(
+        let err = Plant::new(
+            Bare,
+            request_receiver,
             subscription_sender,
             &config,
             ConnectStrategy::Retry,
-            "test",
-            (),
         )
         .await
         .expect_err("nothing listens, so the deadline must end the retry");

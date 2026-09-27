@@ -1,5 +1,6 @@
+use std::convert::Infallible;
 use tokio::sync::{broadcast, mpsc, oneshot};
-use tracing::{debug, error, info};
+use tracing::{error, info};
 
 use crate::{
     ConnectStrategy,
@@ -8,8 +9,10 @@ use crate::{
     error::RithmicError,
     plants::{
         await_all_responses, await_first_response,
-        core::{PlantActor, PlantCore, SelectResult},
+        core::Plant,
+        kind::{Cx, PlantCommand, PlantKind},
     },
+    request_handler::Reply,
     rti::{
         messages::RithmicMessage,
         request_depth_by_order_updates,
@@ -243,7 +246,8 @@ impl RithmicTickerPlant {
             .subscription_capacity
             .unwrap_or(DEFAULT_SUBSCRIPTION_CAPACITY);
         let (sub_tx, _sub_rx) = broadcast::channel(capacity);
-        let mut ticker_plant = TickerPlant::new(req_rx, sub_tx.clone(), config, strategy).await?;
+        let mut ticker_plant =
+            Plant::new(TickerPlant, req_rx, sub_tx.clone(), config, strategy).await?;
 
         let connection_handle = tokio::spawn(async move {
             ticker_plant.run().await;
@@ -276,139 +280,67 @@ impl RithmicTickerPlant {
     }
 }
 
-#[derive(Debug)]
-struct TickerPlant {
-    core: PlantCore,
-    request_receiver: mpsc::Receiver<TickerPlantCommand>,
-}
+/// The ticker plant's commands. It loads nothing after login.
+#[derive(Debug, Default)]
+struct TickerPlant;
 
-impl TickerPlant {
-    async fn new(
-        request_receiver: mpsc::Receiver<TickerPlantCommand>,
-        subscription_sender: broadcast::Sender<RithmicResponse>,
-        config: &RithmicConfig,
-        strategy: ConnectStrategy,
-    ) -> Result<TickerPlant, RithmicError> {
-        let core =
-            PlantCore::new(subscription_sender, config, strategy, "ticker_plant", ()).await?;
-
-        Ok(TickerPlant {
-            core,
-            request_receiver,
-        })
-    }
-}
-
-impl PlantActor for TickerPlant {
+impl PlantKind for TickerPlant {
     type Command = TickerPlantCommand;
+    type Tag = Infallible;
 
-    /// Execute the ticker plant actor loop.
-    async fn run(&mut self) {
-        loop {
-            let result = self.core.next_event(&mut self.request_receiver).await;
-            let stop = match result {
-                SelectResult::HeartbeatFired => self.core.send_heartbeat().await,
-                SelectResult::PingFired => self.core.send_ping().await,
-                SelectResult::PingTimeout => self.core.handle_ping_timeout(),
-                SelectResult::Command(cmd) => {
-                    if matches!(cmd, TickerPlantCommand::Abort) {
-                        self.core.handle_abort()
-                    } else {
-                        self.handle_command(cmd).await;
-                        false
-                    }
-                }
-                SelectResult::RithmicMessage(msg) => self.core.handle_rithmic_message(msg).await,
-                SelectResult::StreamClosed => self.core.handle_stream_closed(),
-            };
+    const SOURCE: &'static str = "ticker_plant";
+    const INFRA: SysInfraType = SysInfraType::TickerPlant;
 
-            if stop {
-                break;
-            }
-        }
-    }
-
-    async fn handle_command(&mut self, command: TickerPlantCommand) {
-        // Drop a request queued after `close_requested`; handles report the dropped
-        // responder as `ConnectionClosed`. The listed variants carry none and must
-        // still run — `Close` has to reach `handle_close()`. All four plants alike.
-        if self.core.close_requested()
-            && !matches!(
-                command,
-                TickerPlantCommand::Close | TickerPlantCommand::Abort
-            )
-        {
-            debug!("ticker_plant: dropping a command queued after close was requested");
-
-            return;
-        }
-
+    fn shared(command: TickerPlantCommand) -> Result<PlantCommand, TickerPlantCommand> {
         match command {
-            TickerPlantCommand::Close => {
-                self.core.handle_close().await;
-            }
+            TickerPlantCommand::Close => Ok(PlantCommand::Close),
+            TickerPlantCommand::Abort => Ok(PlantCommand::Abort),
             TickerPlantCommand::GetSystemInfo { response_sender } => {
-                self.core.handle_get_system_info(response_sender).await;
+                Ok(PlantCommand::GetSystemInfo { response_sender })
             }
             TickerPlantCommand::Login {
                 config,
                 response_sender,
-            } => {
-                self.core
-                    .handle_login(config, SysInfraType::TickerPlant, response_sender)
-                    .await;
-            }
+            } => Ok(PlantCommand::Login {
+                config,
+                response_sender,
+            }),
             TickerPlantCommand::Logout { response_sender } => {
-                self.core.handle_logout(response_sender).await;
+                Ok(PlantCommand::Logout { response_sender })
             }
+            command => Err(command),
+        }
+    }
+
+    fn on_command(&mut self, command: TickerPlantCommand, cx: &mut Cx<'_, Infallible>) {
+        match command {
             TickerPlantCommand::Subscribe {
                 symbol,
                 exchange,
                 fields,
                 request_type,
                 response_sender,
-            } => {
-                let (sub_buf, id) = self.core.rithmic_sender_api.request_market_data_update(
-                    &symbol,
-                    &exchange,
-                    fields,
-                    request_type,
-                );
-
-                self.core
-                    .register_and_send(sub_buf, id, response_sender)
-                    .await;
-            }
+            } => cx.send_for(
+                |api| api.request_market_data_update(&symbol, &exchange, fields, request_type),
+                response_sender,
+            ),
             TickerPlantCommand::SubscribeOrderBook {
                 symbol,
                 exchange,
                 request_type,
                 response_sender,
-            } => {
-                let (sub_buf, id) = self.core.rithmic_sender_api.request_depth_by_order_updates(
-                    &symbol,
-                    &exchange,
-                    request_type,
-                );
-
-                self.core
-                    .register_and_send(sub_buf, id, response_sender)
-                    .await;
-            }
+            } => cx.send_for(
+                |api| api.request_depth_by_order_updates(&symbol, &exchange, request_type),
+                response_sender,
+            ),
             TickerPlantCommand::RequestDepthByOrderSnapshot {
                 symbol,
                 exchange,
                 response_sender,
-            } => {
-                let (snapshot_buf, id) = self
-                    .core
-                    .rithmic_sender_api
-                    .request_depth_by_order_snapshot(&symbol, &exchange);
-
-                self.core
-                    .register_and_send(snapshot_buf, id, response_sender)
-                    .await;
-            }
+            } => cx.send_for(
+                |api| api.request_depth_by_order_snapshot(&symbol, &exchange),
+                response_sender,
+            ),
             TickerPlantCommand::SearchSymbols {
                 search_text,
                 exchange,
@@ -416,49 +348,40 @@ impl PlantActor for TickerPlant {
                 instrument_type,
                 pattern,
                 response_sender,
-            } => {
-                let (search_buf, id) = self.core.rithmic_sender_api.request_search_symbols(
-                    &search_text,
-                    exchange.as_deref(),
-                    product_code.as_deref(),
-                    instrument_type,
-                    pattern,
-                );
-
-                self.core
-                    .register_and_send(search_buf, id, response_sender)
-                    .await;
-            }
+            } => cx.send_for(
+                |api| {
+                    api.request_search_symbols(
+                        &search_text,
+                        exchange.as_deref(),
+                        product_code.as_deref(),
+                        instrument_type,
+                        pattern,
+                    )
+                },
+                response_sender,
+            ),
             TickerPlantCommand::ListExchangePermissions {
                 user,
                 response_sender,
-            } => {
-                let (list_buf, id) = self
-                    .core
-                    .rithmic_sender_api
-                    .request_list_exchange_permissions(&user);
-
-                self.core
-                    .register_and_send(list_buf, id, response_sender)
-                    .await;
-            }
+            } => cx.send_for(
+                |api| api.request_list_exchange_permissions(&user),
+                response_sender,
+            ),
             TickerPlantCommand::GetInstrumentByUnderlying {
                 underlying_symbol,
                 exchange,
                 expiration_date,
                 response_sender,
-            } => {
-                let (buf, id) = self
-                    .core
-                    .rithmic_sender_api
-                    .request_get_instrument_by_underlying(
+            } => cx.send_for(
+                |api| {
+                    api.request_get_instrument_by_underlying(
                         &underlying_symbol,
                         &exchange,
                         expiration_date.as_deref(),
-                    );
-
-                self.core.register_and_send(buf, id, response_sender).await;
-            }
+                    )
+                },
+                response_sender,
+            ),
             TickerPlantCommand::SubscribeByUnderlying {
                 underlying_symbol,
                 exchange,
@@ -466,108 +389,85 @@ impl PlantActor for TickerPlant {
                 fields,
                 request_type,
                 response_sender,
-            } => {
-                let (buf, id) = self
-                    .core
-                    .rithmic_sender_api
-                    .request_market_data_update_by_underlying(
+            } => cx.send_for(
+                |api| {
+                    api.request_market_data_update_by_underlying(
                         &underlying_symbol,
                         &exchange,
                         expiration_date.as_deref(),
                         fields,
                         request_type,
-                    );
-
-                self.core.register_and_send(buf, id, response_sender).await;
-            }
+                    )
+                },
+                response_sender,
+            ),
             TickerPlantCommand::GetTickSizeTypeTable {
                 tick_size_type,
                 response_sender,
-            } => {
-                let (buf, id) = self
-                    .core
-                    .rithmic_sender_api
-                    .request_give_tick_size_type_table(&tick_size_type);
-
-                self.core.register_and_send(buf, id, response_sender).await;
-            }
+            } => cx.send_for(
+                |api| api.request_give_tick_size_type_table(&tick_size_type),
+                response_sender,
+            ),
             TickerPlantCommand::GetProductCodes {
                 exchange,
                 give_toi_products_only,
                 response_sender,
-            } => {
-                let (buf, id) = self
-                    .core
-                    .rithmic_sender_api
-                    .request_product_codes(exchange.as_deref(), give_toi_products_only);
-
-                self.core.register_and_send(buf, id, response_sender).await;
-            }
+            } => cx.send_for(
+                |api| api.request_product_codes(exchange.as_deref(), give_toi_products_only),
+                response_sender,
+            ),
             TickerPlantCommand::GetVolumeAtPrice {
                 symbol,
                 exchange,
                 response_sender,
-            } => {
-                let (buf, id) = self
-                    .core
-                    .rithmic_sender_api
-                    .request_get_volume_at_price(&symbol, &exchange);
-
-                self.core.register_and_send(buf, id, response_sender).await;
-            }
+            } => cx.send_for(
+                |api| api.request_get_volume_at_price(&symbol, &exchange),
+                response_sender,
+            ),
             TickerPlantCommand::GetAuxilliaryReferenceData {
                 symbol,
                 exchange,
                 response_sender,
-            } => {
-                let (buf, id) = self
-                    .core
-                    .rithmic_sender_api
-                    .request_auxilliary_reference_data(&symbol, &exchange);
-
-                self.core.register_and_send(buf, id, response_sender).await;
-            }
+            } => cx.send_for(
+                |api| api.request_auxilliary_reference_data(&symbol, &exchange),
+                response_sender,
+            ),
             TickerPlantCommand::GetReferenceData {
                 symbol,
                 exchange,
                 response_sender,
-            } => {
-                let (buf, id) = self
-                    .core
-                    .rithmic_sender_api
-                    .request_reference_data(&symbol, &exchange);
-
-                self.core.register_and_send(buf, id, response_sender).await;
-            }
+            } => cx.send_for(
+                |api| api.request_reference_data(&symbol, &exchange),
+                response_sender,
+            ),
             TickerPlantCommand::GetFrontMonthContract {
                 symbol,
                 exchange,
                 need_updates,
                 response_sender,
-            } => {
-                let (buf, id) = self.core.rithmic_sender_api.request_front_month_contract(
-                    &symbol,
-                    &exchange,
-                    need_updates,
-                );
-
-                self.core.register_and_send(buf, id, response_sender).await;
-            }
+            } => cx.send_for(
+                |api| api.request_front_month_contract(&symbol, &exchange, need_updates),
+                response_sender,
+            ),
             TickerPlantCommand::GetSystemGatewayInfo {
                 system_name,
                 response_sender,
-            } => {
-                let (buf, id) = self
-                    .core
-                    .rithmic_sender_api
-                    .request_rithmic_system_gateway_info(system_name.as_deref());
-
-                self.core.register_and_send(buf, id, response_sender).await;
-            }
-            TickerPlantCommand::Abort => {
-                unreachable!("Abort is handled in run() before handle_command");
+            } => cx.send_for(
+                |api| api.request_rithmic_system_gateway_info(system_name.as_deref()),
+                response_sender,
+            ),
+            TickerPlantCommand::Close
+            | TickerPlantCommand::Abort
+            | TickerPlantCommand::GetSystemInfo { .. }
+            | TickerPlantCommand::Login { .. }
+            | TickerPlantCommand::Logout { .. } => {
+                unreachable!("the plant handles the commands every plant shares")
             }
         }
+    }
+
+    fn on_reply(&mut self, tag: Infallible, _reply: Reply) {
+        match tag {}
     }
 }
 

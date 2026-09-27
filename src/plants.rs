@@ -17,6 +17,7 @@ use crate::{api::receiver_api::RithmicResponse, error::RithmicError};
 pub(crate) mod core;
 /// Access to historical market data
 pub mod history_plant;
+pub(crate) mod kind;
 /// Order entry and management
 pub mod order_plant;
 /// Position and P&L tracking
