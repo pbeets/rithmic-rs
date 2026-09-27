@@ -4,7 +4,7 @@ use crate::{
     api::receiver_api::RithmicResponse,
     config::LoginConfig,
     error::RithmicError,
-    request_handler::{Reply, Responder},
+    request_handler::{RequestResult, Responder},
 };
 
 /// Where a plant's login stands. The actor owns it, so what a session does
@@ -65,7 +65,7 @@ impl Session {
 }
 
 /// Answer every login requester with the same reply.
-pub(crate) fn answer_requesters(requesters: Vec<Responder>, reply: &Reply) {
+pub(crate) fn answer_requesters(requesters: Vec<Responder>, reply: &RequestResult) {
     // A requester that stopped waiting changes nothing.
     for requester in requesters {
         let _ = requester.send(reply.clone());

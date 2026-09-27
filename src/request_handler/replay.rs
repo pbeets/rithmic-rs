@@ -1,4 +1,4 @@
-use super::{Reply, RequestTag, Resume, RithmicRequestHandler};
+use super::{RequestResult, RequestTag, Resume, RithmicRequestHandler};
 use std::collections::HashSet;
 use tokio::sync::oneshot;
 use tracing::info;
@@ -12,7 +12,7 @@ use crate::{RithmicError, RithmicResponse, rti::messages::RithmicMessage};
 /// resume keys it has used.
 #[derive(Debug)]
 pub(crate) struct PendingReplay {
-    responder: oneshot::Sender<Reply>,
+    responder: oneshot::Sender<RequestResult>,
     responses: Vec<RithmicResponse>,
     /// Resume keys used since the last data frame. The server can hand out
     /// the same key again after new data.
@@ -23,7 +23,7 @@ pub(crate) struct PendingReplay {
 }
 
 impl PendingReplay {
-    pub(crate) fn new(responder: oneshot::Sender<Reply>) -> Self {
+    pub(crate) fn new(responder: oneshot::Sender<RequestResult>) -> Self {
         Self {
             responder,
             responses: Vec::new(),
@@ -37,7 +37,7 @@ impl PendingReplay {
         self.responder.is_closed()
     }
 
-    fn finish(self, reply: Reply) {
+    fn finish(self, reply: RequestResult) {
         let _ = self.responder.send(reply);
     }
 }
@@ -68,7 +68,7 @@ impl<T: RequestTag> RithmicRequestHandler<T> {
 
     /// Register a replay for a test, and return its reply channel.
     #[cfg(test)]
-    pub(crate) fn register_test_replay(&mut self, id: &str) -> oneshot::Receiver<Reply> {
+    pub(crate) fn register_test_replay(&mut self, id: &str) -> oneshot::Receiver<RequestResult> {
         let (tx, rx) = oneshot::channel();
         assert!(self.register_replay(id.to_string(), PendingReplay::new(tx)));
         rx

@@ -13,7 +13,7 @@ use crate::{
         kind::{Cx, PlantCommand, PlantKind},
         subscription::SubscriptionFilter,
     },
-    request_handler::Reply,
+    request_handler::RequestResult,
     rti::{messages::RithmicMessage, request_login::SysInfraType, request_pn_l_position_updates},
 };
 
@@ -262,7 +262,7 @@ impl PlantKind for PnlPlant {
         }
     }
 
-    fn on_reply(&mut self, tag: Infallible, _reply: Reply) {
+    fn on_reply(&mut self, tag: Infallible, _reply: RequestResult) {
         match tag {}
     }
 }

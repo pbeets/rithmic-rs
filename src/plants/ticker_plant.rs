@@ -12,7 +12,7 @@ use crate::{
         await_all_responses, await_first_response,
         kind::{Cx, PlantCommand, PlantKind},
     },
-    request_handler::Reply,
+    request_handler::RequestResult,
     rti::{
         messages::RithmicMessage,
         request_depth_by_order_updates,
@@ -466,7 +466,7 @@ impl PlantKind for TickerPlant {
         }
     }
 
-    fn on_reply(&mut self, tag: Infallible, _reply: Reply) {
+    fn on_reply(&mut self, tag: Infallible, _reply: RequestResult) {
         match tag {}
     }
 }

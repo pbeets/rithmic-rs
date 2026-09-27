@@ -16,7 +16,7 @@ use crate::{
         await_all_responses, await_first_response,
         kind::{Cx, PlantCommand, PlantKind},
     },
-    request_handler::{PendingReplay, Reply},
+    request_handler::{PendingReplay, RequestResult},
     rti::{
         messages::RithmicMessage, request_login::SysInfraType, request_tick_bar_update,
         request_time_bar_replay::BarType, request_time_bar_update,
@@ -364,7 +364,7 @@ impl PlantKind for HistoryPlant {
         }
     }
 
-    fn on_reply(&mut self, tag: Infallible, _reply: Reply) {
+    fn on_reply(&mut self, tag: Infallible, _reply: RequestResult) {
         match tag {}
     }
 }

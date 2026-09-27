@@ -24,11 +24,12 @@ pub(crate) use replay::PendingReplay;
 )]
 pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// A completed reply: every frame of it, or why it failed.
-pub(crate) type Reply = Result<Vec<RithmicResponse>, RithmicError>;
+/// What a request got back: every frame of its reply, or the error that
+/// ended it. The error is often ours, such as `ConnectionClosed`.
+pub(crate) type RequestResult = Result<Vec<RithmicResponse>, RithmicError>;
 
 /// The channel a handle method waits on for its reply.
-pub(crate) type Responder = oneshot::Sender<Reply>;
+pub(crate) type Responder = oneshot::Sender<RequestResult>;
 
 /// What the handler keeps for a request until its reply completes.
 pub(crate) trait RequestTag {
@@ -52,7 +53,7 @@ pub(crate) struct Resume {
 #[derive(Debug)]
 pub(crate) enum Routed<T> {
     /// A reply completed: answer whatever `T` stands for.
-    Reply(T, Reply),
+    Reply(T, RequestResult),
     /// The server cut a replay short: ask it to continue.
     Resume(Resume),
 }
@@ -121,7 +122,7 @@ impl<T: RequestTag> RithmicRequestHandler<T> {
         &mut self,
         request_id: &str,
         error: RithmicError,
-    ) -> Option<(T, Reply)> {
+    ) -> Option<(T, RequestResult)> {
         if self.fail_replay(request_id, error.clone()) {
             return None;
         }

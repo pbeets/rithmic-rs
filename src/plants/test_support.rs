@@ -20,7 +20,7 @@ use crate::{
         kind::{Cx, PlantCommand, PlantKind},
         session::Session,
     },
-    request_handler::Reply,
+    request_handler::RequestResult,
     rti::{ResponseLogin, messages::RithmicMessage, request_login::SysInfraType},
 };
 
@@ -50,7 +50,7 @@ impl PlantKind for Bare {
         unreachable!("every command a bare plant takes is shared")
     }
 
-    fn on_reply(&mut self, tag: Infallible, _reply: Reply) {
+    fn on_reply(&mut self, tag: Infallible, _reply: RequestResult) {
         match tag {}
     }
 }
@@ -77,7 +77,7 @@ pub(crate) fn plant_core<K: PlantKind + Default>() -> PlantCore<K> {
 /// is still waiting.
 pub(crate) fn answer(
     rx: &mut oneshot::Receiver<Result<Vec<RithmicResponse>, RithmicError>>,
-) -> Option<Reply> {
+) -> Option<RequestResult> {
     match rx.try_recv() {
         Ok(reply) => Some(reply),
         Err(oneshot::error::TryRecvError::Closed) => Some(Err(RithmicError::ConnectionClosed)),

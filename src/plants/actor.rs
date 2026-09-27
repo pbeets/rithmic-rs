@@ -513,7 +513,7 @@ mod tests {
             tag::Tag,
             test_support::{self, Bare},
         },
-        request_handler::Reply,
+        request_handler::RequestResult,
         rti::messages::RithmicMessage,
     };
 
@@ -1189,7 +1189,7 @@ mod tests {
     /// Hand the actor `error` as the reader returned it, with one request
     /// pending. Returns whether it stopped, the error subscribers were sent
     /// and the request's reply.
-    async fn read_error(error: Error) -> (bool, Option<RithmicError>, Reply) {
+    async fn read_error(error: Error) -> (bool, Option<RithmicError>, RequestResult) {
         let reader = make_dormant_ws_reader().await;
         let (mut plant, mut sub_rx) = make_test_plant(MockMessageSink::ready(), reader);
         let mut rx = register_request(&mut plant, "req-1");

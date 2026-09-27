@@ -5,7 +5,7 @@ use crate::{
     config::LoginConfig,
     error::RithmicError,
     plants::tag::Tag,
-    request_handler::{PendingReplay, Reply, Responder},
+    request_handler::{PendingReplay, RequestResult, Responder},
     rti::request_login::SysInfraType,
 };
 
@@ -60,7 +60,7 @@ pub(crate) trait PlantKind {
     fn on_command(&mut self, command: Self::Command, cx: &mut Cx<'_, Self::Tag>);
 
     /// Act on the reply to a request tagged `tag`, or on its failure.
-    fn on_reply(&mut self, tag: Self::Tag, reply: Reply);
+    fn on_reply(&mut self, tag: Self::Tag, reply: RequestResult);
 }
 
 /// A request a plant queued through [`Cx`], for the core to send.

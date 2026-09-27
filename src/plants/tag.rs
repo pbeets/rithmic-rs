@@ -3,7 +3,7 @@ use tracing::info;
 
 use crate::{
     api::receiver_api::RithmicResponse,
-    request_handler::{Reply, RequestTag, Responder},
+    request_handler::{RequestResult, RequestTag, Responder},
 };
 
 /// What a plant keeps for each request it sends, so it knows what to do with
@@ -29,7 +29,7 @@ impl<K> RequestTag for Tag<K> {
 }
 
 /// Hand a reply to its caller, or log one line if it stopped waiting.
-pub(crate) fn answer_caller(responder: Responder, reply: Reply) {
+pub(crate) fn answer_caller(responder: Responder, reply: RequestResult) {
     // A failure has nothing to report once the caller is gone.
     if let Err(Ok(frames)) = responder.send(reply) {
         let last = frames.last();

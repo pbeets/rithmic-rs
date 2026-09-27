@@ -10,7 +10,7 @@ use crate::{
         session::{Session, answer_requesters},
         tag::{Tag, answer_caller},
     },
-    request_handler::{Reply, Responder, Resume, RithmicRequestHandler, Routed},
+    request_handler::{RequestResult, Responder, Resume, RithmicRequestHandler, Routed},
     rti::messages::RithmicMessage,
 };
 
@@ -234,7 +234,7 @@ impl<K: PlantKind> PlantCore<K> {
     /// A login reply never gets here, only a failed login request: an
     /// accepted login has requests of its own to send, so
     /// [`Self::route_reply`] hands every login reply to [`Self::on_login_reply`].
-    fn dispatch(&mut self, tag: Tag<K::Tag>, reply: Reply) {
+    fn dispatch(&mut self, tag: Tag<K::Tag>, reply: RequestResult) {
         match tag {
             Tag::Caller(responder) => answer_caller(responder, reply),
             Tag::Login => self.login_failed(reply),
@@ -353,7 +353,7 @@ impl<K: PlantKind> PlantCore<K> {
     }
 
     /// Act on the reply to the session's login request.
-    fn on_login_reply(&mut self, reply: Reply) {
+    fn on_login_reply(&mut self, reply: RequestResult) {
         let accepted = match &reply {
             Ok(frames) => frames.first().filter(|frame| frame.error.is_none()),
             Err(_) => None,
@@ -403,7 +403,7 @@ impl<K: PlantKind> PlantCore<K> {
 
     /// Answer every login requester with a login that did not succeed, exactly as
     /// it came back, and return to `Connected` so a later login can try again.
-    fn login_failed(&mut self, reply: Reply) {
+    fn login_failed(&mut self, reply: RequestResult) {
         match mem::replace(&mut self.session, Session::Connected) {
             Session::LoggingIn { requesters, .. } => answer_requesters(requesters, &reply),
             // A close was requested while the login was on the wire, and its
@@ -615,7 +615,7 @@ mod tests {
         },
     };
 
-    type ReplyRx = oneshot::Receiver<Reply>;
+    type ReplyRx = oneshot::Receiver<RequestResult>;
 
     fn bare() -> PlantCore<Bare> {
         test_support::plant_core()

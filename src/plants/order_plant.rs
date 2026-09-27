@@ -27,7 +27,7 @@ use crate::{
         tag::answer_caller,
         trade_routes::TradeRouteCache,
     },
-    request_handler::{Reply, Responder},
+    request_handler::{RequestResult, Responder},
     rti::{TradeRoute, messages::RithmicMessage, request_login::SysInfraType},
     types::{EasyToBorrowRequest, FillHistoryRange, RmsUpdateBits},
 };
@@ -436,7 +436,7 @@ struct OrderPlant {
 impl OrderPlant {
     /// Scope later requests with the login info in `reply`, unless a scope is
     /// already set. A rejected response has no usable identity in it.
-    fn record_login_info(&mut self, reply: &Reply) {
+    fn record_login_info(&mut self, reply: &RequestResult) {
         if self.login_scope.is_some() {
             return;
         }
@@ -870,7 +870,7 @@ impl PlantKind for OrderPlant {
     /// A failure here is only logged: the login already succeeded, so it
     /// leaves later requests unscoped, or orders failing with
     /// [`RithmicError::NoTradeRoute`], rather than failing the connection.
-    fn on_reply(&mut self, tag: OrderTag, reply: Reply) {
+    fn on_reply(&mut self, tag: OrderTag, reply: RequestResult) {
         match tag {
             OrderTag::LoginInfo { caller } => {
                 self.record_login_info(&reply);
