@@ -22,7 +22,7 @@ field has a setter of the same name, and `build()` runs `validate()` and returns
 ```rust
 // Before
 let order = RithmicOrder {
-    symbol: "ESM6".into(),
+    symbol: "ESZ6".into(),
     exchange: "CME".into(),
     quantity: 1,
     ..Default::default()
@@ -30,7 +30,7 @@ let order = RithmicOrder {
 
 // After
 let order = RithmicOrder::new()
-    .symbol("ESM6")
+    .symbol("ESZ6")
     .exchange("CME")
     .quantity(1)
     .transaction_type(OrderSide::Buy)
@@ -43,7 +43,7 @@ The fields are still public, so direct assignment works when you need it:
 
 ```rust
 let mut order = RithmicOrder::new();
-order.symbol = "ESH6".into();
+order.symbol = "ESZ6".into();
 ```
 
 `build()` is the opt-in strict path. Commands carrying an instrument need a symbol,
@@ -199,7 +199,7 @@ than signature changes:
 
 ```rust
 let request = VolumeProfileMinuteBarsRequest::new()
-    .symbol("ESM6")
+    .symbol("ESZ6")
     .exchange("CME")
     .bar_type_period(5)
     .start_time_sec(start_ssboe)

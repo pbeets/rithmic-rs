@@ -1,34 +1,27 @@
-//! Example: persistent connection with automatic reconnection and re-subscription.
+//! Keep a ticker subscription alive across dropped connections: reconnect with
+//! exponential backoff, re-subscribe, and exit only when login is refused.
+//! Runs until Ctrl-C or a fatal login error.
 //!
-//! Sketches a production-shaped connection supervisor:
-//!
-//! - Transport failures reconnect with exponential backoff (capped at 60s).
-//! - `login` returns `Err(RequestRejected)` on a rejection; this example exits
-//!   rather than retrying.
-//! - `subscribe` returns `Ok` with `RithmicResponse::error` set on a rejection;
-//!   this example logs it and moves on to the next symbol.
-//! - Backoff resets after a session has produced real data for long enough to be
-//!   considered healthy, so a long-lived connection that drops doesn't inherit
-//!   a large backoff from earlier failures.
-//!
-//! A real app would also wire `tokio::signal::ctrl_c()` (requires the `signal`
-//! feature on tokio) into the supervisor and call `disconnect().await` on shutdown.
-//!
-//! Run with: `cargo run --example reconnect`
+//! Run with: cargo run --example reconnect
+//! Env: SYMBOL, EXCHANGE (see examples/README.md)
+
+#[path = "shared/common.rs"]
+mod common;
+
+use std::{
+    collections::HashSet,
+    time::{Duration, Instant},
+};
 
 use tokio::{sync::broadcast::error::RecvError, time::sleep};
 use tracing::{error, info, warn};
 
-use std::{
-    collections::HashSet,
-    env,
-    time::{Duration, SystemTime},
-};
-
 use rithmic_rs::{
     ConnectStrategy, RithmicConfig, RithmicEnv, RithmicError, RithmicTickerPlant,
-    rti::messages::RithmicMessage,
+    RithmicTickerPlantHandle, rti::messages::RithmicMessage,
 };
+
+const ENV: RithmicEnv = RithmicEnv::Demo;
 
 const BACKOFF_MIN: Duration = Duration::from_millis(500);
 const BACKOFF_MAX: Duration = Duration::from_secs(60);
@@ -38,14 +31,11 @@ const STABLE_SESSION_THRESHOLD: Duration = Duration::from_secs(30);
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenvy::dotenv().ok();
     tracing_subscriber::fmt().init();
+    let config = RithmicConfig::from_env(ENV)?;
+    let exchange = common::exchange();
+    let symbol = common::symbol();
 
-    let config = RithmicConfig::from_env(RithmicEnv::Demo)?;
-    let mut subscriptions: HashSet<(String, String)> = HashSet::new();
-    let symbol = env::var("SYMBOL").unwrap_or_else(|_| "ESU6".to_string());
-    let exchange = env::var("EXCHANGE").unwrap_or_else(|_| "CME".to_string());
-
-    subscriptions.insert((symbol, exchange));
-
+    let subscriptions: HashSet<(String, String)> = HashSet::from([(symbol, exchange)]);
     let mut backoff = BACKOFF_MIN;
 
     loop {
@@ -53,9 +43,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Ok(p) => p,
             Err(e) => {
                 error!("Connect failed: {e}");
-
                 sleep_with_backoff(&mut backoff).await;
-
                 continue;
             }
         };
@@ -63,49 +51,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut handle = plant.get_handle();
 
         if let Err(e) = handle.login().await {
-            match &e {
-                RithmicError::ConnectionClosed | RithmicError::SendFailed => {
-                    warn!("Login failed (connection issue): {e}");
-
-                    shutdown_plant(&handle, plant).await;
-                    sleep_with_backoff(&mut backoff).await;
-
-                    continue;
-                }
-                RithmicError::RequestRejected(err) => {
-                    let code = err.code.as_deref().unwrap_or("?");
-                    let msg = err.message.as_deref().unwrap_or("");
-
-                    error!(
-                        "Login rejected by server (fatal): code={} msg={}",
-                        code, msg
-                    );
-
-                    let _ = handle.disconnect().await;
-                    let _ = plant.await_shutdown().await;
-
-                    return Err(format!("login rejected: {code} / {msg}").into());
-                }
-                RithmicError::ProtocolError(msg) => {
-                    error!("Login protocol error (fatal): {msg}");
-
-                    let _ = handle.disconnect().await;
-                    let _ = plant.await_shutdown().await;
-
-                    return Err(format!("login protocol error: {msg}").into());
-                }
-                _ => {
-                    error!("Login failed: {e}");
-
-                    shutdown_plant(&handle, plant).await;
-                    sleep_with_backoff(&mut backoff).await;
-
-                    continue;
-                }
+            if e.is_connection_issue() {
+                warn!("Login failed (connection issue): {e}");
+                shutdown_plant(&handle, plant).await;
+                sleep_with_backoff(&mut backoff).await;
+                continue;
             }
+
+            // Retrying a refused login with the same credentials will not help.
+            error!("Login failed (fatal): {e}");
+            shutdown_plant(&handle, plant).await;
+            return Err(e.into());
         }
 
-        let session_started = SystemTime::now();
+        let session_started = Instant::now();
         let mut received_data = false;
         let mut connection_lost = false;
 
@@ -113,15 +72,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             match handle.subscribe(symbol, exchange).await {
                 Ok(resp) => match &resp.error {
                     Some(err) => {
-                        warn!("Subscribe rejected for {symbol}/{exchange}: {err} — skipping")
+                        warn!("Subscribe rejected for {symbol}/{exchange}: {err}, skipping")
                     }
                     None => info!("Subscribed to {symbol} on {exchange}"),
                 },
-                Err(RithmicError::ConnectionClosed | RithmicError::SendFailed) => {
-                    warn!("Subscribe failed (connection lost), reconnecting…");
-
+                Err(e) if e.is_connection_issue() => {
+                    warn!("Subscribe failed (connection lost): {e}");
                     connection_lost = true;
-
                     break;
                 }
                 Err(e) => warn!("Subscribe error for {symbol}/{exchange}: {e}"),
@@ -131,18 +88,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         if connection_lost {
             shutdown_plant(&handle, plant).await;
             sleep_with_backoff(&mut backoff).await;
-
             continue;
         }
 
-        // A clean `handle.disconnect().await` on a healthy connection does NOT
-        // emit HeartbeatTimeout/ConnectionError, so a shutdown path using it
-        // won't trip the reconnect branch below.
-        //
-        // We handle broadcast RecvError explicitly: `Lagged` means the consumer
-        // is falling behind and may have dropped the connection-lost signal
-        // through buffer wrap — treat as reconnect-worthy rather than silently
-        // exiting. `Closed` means the plant actor is gone, so we also reconnect.
         loop {
             match handle.subscription_receiver.recv().await {
                 Ok(update) => match &update.message {
@@ -154,13 +102,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     RithmicMessage::HeartbeatTimeout
                     | RithmicMessage::ForcedLogout(_)
                     | RithmicMessage::ConnectionError => {
-                        warn!("Session lost ({:?}), reconnecting…", update.message);
-
+                        warn!("Session lost ({:?}), reconnecting", update.message);
                         break;
                     }
                     RithmicMessage::LastTrade(t) => {
                         received_data = true;
-
                         info!(
                             "Trade: {} @ {}",
                             t.trade_size.unwrap_or(0),
@@ -169,51 +115,37 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     _ => {}
                 },
-                Err(RecvError::Lagged(skipped)) => {
-                    warn!(
-                        "Subscription lagged ({} messages dropped) — reconnecting to \
-                         resync; a connection-health frame may have been lost",
-                        skipped
-                    );
-
+                // The missed updates may include the ConnectionError, and the channel
+                // stays open while we hold the plant, so reconnect rather than wait.
+                Err(RecvError::Lagged(n)) => {
+                    warn!("Missed {n} updates, reconnecting");
                     break;
                 }
                 Err(RecvError::Closed) => {
-                    warn!("Subscription channel closed — reconnecting");
-
+                    warn!("Subscription channel closed, reconnecting");
                     break;
                 }
             }
         }
 
-        let uptime = session_started.elapsed().unwrap_or_default();
-
-        if received_data && uptime >= STABLE_SESSION_THRESHOLD {
+        if received_data && session_started.elapsed() >= STABLE_SESSION_THRESHOLD {
             backoff = BACKOFF_MIN;
         }
 
-        // Tokio's `JoinHandle::drop` detaches the task — it does NOT abort it.
-        // Without an explicit abort + await_shutdown, the old actor would stay
-        // alive alongside the next connection, producing a short-lived dual
-        // session against the same credentials.
         shutdown_plant(&handle, plant).await;
     }
 }
 
-/// Abort the plant's background actor and await its join handle so we don't
-/// leave an orphaned task holding a TCP/WebSocket session while the next
-/// reconnect attempt opens a new one.
-async fn shutdown_plant(handle: &rithmic_rs::RithmicTickerPlantHandle, plant: RithmicTickerPlant) {
+/// Dropping the plant does not stop its actor, so abort it and wait, or the old
+/// session stays open next to the new one on the same credentials.
+async fn shutdown_plant(handle: &RithmicTickerPlantHandle, plant: RithmicTickerPlant) {
     handle.abort();
-
     let _ = plant.await_shutdown().await;
 }
 
 /// Sleep for the current backoff, then double it (capped at BACKOFF_MAX).
 async fn sleep_with_backoff(backoff: &mut Duration) {
-    info!("Reconnecting in {:?}…", backoff);
-
+    info!("Reconnecting in {:?}", backoff);
     sleep(*backoff).await;
-
     *backoff = (*backoff * 2).min(BACKOFF_MAX);
 }

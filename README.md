@@ -52,99 +52,80 @@ account fields are sent with account-scoped requests, not during the initial sig
 Stream live market data:
 
 ```rust
-use rithmic_rs::{RithmicConfig, RithmicEnv, ConnectStrategy, RithmicTickerPlant};
+use rithmic_rs::{
+    ConnectStrategy, RithmicConfig, RithmicEnv, RithmicTickerPlant,
+    rti::messages::RithmicMessage,
+};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let config = RithmicConfig::from_env(RithmicEnv::Demo)?; // for live RithmicEnv::Live
+    let config = RithmicConfig::from_env(RithmicEnv::Demo)?;
     let plant = RithmicTickerPlant::connect(&config, ConnectStrategy::Retry).await?;
     let mut handle = plant.get_handle();
 
     handle.login().await?;
-    handle.subscribe("ESM6", "CME").await?; // Update to current front-month ES contract
+    handle.subscribe("ESZ6", "CME").await?; // use the current front month
 
     while let Ok(update) = handle.subscription_receiver.recv().await {
-        println!("{:?}", update.message);
+        match update.message {
+            RithmicMessage::LastTrade(t) => println!("trade {:?} @ {:?}", t.trade_size, t.trade_price),
+            RithmicMessage::BestBidOffer(q) => println!("bid {:?} ask {:?}", q.bid_price, q.ask_price),
+            _ => {}
+        }
     }
 
     Ok(())
 }
 ```
 
-Nine runnable examples cover the rest — order routing, historical data, error
-handling and reconnection. See [Examples](#examples).
+The [examples](examples/README.md) cover order routing, historical data, error handling
+and reconnection.
 
-## Migrating from 2.x
+### Connection strategies
 
-3.0.0 reshapes the order surface. **[MIGRATING.md](MIGRATING.md)** works through
-it section by section with before/after code — section 1 alone resolves most of
-the compiler errors.
+`connect` takes one of three strategies:
 
-The headline changes:
-
-| Change | What it means for you |
+| Strategy | Behavior |
 |---|---|
-| Commands are built with `new()` + setters | `..Default::default()` no longer compiles; `build()` validates and returns a `Result` |
-| Fourteen generated enums replaced by crate-owned ones | `OrderSide`, `OrderType`, `TimeInForce` and friends; variant names are unchanged, but matches now need a `_` arm |
-| Every order call takes a command struct | `cancel_all_orders`, `exit_position`, `adjust_target`/`adjust_stop` no longer take loose arguments |
-| Prices are `Option<f64>` | Wrap in `Some(..)`; pass `None` for market orders |
-| Seven handle methods renamed | Each is now named after the request it sends |
-| `RithmicConfig` gains fields | Build it through `RithmicConfig::builder(env)` or `RithmicConfigBuilder::from_env(env)` rather than a struct literal |
+| `Simple` | One attempt. Fails at once with `RithmicError::ConnectionFailed`. |
+| `Retry` | Retries `url` with backoff: 500 ms more per attempt, capped at 60 s, jittered ±50%. The recommended default. |
+| `AlternateWithRetry` | Like `Retry`, but alternates between `url` and `beta_url`. |
 
-The compiler finds all of the above. **It will not find these**, which compile
-untouched and change what reaches the exchange:
-
-- Orders route off the exchange's published trade route instead of a hardcoded
-  `"globex"`/`"simulator"`. No route and no override means the order is **not
-  sent** — you get `RithmicError::NoTradeRoute`.
-- `cancel_all_orders` is now attributed `Auto`, not `Manual`.
-- A target-only bracket now sends `TARGET_ONLY_STATIC` rather than
-  `TargetAndStopStatic`.
-- `get_account_list` and `get_account_rms_info` may return fewer accounts, now
-  that requests carry the real login info.
-- Market orders no longer go out priced at `0.0` — an unset price is omitted.
-- An empty `user_tag` echoes back as `None`, not `Some("")`.
-
-Go through that list before the first run against a live account.
-[Section 10](MIGRATING.md#10-behavior-changes-that-need-no-code-change) explains
-each one and what to set to keep the old behavior.
-
-One more worth acting on even though nothing breaks: 2.x replays stopped at
-10,000 records and gave no sign they had. Switch to the `_all` loaders — see
-[History Plant](#history-plant).
+The retrying strategies keep trying forever unless you set `retry_timeout` on
+the config builder. Once connected, the crate does not reconnect for you: see
+[`examples/reconnect.rs`](examples/reconnect.rs) for a loop that restores
+subscriptions.
 
 ## Architecture
 
 This library uses the actor pattern where each Rithmic service runs independently as its own tokio task. All communication happens through tokio channels.
 
-- **`RithmicTickerPlant`** - Real-time market data (trades, quotes, order book)
-- **`RithmicOrderPlant`** - Order entry and management
-- **`RithmicHistoryPlant`** - Historical tick and bar data
-- **`RithmicPnlPlant`** - Position and P&L tracking
+- [**`RithmicTickerPlant`**](#ticker-plant) - Real-time market data (trades, quotes, order book)
+- [**`RithmicOrderPlant`**](#order-plant) - Order entry and management
+- [**`RithmicHistoryPlant`**](#history-plant) - Historical tick and bar data
+- [**`RithmicPnlPlant`**](#pnl-plant) - Position and P&L tracking
 
-### Subscription channels
-
-Live updates arrive on each handle's `subscription_receiver`, a channel that
-holds 10,000 messages by default. A reader that falls further behind misses
-messages and gets `RecvError::Lagged`. Set `subscription_capacity` on the config
-builder to change the size; see the
-[crate docs](https://docs.rs/rithmic-rs/latest/rithmic_rs/#subscription-channels)
-for details.
+> [!NOTE]
+> Live updates arrive on each handle's `subscription_receiver`, which holds 10,000
+> messages by default. A reader that falls further behind misses messages and gets
+> `RecvError::Lagged`. Change the size with `subscription_capacity` on the config
+> builder; the [crate docs](https://docs.rs/rithmic-rs/latest/rithmic_rs/#subscription-channels)
+> have details.
 
 ### Ticker Plant
 
 ```rust
 // Subscribe to real-time quotes
-handle.subscribe("ESM6", "CME").await?;
+handle.subscribe("ESZ6", "CME").await?;
 
 // Unsubscribe when done
-handle.unsubscribe("ESM6", "CME").await?;
+handle.unsubscribe("ESZ6", "CME").await?;
 
 // Additional market data subscriptions
-handle.subscribe_instrument_status("ESM6", "CME").await?;
-handle.subscribe_open_interest("ESM6", "CME").await?;
-handle.subscribe_session_prices("ESM6", "CME").await?;
-handle.subscribe_order_price_limits("ESM6", "CME").await?;
+handle.subscribe_instrument_status("ESZ6", "CME").await?;
+handle.subscribe_open_interest("ESZ6", "CME").await?;
+handle.subscribe_session_prices("ESZ6", "CME").await?;
+handle.subscribe_order_price_limits("ESZ6", "CME").await?;
 
 // Symbol discovery
 let symbols = handle.search_symbols("ES", Some("CME"), None, None, None).await?;
@@ -155,9 +136,8 @@ let front_month = handle.get_front_month_contract("ES", "CME", false).await?;
 
 ```rust
 use rithmic_rs::{
-    ConnectStrategy, OrderSide, OrderType, RithmicAccount, RithmicBracketOrder, RithmicCancelOrder,
-    RithmicConfig, RithmicEnv, RithmicExitPosition, RithmicOcoOrder, RithmicOcoOrderLeg,
-    RithmicOrder, RithmicOrderPlant,
+    ConnectStrategy, OrderSide, OrderType, RithmicAccount, RithmicBracketOrder, RithmicConfig,
+    RithmicEnv, RithmicOrder, RithmicOrderPlant,
 };
 
 let config = RithmicConfig::from_env(RithmicEnv::Demo)?;
@@ -168,183 +148,60 @@ let handle = plant.get_handle(&account);
 handle.login().await?;
 handle.subscribe_order_updates().await?;
 
-// Every order command starts from `::new()`, which takes no arguments, and is
-// filled in by setters named after the fields they set. `build()` validates and
-// returns a `Result`.
 let order = RithmicOrder::new()
-    .symbol("ESM6")
+    .symbol("ESZ6")
     .exchange("CME")
     .quantity(1)
     .transaction_type(OrderSide::Buy)
     .price_type(OrderType::Limit)
     .price(5000.0)
-    .user_tag("my-order")
     .build()?;
-
 handle.place_order(order).await?;
 
-// Cancel by the `basket_id` carried on the order notification
-handle.cancel_order(RithmicCancelOrder::new().id(basket_id).build()?).await?;
-
-// Flatten by instrument. With no symbol/exchange set it flattens the whole account.
-handle.exit_position(RithmicExitPosition::new().symbol("ESM6").exchange("CME").build()?).await?;
-```
-
-Order state arrives on the subscription stream as `RithmicOrderNotification`
-updates, not in the response to the call.
-
-The handle also covers account queries: `show_fill_history` returns the
-account's fills over a time or trade-date window, and `get_user_info` returns
-the login's profile, entitlements, and session limits (both new in 0.89).
-
-For multi-account workflows, create one `RithmicAccount` per account and call
-`get_handle(&account)` for each handle you need.
-
-#### Bracket and OCO orders
-
-Brackets build the same way. `.target(n)`/`.stop(n)` size their leg from the
-entry quantity at the moment they are called, so set `.quantity()` first.
-
-```rust
+// Set quantity before target/stop: they size their legs from it.
 let bracket = RithmicBracketOrder::new()
-    .symbol("ESM6")
+    .symbol("ESZ6")
     .exchange("CME")
     .quantity(1)
     .action(OrderSide::Buy)
     .price_type(OrderType::Limit)
     .price(5000.0)
-    .target(20) // take profit 20 ticks above entry
-    .stop(10)   // stop loss 10 ticks below entry
+    .target(20)
+    .stop(10)
     .build()?;
-
 handle.place_bracket_order(bracket).await?;
 ```
 
-Leave `bracket_type` unset and `build()` derives it from the legs you supplied.
-Use `.targets(..)`/`.stops(..)` with explicit `(quantity, ticks)` pairs for
-multi-leg brackets, then `adjust_target`/`adjust_stop` to move a level.
-
-An OCO order carries two or more legs, and the first to fill cancels the rest:
-
-```rust
-let oco = RithmicOcoOrder::new()
-    .leg(RithmicOcoOrderLeg::new()
-        .symbol("ESM6").exchange("CME").quantity(1)
-        .transaction_type(OrderSide::Buy)
-        .price_type(OrderType::Limit)
-        .price(4990.0)
-        .build()?)
-    .leg(RithmicOcoOrderLeg::new()
-        .symbol("ESM6").exchange("CME").quantity(1)
-        .transaction_type(OrderSide::Sell)
-        .price_type(OrderType::Limit)
-        .price(5010.0)
-        .build()?)
-    .build()?;
-
-handle.place_oco_order(oco).await?;
-```
-
-#### Trade routes
-
-Orders route off the trade route the exchange publishes, read once at `login()`.
-Check one with `trade_route_for("CME")`, or set `.trade_route(..)` on the command
-to override it. If no route exists and the command sets none, the order is **not
-sent** and you get `RithmicError::NoTradeRoute`. See
-[`examples/trade_routes.rs`](examples/trade_routes.rs).
+Fills and status changes arrive on `handle.subscription_receiver`, not in the
+reply to the call. Cancels, OCO orders, trade routes and account queries are in
+the [`RithmicOrderPlant` docs](https://docs.rs/rithmic-rs/latest/rithmic_rs/plants/order_plant/struct.RithmicOrderPlant.html).
 
 ### History Plant
 
 ```rust
-use rithmic_rs::TimeBarType;
+use rithmic_rs::{ConnectStrategy, RithmicConfig, RithmicEnv, RithmicHistoryPlant, TimeBarType};
 
-let symbol = "ESM6".to_string(); // Update to current front-month ES contract
-let exchange = "CME".to_string();
+let config = RithmicConfig::from_env(RithmicEnv::Demo)?;
+let plant = RithmicHistoryPlant::connect(&config, ConnectStrategy::Retry).await?;
+let handle = plant.get_handle();
+handle.login().await?;
 
-// start / end are i32 unix seconds
+// Unix seconds as i32. Daily and weekly bars take YYYYMMDD dates instead.
+let end = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs() as i32;
+let start = end - 3600;
+
+let (symbol, exchange) = ("ESZ6".to_string(), "CME".to_string());
 let bars = handle
     .load_time_bars_all(symbol.clone(), exchange.clone(), TimeBarType::MinuteBar, 5, start, end)
     .await?;
-let ticks = handle
-    .load_ticks_all(symbol.clone(), exchange.clone(), start, end)
-    .await?;
-
-// Bars aggregating a fixed number of trades (e.g. one bar per 5 trades)
-let tick_bars = handle.load_tick_bars_all(symbol, exchange, 5, start, end).await?;
+let ticks = handle.load_ticks_all(symbol, exchange, start, end).await?;
 ```
 
-**Use the `_all` loaders.** Rithmic stops a replay at 10,000 records without
-saying so. The `_all` variants lift that cap; use the plain ones only when you
-want at most 10,000 records.
+- Use the `_all` loaders. The plain ones stop at 10,000 records without saying so.
+- Requests never time out on their own. Wrap large loads in `tokio::time::timeout`.
 
-**Daily and weekly bars take dates.** For `DailyBar` and `WeeklyBar`, pass the
-window as `YYYYMMDD` (e.g. `20260914`); each bar's `marker` is a date too. Unix
-seconds there return an empty reply, not an error.
-
-**Check large time bar windows.** The server cuts replies short after about four
-seconds of streaming. The plant normally asks it to continue, so you still get
-the whole window, but time bar replays have occasionally stopped early without
-warning. For large windows, check the last bar and request the rest:
-
-```rust
-let mut bars = handle
-    .load_time_bars_all(symbol.clone(), exchange.clone(), TimeBarType::MinuteBar, 1, start, end)
-    .await?;
-
-loop {
-    // Continue from the newest bar's close time.
-    let newest = bars.iter().rev().find_map(|r| match &r.message {
-        RithmicMessage::ResponseTimeBarReplay(bar) => bar.marker,
-        _ => None,
-    });
-
-    let Some(from) = newest else { break };
-    if from + 60 > end {
-        break; // the window is covered
-    }
-
-    let rest = handle
-        .load_time_bars_all(symbol.clone(), exchange.clone(), TimeBarType::MinuteBar, 1, from, end)
-        .await?;
-
-    if rest.iter().all(|r| r.rp_code().is_some_and(|c| !c.is_empty())) {
-        break; // nothing newer came back
-    }
-
-    bars.pop(); // drop the previous page's final response
-    bars.extend(rest);
-}
-```
-
-**Set your own time limit.** The crate never times out a request, and a very
-large window may get no reply at all, so wrap `load_*` calls in
-`tokio::time::timeout`.
-
-The whole window is held in memory until the call returns, so ask for the
-window you need rather than a day at a time.
-
-Volume profile bars take a request struct:
-
-```rust
-use rithmic_rs::VolumeProfileMinuteBarsRequest;
-
-let request = VolumeProfileMinuteBarsRequest::new()
-    .symbol("ESM6")
-    .exchange("CME")
-    .bar_type_period(5)
-    .start_time_sec(start)
-    .end_time_sec(end)
-    .build()?;
-
-let bars = handle.load_volume_profile_minute_bars(request).await?;
-```
-
-All of these validate before sending: an empty symbol or exchange, a bar length
-below 1, a non-positive timestamp, or a window that ends before it starts comes
-back as `RithmicError::InvalidArgument` with no round trip.
-
-Live bars stream through `subscribe_time_bar_updates` and
-`subscribe_tick_bar_updates`.
+Other loaders, replay limits and how to backfill large windows are in the
+[`RithmicHistoryPlant` docs](https://docs.rs/rithmic-rs/latest/rithmic_rs/plants/history_plant/struct.RithmicHistoryPlant.html).
 
 ### PnL Plant
 
@@ -359,60 +216,42 @@ let plant = RithmicPnlPlant::connect(&config, ConnectStrategy::Retry).await?;
 let handle = plant.get_handle(&account);
 handle.login().await?;
 
-// Monitor P&L
+// Both calls return only an acknowledgement; positions arrive on the receiver.
+handle.get_pnl_position_snapshot().await?;
 handle.subscribe_pnl_updates().await?;
-let snapshot = handle.get_pnl_position_snapshot().await?;
 ```
+
+## Migrating from 2.x
+
+3.0 reworked the order API. [MIGRATING.md](MIGRATING.md) has before/after code for every change. The ones that matter most:
+
+- Order commands are built with `::new()`, setters and `build()`, and every order call takes one.
+- Orders use the exchange's published trade route. With no route, nothing is sent and you get `RithmicError::NoTradeRoute`.
+- Plain history loaders stop at 10,000 records without saying so. Use the `_all` loaders.
 
 ## Error Handling
 
+A request the server turns down still returns `Ok`, with the reason in
+`resp.error`. `Err` means no answer came back: bad arguments, no trade route,
+or a dropped connection.
+
 ```rust
-use rithmic_rs::RithmicError;
-
-match handle.subscribe("ESM6", "CME").await {
+match handle.subscribe("ESZ6", "CME").await {
     Ok(resp) => match &resp.error {
-        Some(err) => eprintln!("Server rejected: {}", err),
-        None => { /* success */ }
+        Some(err) => eprintln!("rejected: {err}"),
+        None => println!("subscribed"),
     },
-    Err(RithmicError::ConnectionClosed | RithmicError::SendFailed) => {
-        handle.abort();
-        // reconnect — see examples/reconnect.rs
-    }
-    Err(e) => eprintln!("{}", e),
-}
-
-if let Err(RithmicError::RequestRejected(err)) = handle.login().await {
-    eprintln!(
-        "Login rejected: code={} msg={}",
-        err.code.as_deref().unwrap_or("?"),
-        err.message.as_deref().unwrap_or(""),
-    );
+    Err(e) if e.is_connection_issue() => { /* reconnect, see examples/reconnect.rs */ }
+    Err(e) => eprintln!("{e}"),
 }
 ```
 
-When inspecting a `RithmicResponse` directly (for example, entries from a
-subscription broadcast), match on `response.error` — it is `Option<RithmicError>`.
-Use `RithmicError::is_connection_issue` to distinguish transport failures from
-requests the server turned down.
-
-`RithmicError` implements `std::error::Error`, so `?` works in functions returning `Box<dyn Error>`.
-
-[`examples/error_handling.rs`](examples/error_handling.rs) walks through every
-error the crate can hand you — from a call and from the subscription channel —
-in one runnable file. The crate docs cover the same ground in
-[Error Handling](https://docs.rs/rithmic-rs/latest/rithmic_rs/#error-handling).
-
-## Connection Strategies
-
-Three strategies for initial connection:
-
-- **`Simple`**: Single attempt, fast-fail
-- **`Retry`**: Linear backoff (500 ms more per attempt, capped at 60 seconds, jittered ±50%) (recommended default)
-- **`AlternateWithRetry`**: Alternates between primary and alt URLs
-
-### Reconnection
-
-If you need to handle disconnections and automatically reconnect, you must implement your own reconnection loop. See [`examples/reconnect.rs`](examples/reconnect.rs) for a complete example that tracks subscriptions and re-subscribes after reconnect.
+A rejected `login()` and a history replay the server refuses to continue
+return `Err(RithmicError::RequestRejected)` instead. Connection drops, order rejections and
+dropped updates arrive on `subscription_receiver`.
+[`examples/error_handling.rs`](examples/error_handling.rs) covers each case,
+and the [crate docs](https://docs.rs/rithmic-rs/latest/rithmic_rs/#error-handling)
+explain what to do about them.
 
 ## Feature Flags
 
@@ -427,24 +266,13 @@ MSRV is 1.85 (edition 2024).
 
 ## Examples
 
-Every example is runnable against a Demo account once `.env` is filled in from
-[`examples/.env.blank`](examples/.env.blank).
-
-| Example | Shows |
-|---|---|
-| [`connect.rs`](examples/connect.rs) | Connect, log in, disconnect |
-| [`ticker.rs`](examples/ticker.rs) | Streaming quotes and trades |
-| [`bracket_order.rs`](examples/bracket_order.rs) | Placing a bracket and reading order notifications |
-| [`trade_routes.rs`](examples/trade_routes.rs) | Inspecting the routes orders will take |
-| [`load_historical_bars.rs`](examples/load_historical_bars.rs) | Time bar replay |
-| [`load_historical_ticks.rs`](examples/load_historical_ticks.rs) | Tick replay |
-| [`backfill.rs`](examples/backfill.rs) | Backfilling large windows and checking you got all of them |
-| [`pnl.rs`](examples/pnl.rs) | Position and P&L updates |
-| [`error_handling.rs`](examples/error_handling.rs) | Every error the crate can hand you, in one file |
-| [`reconnect.rs`](examples/reconnect.rs) | A reconnection loop that restores subscriptions |
+[`examples/`](examples/) has runnable programs for streaming, orders, history,
+error handling and reconnection. [`examples/README.md`](examples/README.md)
+covers setup and what each one does.
 
 ```sh
-cargo run --example ticker
+cp examples/.env.blank .env   # then fill in your Demo credentials
+cargo run --example connect
 ```
 
 ## Version History

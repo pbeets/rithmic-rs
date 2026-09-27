@@ -15,7 +15,7 @@ use crate::{
 /// use rithmic_rs::{OrderSide, OrderType, RithmicOcoOrderLeg};
 /// # fn main() -> Result<(), rithmic_rs::RithmicError> {
 /// let take_profit = RithmicOcoOrderLeg::new()
-///     .symbol("ESH6")
+///     .symbol("ESZ6")
 ///     .exchange("CME")
 ///     .quantity(1)
 ///     .transaction_type(OrderSide::Sell)
@@ -31,7 +31,7 @@ use crate::{
 #[non_exhaustive]
 #[must_use = "a leg does nothing until added to an OCO group"]
 pub struct RithmicOcoOrderLeg {
-    /// Trading symbol (e.g., "ESH6")
+    /// Trading symbol (e.g., "ESZ6")
     pub symbol: String,
     /// Exchange code (e.g., "CME")
     pub exchange: String,
@@ -201,7 +201,7 @@ impl RithmicOcoOrderLeg {
 /// use rithmic_rs::{OrderSide, OrderType, RithmicOcoOrder, RithmicOcoOrderLeg};
 /// # fn main() -> Result<(), rithmic_rs::RithmicError> {
 /// let take_profit = RithmicOcoOrderLeg::new()
-///     .symbol("ESH6")
+///     .symbol("ESZ6")
 ///     .exchange("CME")
 ///     .quantity(1)
 ///     .transaction_type(OrderSide::Sell)
@@ -209,7 +209,7 @@ impl RithmicOcoOrderLeg {
 ///     .price(5020.0)
 ///     .build()?;
 /// let stop_loss = RithmicOcoOrderLeg::new()
-///     .symbol("ESH6")
+///     .symbol("ESZ6")
 ///     .exchange("CME")
 ///     .quantity(1)
 ///     .transaction_type(OrderSide::Sell)
@@ -323,7 +323,7 @@ mod tests {
 
     fn leg(price_type: OrderType) -> RithmicOcoOrderLeg {
         RithmicOcoOrderLeg {
-            symbol: "ESM6".to_string(),
+            symbol: "ESZ6".to_string(),
             exchange: "CME".to_string(),
             quantity: 1,
             price_type,

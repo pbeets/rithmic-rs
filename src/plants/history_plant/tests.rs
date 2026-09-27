@@ -28,7 +28,7 @@ fn load_ticks(response_sender: Responder) -> HistoryPlantCommand {
     HistoryPlantCommand::Replay {
         query: ReplayQuery::Tick(
             TickBarReplayRequest::new()
-                .symbol("ESH6")
+                .symbol("ESZ6")
                 .exchange("CME")
                 .bar_length(1)
                 .start_time_sec(1)
@@ -68,7 +68,7 @@ async fn load_ticks_through_the_handle_after_close_requested_reports_connection_
 
     let err = tokio::time::timeout(
         std::time::Duration::from_secs(5),
-        handle.load_ticks("ESH6".to_string(), "CME".to_string(), 1, 1000),
+        handle.load_ticks("ESZ6".to_string(), "CME".to_string(), 1, 1000),
     )
     .await
     .expect("load_ticks must be answered, not left waiting")
@@ -158,7 +158,7 @@ async fn load_ticks_all_asks_the_server_to_lift_the_record_cap() {
 
     let loader = tokio::spawn(async move {
         handle
-            .load_ticks_all("ESH6".to_string(), "CME".to_string(), 1, 1000)
+            .load_ticks_all("ESZ6".to_string(), "CME".to_string(), 1, 1000)
             .await
     });
 
@@ -207,7 +207,7 @@ async fn load_ticks_leaves_the_cap_in_place() {
 
     let loader = tokio::spawn(async move {
         handle
-            .load_ticks("ESH6".to_string(), "CME".to_string(), 1, 1000)
+            .load_ticks("ESZ6".to_string(), "CME".to_string(), 1, 1000)
             .await
     });
 
@@ -233,7 +233,7 @@ async fn load_time_bars_all_asks_the_server_to_lift_the_record_cap() {
     let loader = tokio::spawn(async move {
         handle
             .load_time_bars_all(
-                "ESH6".to_string(),
+                "ESZ6".to_string(),
                 "CME".to_string(),
                 BarType::MinuteBar,
                 1,
@@ -282,7 +282,7 @@ async fn load_tick_bars_all_rejects_a_zero_bar_length() {
     // No actor is running, so a missing guard fails the timeout, not the suite.
     let err = tokio::time::timeout(
         std::time::Duration::from_secs(5),
-        handle.load_tick_bars_all("ESH6".to_string(), "CME".to_string(), 0, 1, 1000),
+        handle.load_tick_bars_all("ESZ6".to_string(), "CME".to_string(), 0, 1, 1000),
     )
     .await
     .expect("must be refused without reaching the actor")
@@ -300,7 +300,7 @@ async fn load_tick_bar_replay_sends_the_request_as_given() {
     // rather than defaulting it either way.
     for resume_bars in [None, Some(false), Some(true)] {
         let mut request = TickBarReplayRequest::new()
-            .symbol("ESH6")
+            .symbol("ESZ6")
             .exchange("CME")
             .bar_length(1)
             .start_time_sec(1)
@@ -334,7 +334,7 @@ async fn load_time_bar_replay_sends_the_request_as_given() {
         handle
             .load_time_bar_replay(
                 TimeBarReplayRequest::new()
-                    .symbol("ESH6")
+                    .symbol("ESZ6")
                     .exchange("CME")
                     .bar_type(BarType::DailyBar)
                     .bar_type_period(1)
@@ -367,7 +367,7 @@ async fn load_tick_bar_replay_refuses_an_invalid_request_without_sending_it() {
     let err = handle
         .load_tick_bar_replay(
             TickBarReplayRequest::new()
-                .symbol("ESH6")
+                .symbol("ESZ6")
                 .bar_length(1)
                 .start_time_sec(1000)
                 .end_time_sec(1)
@@ -390,7 +390,7 @@ async fn load_time_bar_replay_refuses_an_invalid_request_without_sending_it() {
     let err = handle
         .load_time_bar_replay(
             TimeBarReplayRequest::new()
-                .symbol("ESH6")
+                .symbol("ESZ6")
                 .exchange("CME")
                 .bar_type_period(1)
                 .start_time_sec(1)
@@ -473,7 +473,7 @@ async fn a_dropped_load_leaves_the_session_usable() {
         let handle = handle.clone();
         tokio::spawn(async move {
             handle
-                .load_ticks_all("ESH6".into(), "CME".into(), 1, 1000)
+                .load_ticks_all("ESZ6".into(), "CME".into(), 1, 1000)
                 .await
         })
     };
@@ -504,7 +504,7 @@ async fn a_dropped_load_leaves_the_session_usable() {
         let handle = handle.clone();
         tokio::spawn(async move {
             handle
-                .load_ticks_all("ESH6".into(), "CME".into(), 1, 1000)
+                .load_ticks_all("ESZ6".into(), "CME".into(), 1, 1000)
                 .await
         })
     };
@@ -527,7 +527,7 @@ async fn a_load_dropped_before_the_plant_sends_it_is_never_sent() {
     let handle = handle_for(&plant, command_sender);
 
     // Queue the request, then drop the call before the plant picks it up.
-    let mut load = Box::pin(handle.load_ticks_all("ESH6".into(), "CME".into(), 1, 1000));
+    let mut load = Box::pin(handle.load_ticks_all("ESZ6".into(), "CME".into(), 1, 1000));
     assert!(load.as_mut().now_or_never().is_none());
     drop(load);
 
@@ -548,7 +548,7 @@ async fn load_time_bars_all_continues_a_cut_reply_on_the_original_request() {
         tokio::spawn(async move {
             handle
                 .load_time_bars_all(
-                    "ESH6".into(),
+                    "ESZ6".into(),
                     "CME".into(),
                     crate::TimeBarType::MinuteBar,
                     1,
@@ -621,7 +621,7 @@ async fn a_refused_continuation_fails_the_load() {
             handle
                 .load_volume_profile_minute_bars(
                     VolumeProfileMinuteBarsRequest::new()
-                        .symbol("ESH6")
+                        .symbol("ESZ6")
                         .exchange("CME")
                         .bar_type_period(1)
                         .start_time_sec(1)
@@ -686,7 +686,7 @@ async fn a_load_dropped_mid_replay_is_released_without_another_frame() {
     let (mut plant, command_sender, mut client) = plant_with_wire().await;
     let handle = handle_for(&plant, command_sender);
 
-    let mut load = Box::pin(handle.load_ticks_all("ESH6".into(), "CME".into(), 1, 1000));
+    let mut load = Box::pin(handle.load_ticks_all("ESZ6".into(), "CME".into(), 1, 1000));
     assert!(load.as_mut().now_or_never().is_none());
 
     let command = plant.request_receiver.recv().await.unwrap();
@@ -733,7 +733,7 @@ async fn a_load_dropped_while_waiting_for_room_in_the_queue_is_never_sent() {
         handle.sender.try_send(abandoned_load()).unwrap();
     }
 
-    let mut load = Box::pin(handle.load_ticks_all("ESH6".into(), "CME".into(), 1, 1000));
+    let mut load = Box::pin(handle.load_ticks_all("ESZ6".into(), "CME".into(), 1, 1000));
     assert!(load.as_mut().now_or_never().is_none());
     drop(load);
 

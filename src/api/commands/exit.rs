@@ -13,7 +13,7 @@ use crate::{error::RithmicError, types::ManualOrAutoEntry};
 /// use rithmic_rs::RithmicExitPosition;
 /// # fn main() -> Result<(), rithmic_rs::RithmicError> {
 /// let one = RithmicExitPosition::new()
-///     .symbol("ESM6")
+///     .symbol("ESZ6")
 ///     .exchange("CME")
 ///     .build()?;
 /// let all = RithmicExitPosition::new().build()?;
@@ -25,7 +25,7 @@ use crate::{error::RithmicError, types::ManualOrAutoEntry};
 #[non_exhaustive]
 #[must_use = "a command does nothing until passed to a plant handle"]
 pub struct RithmicExitPosition {
-    /// Trading symbol (e.g., "ESM6"). Unset together with `exchange`, the
+    /// Trading symbol (e.g., "ESZ6"). Unset together with `exchange`, the
     /// exit flattens every position on the account.
     pub symbol: Option<String>,
     /// Exchange code (e.g., "CME"). Comes as a pair with `symbol`.
@@ -112,7 +112,7 @@ mod tests {
         assert!(RithmicExitPosition::new().build().is_ok());
 
         // One of the pair alone is refused, as is an empty member.
-        assert!(RithmicExitPosition::new().symbol("ESM6").build().is_err());
+        assert!(RithmicExitPosition::new().symbol("ESZ6").build().is_err());
         assert!(RithmicExitPosition::new().exchange("CME").build().is_err());
         assert!(
             RithmicExitPosition::new()
@@ -123,7 +123,7 @@ mod tests {
         );
         assert!(
             RithmicExitPosition::new()
-                .symbol("ESM6")
+                .symbol("ESZ6")
                 .exchange("")
                 .build()
                 .is_err()
@@ -131,7 +131,7 @@ mod tests {
 
         assert!(
             RithmicExitPosition::new()
-                .symbol("ESM6")
+                .symbol("ESZ6")
                 .exchange("CME")
                 .build()
                 .is_ok()

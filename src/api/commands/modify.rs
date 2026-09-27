@@ -25,7 +25,7 @@ use crate::{
 /// // "123456" is the basket_id from the order notification.
 /// let modification = RithmicModifyOrder::new()
 ///     .id("123456")
-///     .symbol("ESH6")
+///     .symbol("ESZ6")
 ///     .exchange("CME")
 ///     .quantity(2)
 ///     .price(5005.0)
@@ -43,7 +43,7 @@ pub struct RithmicModifyOrder {
     pub id: String,
     /// Exchange code (e.g., "CME"). Required.
     pub exchange: String,
-    /// Trading symbol (e.g., "ESH6"). Required.
+    /// Trading symbol (e.g., "ESZ6"). Required.
     pub symbol: String,
     /// The order's quantity after the change. Must be at least 1.
     pub quantity: i32,
@@ -255,7 +255,7 @@ mod tests {
     fn modify(price_type: OrderType) -> RithmicModifyOrder {
         RithmicModifyOrder::new()
             .id("b")
-            .symbol("ESM6")
+            .symbol("ESZ6")
             .exchange("CME")
             .quantity(1)
             .price_type(price_type)

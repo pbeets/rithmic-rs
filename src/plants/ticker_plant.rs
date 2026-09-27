@@ -168,7 +168,7 @@ pub(crate) enum TickerPlantCommand {
 ///     handle.login().await?;
 ///
 ///     // Subscribe to market data for a symbol
-///     handle.subscribe("ESH6", "CME").await?;
+///     handle.subscribe("ESZ6", "CME").await?;
 ///
 ///     // Process incoming updates
 ///     loop {
@@ -677,7 +677,7 @@ impl RithmicTickerPlantHandle {
     /// [`RithmicMessage::LastTrade`] and [`RithmicMessage::BestBidOffer`].
     ///
     /// # Arguments
-    /// * `symbol` - The trading symbol (e.g., "ESH6")
+    /// * `symbol` - The trading symbol (e.g., "ESZ6")
     /// * `exchange` - The exchange code (e.g., "CME")
     ///
     /// # Returns
@@ -704,7 +704,7 @@ impl RithmicTickerPlantHandle {
     /// [`get_depth_by_order_snapshot`](Self::get_depth_by_order_snapshot).
     ///
     /// # Arguments
-    /// * `symbol` - The trading symbol (e.g., "ESH6")
+    /// * `symbol` - The trading symbol (e.g., "ESZ6")
     /// * `exchange` - The exchange code (e.g., "CME")
     ///
     /// # Returns
@@ -733,7 +733,7 @@ impl RithmicTickerPlantHandle {
     /// [`subscribe`](Self::subscribe) asked for.
     ///
     /// # Arguments
-    /// * `symbol` - The trading symbol (e.g., "ESH6")
+    /// * `symbol` - The trading symbol (e.g., "ESZ6")
     /// * `exchange` - The exchange code (e.g., "CME")
     ///
     /// # Returns
@@ -756,7 +756,7 @@ impl RithmicTickerPlantHandle {
     /// Unsubscribe from order book depth-by-order updates for a specific symbol
     ///
     /// # Arguments
-    /// * `symbol` - The trading symbol (e.g., "ESH6")
+    /// * `symbol` - The trading symbol (e.g., "ESZ6")
     /// * `exchange` - The exchange code (e.g., "CME")
     ///
     /// # Returns
@@ -807,7 +807,7 @@ impl RithmicTickerPlantHandle {
     /// Subscribe to instrument status updates for a specific symbol
     ///
     /// # Arguments
-    /// * `symbol` - The trading symbol (e.g., "ESH6")
+    /// * `symbol` - The trading symbol (e.g., "ESZ6")
     /// * `exchange` - The exchange code (e.g., "CME")
     ///
     /// # Returns
@@ -834,7 +834,7 @@ impl RithmicTickerPlantHandle {
     /// Unsubscribe from instrument status updates for a specific symbol
     ///
     /// # Arguments
-    /// * `symbol` - The trading symbol (e.g., "ESH6")
+    /// * `symbol` - The trading symbol (e.g., "ESZ6")
     /// * `exchange` - The exchange code (e.g., "CME")
     ///
     /// # Returns
@@ -862,7 +862,7 @@ impl RithmicTickerPlantHandle {
     /// `request_depth_by_order_updates` (proto 104) for full depth-by-order streaming.
     ///
     /// # Arguments
-    /// * `symbol` - The trading symbol (e.g., "ESH6")
+    /// * `symbol` - The trading symbol (e.g., "ESZ6")
     /// * `exchange` - The exchange code (e.g., "CME")
     ///
     /// # Returns
@@ -893,7 +893,7 @@ impl RithmicTickerPlantHandle {
     /// dedicated depth-by-order stream instead.
     ///
     /// # Arguments
-    /// * `symbol` - The trading symbol (e.g., "ESH6")
+    /// * `symbol` - The trading symbol (e.g., "ESZ6")
     /// * `exchange` - The exchange code (e.g., "CME")
     ///
     /// # Returns
@@ -916,7 +916,7 @@ impl RithmicTickerPlantHandle {
     /// Subscribe to session price updates for a specific symbol
     ///
     /// # Arguments
-    /// * `symbol` - The trading symbol (e.g., "ESH6")
+    /// * `symbol` - The trading symbol (e.g., "ESZ6")
     /// * `exchange` - The exchange code (e.g., "CME")
     ///
     /// # Returns
@@ -943,7 +943,7 @@ impl RithmicTickerPlantHandle {
     /// Unsubscribe from session price updates for a specific symbol
     ///
     /// # Arguments
-    /// * `symbol` - The trading symbol (e.g., "ESH6")
+    /// * `symbol` - The trading symbol (e.g., "ESZ6")
     /// * `exchange` - The exchange code (e.g., "CME")
     ///
     /// # Returns
@@ -966,7 +966,7 @@ impl RithmicTickerPlantHandle {
     /// Subscribe to quote statistics updates for a specific symbol
     ///
     /// # Arguments
-    /// * `symbol` - The trading symbol (e.g., "ESH6")
+    /// * `symbol` - The trading symbol (e.g., "ESZ6")
     /// * `exchange` - The exchange code (e.g., "CME")
     ///
     /// # Returns
@@ -993,7 +993,7 @@ impl RithmicTickerPlantHandle {
     /// Unsubscribe from quote statistics updates for a specific symbol
     ///
     /// # Arguments
-    /// * `symbol` - The trading symbol (e.g., "ESH6")
+    /// * `symbol` - The trading symbol (e.g., "ESZ6")
     /// * `exchange` - The exchange code (e.g., "CME")
     ///
     /// # Returns
@@ -1016,7 +1016,7 @@ impl RithmicTickerPlantHandle {
     /// Subscribe to indicator price updates for a specific symbol
     ///
     /// # Arguments
-    /// * `symbol` - The trading symbol (e.g., "ESH6")
+    /// * `symbol` - The trading symbol (e.g., "ESZ6")
     /// * `exchange` - The exchange code (e.g., "CME")
     ///
     /// # Returns
@@ -1043,7 +1043,7 @@ impl RithmicTickerPlantHandle {
     /// Unsubscribe from indicator price updates for a specific symbol
     ///
     /// # Arguments
-    /// * `symbol` - The trading symbol (e.g., "ESH6")
+    /// * `symbol` - The trading symbol (e.g., "ESZ6")
     /// * `exchange` - The exchange code (e.g., "CME")
     ///
     /// # Returns
@@ -1066,7 +1066,7 @@ impl RithmicTickerPlantHandle {
     /// Subscribe to open interest updates for a specific symbol
     ///
     /// # Arguments
-    /// * `symbol` - The trading symbol (e.g., "ESH6")
+    /// * `symbol` - The trading symbol (e.g., "ESZ6")
     /// * `exchange` - The exchange code (e.g., "CME")
     ///
     /// # Returns
@@ -1093,7 +1093,7 @@ impl RithmicTickerPlantHandle {
     /// Unsubscribe from open interest updates for a specific symbol
     ///
     /// # Arguments
-    /// * `symbol` - The trading symbol (e.g., "ESH6")
+    /// * `symbol` - The trading symbol (e.g., "ESZ6")
     /// * `exchange` - The exchange code (e.g., "CME")
     ///
     /// # Returns
@@ -1119,7 +1119,7 @@ impl RithmicTickerPlantHandle {
     /// `AdjustedClose` update bits.
     ///
     /// # Arguments
-    /// * `symbol` - The trading symbol (e.g., "ESH6")
+    /// * `symbol` - The trading symbol (e.g., "ESZ6")
     /// * `exchange` - The exchange code (e.g., "CME")
     ///
     /// # Returns
@@ -1153,7 +1153,7 @@ impl RithmicTickerPlantHandle {
     /// This reverses [`subscribe_end_of_day_prices`](Self::subscribe_end_of_day_prices).
     ///
     /// # Arguments
-    /// * `symbol` - The trading symbol (e.g., "ESH6")
+    /// * `symbol` - The trading symbol (e.g., "ESZ6")
     /// * `exchange` - The exchange code (e.g., "CME")
     ///
     /// # Returns
@@ -1181,7 +1181,7 @@ impl RithmicTickerPlantHandle {
     /// Subscribe to order price limit updates for a specific symbol
     ///
     /// # Arguments
-    /// * `symbol` - The trading symbol (e.g., "ESH6")
+    /// * `symbol` - The trading symbol (e.g., "ESZ6")
     /// * `exchange` - The exchange code (e.g., "CME")
     ///
     /// # Returns
@@ -1208,7 +1208,7 @@ impl RithmicTickerPlantHandle {
     /// Unsubscribe from order price limit updates for a specific symbol
     ///
     /// # Arguments
-    /// * `symbol` - The trading symbol (e.g., "ESH6")
+    /// * `symbol` - The trading symbol (e.g., "ESZ6")
     /// * `exchange` - The exchange code (e.g., "CME")
     ///
     /// # Returns
@@ -1231,7 +1231,7 @@ impl RithmicTickerPlantHandle {
     /// Subscribe to symbol margin rate updates for a specific symbol
     ///
     /// # Arguments
-    /// * `symbol` - The trading symbol (e.g., "ESH6")
+    /// * `symbol` - The trading symbol (e.g., "ESZ6")
     /// * `exchange` - The exchange code (e.g., "CME")
     ///
     /// # Returns
@@ -1258,7 +1258,7 @@ impl RithmicTickerPlantHandle {
     /// Unsubscribe from symbol margin rate updates for a specific symbol
     ///
     /// # Arguments
-    /// * `symbol` - The trading symbol (e.g., "ESH6")
+    /// * `symbol` - The trading symbol (e.g., "ESZ6")
     /// * `exchange` - The exchange code (e.g., "CME")
     ///
     /// # Returns
@@ -1284,7 +1284,7 @@ impl RithmicTickerPlantHandle {
     /// this waits for all of them.
     ///
     /// # Arguments
-    /// * `symbol` - The trading symbol (e.g., "ESH6")
+    /// * `symbol` - The trading symbol (e.g., "ESZ6")
     /// * `exchange` - The exchange code (e.g., "CME")
     ///
     /// # Returns
@@ -1494,7 +1494,7 @@ impl RithmicTickerPlantHandle {
     /// Get how much has traded at each price for a symbol.
     ///
     /// # Arguments
-    /// * `symbol` - The trading symbol (e.g., "ESH6")
+    /// * `symbol` - The trading symbol (e.g., "ESZ6")
     /// * `exchange` - The exchange code (e.g., "CME")
     ///
     /// # Returns
@@ -1524,7 +1524,7 @@ impl RithmicTickerPlantHandle {
     /// delivery, plus the settlement method and unit of measure.
     ///
     /// # Arguments
-    /// * `symbol` - The trading symbol (e.g., "ESH6")
+    /// * `symbol` - The trading symbol (e.g., "ESZ6")
     /// * `exchange` - The exchange code (e.g., "CME")
     ///
     /// # Returns
@@ -1553,7 +1553,7 @@ impl RithmicTickerPlantHandle {
     /// tick size, point value, trading hours, and other specifications.
     ///
     /// # Arguments
-    /// * `symbol` - The trading symbol (e.g., "ESH6")
+    /// * `symbol` - The trading symbol (e.g., "ESZ6")
     /// * `exchange` - The exchange code (e.g., "CME")
     ///
     /// # Returns

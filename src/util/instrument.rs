@@ -23,7 +23,7 @@ use crate::rti::ResponseReferenceData;
 #[derive(Debug, Clone, Default)]
 #[non_exhaustive]
 pub struct InstrumentInfo {
-    /// Trading symbol (e.g., "ESH4")
+    /// Trading symbol (e.g., "ESZ6")
     pub symbol: String,
     /// Exchange code (e.g., "CME")
     pub exchange: String,
@@ -195,7 +195,7 @@ mod tests {
     fn test_try_from_missing_exchange() {
         let data = ResponseReferenceData {
             template_id: 15,
-            symbol: Some("ESH4".to_string()),
+            symbol: Some("ESZ6".to_string()),
             exchange: None,
             ..Default::default()
         };
@@ -209,7 +209,7 @@ mod tests {
     fn test_try_from_success() {
         let data = ResponseReferenceData {
             template_id: 15,
-            symbol: Some("ESH4".to_string()),
+            symbol: Some("ESZ6".to_string()),
             exchange: Some("CME".to_string()),
             symbol_name: Some("E-mini S&P 500".to_string()),
             product_code: Some("ES".to_string()),
@@ -222,7 +222,7 @@ mod tests {
         };
 
         let info = InstrumentInfo::try_from(&data).unwrap();
-        assert_eq!(info.symbol, "ESH4");
+        assert_eq!(info.symbol, "ESZ6");
         assert_eq!(info.exchange, "CME");
         assert_eq!(info.name, Some("E-mini S&P 500".to_string()));
         assert_eq!(info.product_code, Some("ES".to_string()));

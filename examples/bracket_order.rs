@@ -1,138 +1,120 @@
-//! Example: Place a bracket order (entry with profit target and stop loss)
-//!
-//! A bracket order consists of:
-//! - Entry order: your initial position (Buy or Sell)
-//! - Profit target: limit order to take profits at a specified tick distance
-//! - Stop loss: stop order to limit losses at a specified tick distance
-//!
-//! The listener below prints each order notification as it arrives.
+//! Place a bracket order: a limit entry that, once filled, gets a profit target
+//! and a stop loss. The entry rests below the market and is cancelled at the end.
 //!
 //! Run with: cargo run --example bracket_order
+//! Env: SYMBOL, EXCHANGE (see examples/README.md)
 
-use tokio::sync::broadcast::error::RecvError;
-use tracing::info;
+#[path = "shared/common.rs"]
+mod common;
+
+use std::time::Duration;
+
+use tokio::{
+    sync::broadcast::error::RecvError,
+    time::{Instant, timeout_at},
+};
+use tracing::{info, warn};
 
 use rithmic_rs::{
-    ConnectStrategy, OrderSide, OrderType, RithmicAccount, RithmicBracketOrder, RithmicConfig,
-    RithmicEnv, RithmicError, RithmicOrderPlant, TimeInForce,
-    plants::subscription::SubscriptionFilter, rti::messages::RithmicMessage,
+    ConnectStrategy, OrderSide, OrderType, RithmicAccount, RithmicBracketOrder, RithmicCancelOrder,
+    RithmicConfig, RithmicEnv, RithmicOrderPlant, TimeInForce, rti::messages::RithmicMessage,
 };
 
-/// Spawns a task to listen for order notifications
-fn spawn_order_listener(mut receiver: SubscriptionFilter) {
-    tokio::spawn(async move {
-        loop {
-            match receiver.recv().await {
-                Ok(update) => {
-                    if let Some(error) = &update.error {
-                        info!("Message error: {}", error);
-                    }
-
-                    match &update.message {
-                        RithmicMessage::HeartbeatTimeout
-                            if matches!(update.error, Some(RithmicError::RequestRejected(_))) => {}
-                        RithmicMessage::HeartbeatTimeout
-                        | RithmicMessage::ForcedLogout(_)
-                        | RithmicMessage::ConnectionError => {
-                            info!("Connection lost");
-                            break;
-                        }
-                        RithmicMessage::RithmicOrderNotification(notif) => {
-                            info!(
-                                "Rithmic order: status={:?} symbol={} qty={} price={:?} basket_id={}",
-                                notif.status,
-                                notif.symbol.as_deref().unwrap_or("?"),
-                                notif.quantity.unwrap_or(0),
-                                notif.price,
-                                notif.basket_id.as_deref().unwrap_or("?")
-                            );
-                        }
-                        RithmicMessage::ExchangeOrderNotification(notif) => {
-                            info!(
-                                "Exchange order: status={:?} symbol={} filled_qty={} avg_price={:?}",
-                                notif.status.as_deref().unwrap_or("?"),
-                                notif.symbol.as_deref().unwrap_or("?"),
-                                notif.total_fill_size.unwrap_or(0),
-                                notif.avg_fill_price
-                            );
-                        }
-                        RithmicMessage::BracketUpdates(bracket) => {
-                            info!(
-                                "Bracket update: basket_id={} target_ticks={:?} stop_ticks={:?}",
-                                bracket.basket_id.as_deref().unwrap_or("?"),
-                                bracket.target_ticks,
-                                bracket.stop_ticks
-                            );
-                        }
-                        _ => {}
-                    }
-                }
-                Err(RecvError::Closed) => {
-                    info!("Subscription channel closed");
-                    break;
-                }
-                Err(RecvError::Lagged(n)) => {
-                    info!("Listener lagged, missed {} messages", n);
-                }
-            }
-        }
-    });
-}
+const ENV: RithmicEnv = RithmicEnv::Demo;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenvy::dotenv().ok();
     tracing_subscriber::fmt().init();
+    let config = RithmicConfig::from_env(ENV)?;
+    let account = RithmicAccount::from_env(ENV)?;
+    let exchange = common::exchange();
+    let symbol = common::symbol();
 
-    // Connect to the order plant (use Demo for paper trading)
-    let config = RithmicConfig::from_env(RithmicEnv::Demo)?;
-    let account = RithmicAccount::from_env(RithmicEnv::Demo)?;
     let order_plant = RithmicOrderPlant::connect(&config, ConnectStrategy::Retry).await?;
-    let handle = order_plant.get_handle(&account);
-
-    // Login to the order plant
+    let mut handle = order_plant.get_handle(&account);
     handle.login().await?;
-    info!("Logged in to order plant");
 
-    // Subscribe to order and bracket updates
-    handle.subscribe_order_updates().await?;
-    handle.subscribe_bracket_updates().await?;
-    info!("Subscribed to order and bracket updates");
+    // Subscribe before placing, or the first notifications are gone.
+    for reply in [
+        handle.subscribe_order_updates().await?,
+        handle.subscribe_bracket_updates().await?,
+    ] {
+        if let Some(e) = &reply.error {
+            warn!("subscribe refused: {e}");
+        }
+    }
 
-    // Spawn listener task before placing orders (fire-and-forget, runs until disconnect)
-    // Use resubscribe() to get a new receiver from the same broadcast channel
-    let listener_receiver = handle.subscription_receiver.resubscribe();
-    spawn_order_listener(listener_receiver);
-
-    // Define the bracket order
-    // Note: Update symbol to a valid front-month contract for your use case
-    let bracket_order = RithmicBracketOrder::new()
-        .symbol("ESU6")
-        .exchange("CME")
+    // A buy far below the market rests and never fills. 4000 suits ES;
+    // other products need their own price.
+    let order = RithmicBracketOrder::new()
+        .symbol(&symbol)
+        .exchange(&exchange)
         .quantity(1)
         .action(OrderSide::Buy)
         .price_type(OrderType::Limit)
         .duration(TimeInForce::Day)
         .localid("example-bracket-1")
-        .price(5000.00) // Entry limit price
-        .target(20) // Take profit 20 ticks above entry
-        .stop(10) // Stop loss 10 ticks below entry
+        .price(4000.0)
+        .target(20) // ticks in your favour
+        .stop(10) // ticks against you
         .build()?;
 
-    info!("Placing bracket order: {:?}", bracket_order);
+    let responses = handle.place_bracket_order(order).await?;
+    if let Some(e) = responses.iter().find_map(|r| r.error.as_ref()) {
+        warn!("bracket refused: {e}");
+    }
+    let basket_id = responses.iter().find_map(|r| match &r.message {
+        RithmicMessage::ResponseBracketOrder(r) => r.basket_id.clone(),
+        _ => None,
+    });
 
-    // Place the bracket order
-    let responses = handle.place_bracket_order(bracket_order).await?;
-    for resp in &responses {
-        info!("Order response: {:?}", resp);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let update = match timeout_at(deadline, handle.subscription_receiver.recv()).await {
+            Err(_) => break,
+            Ok(Ok(update)) => update,
+            // Lagged may have swallowed a ConnectionError; the deadline keeps this loop from hanging.
+            Ok(Err(RecvError::Lagged(n))) => {
+                warn!("missed {n} updates");
+                continue;
+            }
+            Ok(Err(RecvError::Closed)) => break,
+        };
+        // A refused heartbeat also carries an error, but the connection is fine.
+        if let Some(e) = &update.error {
+            warn!("update error: {e}");
+            if e.is_connection_issue() {
+                break;
+            }
+        }
+
+        match &update.message {
+            RithmicMessage::RithmicOrderNotification(n) => info!(
+                "order: status={:?} basket_id={:?} price={:?}",
+                n.status, n.basket_id, n.price
+            ),
+            RithmicMessage::ExchangeOrderNotification(n) => info!(
+                "exchange: status={:?} filled={:?} avg_price={:?}",
+                n.status, n.total_fill_size, n.avg_fill_price
+            ),
+            RithmicMessage::BracketUpdates(b) => info!(
+                "bracket: basket_id={:?} target_ticks={:?} stop_ticks={:?}",
+                b.basket_id, b.target_ticks, b.stop_ticks
+            ),
+            _ => {}
+        }
     }
 
-    // Keep the main task alive to receive notifications
-    // In a real application, you'd have other logic here or wait for a shutdown signal
-    tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
+    if let Some(id) = basket_id {
+        let reply = handle
+            .cancel_order(RithmicCancelOrder::new().id(id).build()?)
+            .await?;
+        if let Some(e) = reply.iter().find_map(|r| r.error.as_ref()) {
+            warn!("cancel refused: {e}");
+        }
+    }
 
     handle.disconnect().await?;
-    info!("Disconnected from order plant");
-
     Ok(())
 }

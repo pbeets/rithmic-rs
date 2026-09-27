@@ -90,7 +90,9 @@ pub(crate) enum ReplayQuery {
 /// ```no_run
 /// # use rithmic_rs::{RithmicResponse, rti::messages::RithmicMessage};
 /// # fn demo(ticks: Vec<RithmicResponse>) {
-/// for response in &ticks {
+/// // The last entry is the end marker; see below.
+/// let Some((_end, records)) = ticks.split_last() else { return };
+/// for response in records {
 ///     if let RithmicMessage::ResponseTickBarReplay(tick) = &response.message {
 ///         println!("{:?} @ {:?}", tick.close_price, tick.data_bar_ssboe);
 ///     }
@@ -101,10 +103,10 @@ pub(crate) enum ReplayQuery {
 /// Three things to know about the shape of that `Vec`:
 ///
 /// - **The last entry is an end marker, not data.** Rithmic closes every replay
-///   with a response that carries no bar. Matching on the message type as above
-///   skips it; counting `responses.len()` does not, so subtract one if you want
-///   a record count. If the server ended the replay early, the call still
-///   returns `Ok` and this entry has [`error`](RithmicResponse::error) set.
+///   with a response of the same message type that carries no bar, so
+///   matching on the type does not skip it. Split it off with `split_last`, as
+///   above. If the server ended the replay early, the call still returns `Ok`
+///   and this entry has [`error`](RithmicResponse::error) set.
 /// - **Times are Unix seconds as `i32`,** both going in and coming back. This
 ///   is Rithmic's own type and it overflows in 2038. Daily and weekly time bars
 ///   are the exception: they use `YYYYMMDD` dates; see
@@ -172,7 +174,7 @@ pub(crate) enum ReplayQuery {
 ///
 ///     // Every trade in the last hour, however many that is.
 ///     let ticks = handle
-///         .load_ticks_all("ESU6".to_string(), "CME".to_string(), now - 3600, now)
+///         .load_ticks_all("ESZ6".to_string(), "CME".to_string(), now - 3600, now)
 ///         .await?;
 ///
 ///     for response in &ticks {
@@ -569,7 +571,7 @@ impl RithmicHistoryPlantHandle {
     /// yours to decide.
     ///
     /// # Arguments
-    /// * `symbol` - The trading symbol, e.g. `"ESU6"`
+    /// * `symbol` - The trading symbol, e.g. `"ESZ6"`
     /// * `exchange` - The exchange code, e.g. `"CME"`
     /// * `start_time_sec` - Window start, Unix seconds
     /// * `end_time_sec` - Window end, Unix seconds
@@ -600,7 +602,7 @@ impl RithmicHistoryPlantHandle {
     /// window.
     ///
     /// # Arguments
-    /// * `symbol` - The trading symbol, e.g. `"ESU6"`
+    /// * `symbol` - The trading symbol, e.g. `"ESZ6"`
     /// * `exchange` - The exchange code, e.g. `"CME"`
     /// * `bar_length` - Trades per bar, at least 1
     /// * `start_time_sec` - Window start, Unix seconds
@@ -656,7 +658,7 @@ impl RithmicHistoryPlantHandle {
     /// # use rithmic_rs::{RithmicHistoryPlantHandle, TickBarReplayRequest};
     /// # async fn example(handle: RithmicHistoryPlantHandle) -> Result<(), Box<dyn std::error::Error>> {
     /// let request = TickBarReplayRequest::new()
-    ///     .symbol("ESU6")
+    ///     .symbol("ESZ6")
     ///     .exchange("CME")
     ///     .bar_length(5)
     ///     .start_time_sec(1_750_000_000)
@@ -782,7 +784,45 @@ impl RithmicHistoryPlantHandle {
     /// [`load_time_bars`](Self::load_time_bars).
     ///
     /// # Example
-    /// See [`load_historical_bars.rs`](https://github.com/pbeets/rithmic-rs/blob/main/examples/load_historical_bars.rs).
+    ///
+    /// Replays occasionally stop early without notice, so for a large window
+    /// check the newest bar and ask for the rest:
+    ///
+    /// ```no_run
+    /// # use rithmic_rs::{RithmicHistoryPlantHandle, TimeBarType, rti::messages::RithmicMessage};
+    /// # async fn demo(handle: RithmicHistoryPlantHandle, start: i32, end: i32)
+    /// #     -> Result<(), rithmic_rs::RithmicError> {
+    /// let (symbol, exchange) = ("ESZ6".to_string(), "CME".to_string());
+    /// let mut bars = handle
+    ///     .load_time_bars_all(symbol.clone(), exchange.clone(), TimeBarType::MinuteBar, 1, start, end)
+    ///     .await?;
+    ///
+    /// loop {
+    ///     let newest = bars.iter().rev().find_map(|r| match &r.message {
+    ///         RithmicMessage::ResponseTimeBarReplay(bar) => bar.marker,
+    ///         _ => None,
+    ///     });
+    ///     let Some(from) = newest else { break };
+    ///     if from + 60 > end {
+    ///         break;
+    ///     }
+    ///
+    ///     let rest = handle
+    ///         .load_time_bars_all(symbol.clone(), exchange.clone(), TimeBarType::MinuteBar, 1, from, end)
+    ///         .await?;
+    ///     if rest.iter().all(|r| r.rp_code().is_some_and(|c| !c.is_empty())) {
+    ///         break; // nothing newer came back
+    ///     }
+    ///
+    ///     bars.pop(); // the previous reply's end marker
+    ///     bars.extend(rest);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// [`backfill.rs`](https://github.com/pbeets/rithmic-rs/blob/main/examples/backfill.rs)
+    /// does this for several windows and reports whether each is complete.
     pub async fn load_time_bars_all(
         &self,
         symbol: String,
@@ -824,7 +864,7 @@ impl RithmicHistoryPlantHandle {
     /// window.
     ///
     /// # Arguments
-    /// * `symbol` - The trading symbol, e.g. `"ESU6"`
+    /// * `symbol` - The trading symbol, e.g. `"ESZ6"`
     /// * `exchange` - The exchange code, e.g. `"CME"`
     /// * `bar_type` - `SecondBar`, `MinuteBar`, `DailyBar` or `WeeklyBar`
     /// * `bar_type_period` - How many of those units per bar
@@ -881,7 +921,7 @@ impl RithmicHistoryPlantHandle {
     /// # use rithmic_rs::{RithmicHistoryPlantHandle, TimeBarReplayRequest, TimeBarType};
     /// # async fn example(handle: RithmicHistoryPlantHandle) -> Result<(), Box<dyn std::error::Error>> {
     /// let request = TimeBarReplayRequest::new()
-    ///     .symbol("ESU6")
+    ///     .symbol("ESZ6")
     ///     .exchange("CME")
     ///     .bar_type(TimeBarType::MinuteBar)
     ///     .bar_type_period(1)
@@ -998,7 +1038,7 @@ impl RithmicHistoryPlantHandle {
     /// to stop.
     ///
     /// # Arguments
-    /// * `symbol` - The trading symbol, e.g. `"ESU6"`
+    /// * `symbol` - The trading symbol, e.g. `"ESZ6"`
     /// * `exchange` - The exchange code, e.g. `"CME"`
     /// * `bar_type` - `SecondBar`, `MinuteBar`, `DailyBar` or `WeeklyBar`
     /// * `bar_type_period` - How many of those units per bar
@@ -1035,7 +1075,7 @@ impl RithmicHistoryPlantHandle {
     /// [`RithmicMessage::TickBar`].
     ///
     /// # Arguments
-    /// * `symbol` - The trading symbol, e.g. `"ESU6"`
+    /// * `symbol` - The trading symbol, e.g. `"ESZ6"`
     /// * `exchange` - The exchange code, e.g. `"CME"`
     /// * `bar_type` - `TickBar`, `RangeBar` or `VolumeBar`
     /// * `bar_sub_type` - `Regular` or `Custom`

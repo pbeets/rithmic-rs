@@ -31,7 +31,7 @@
 //!
 //!     // Login and subscribe to market data
 //!     handle.login().await?;
-//!     handle.subscribe("ESM6", "CME").await?;
+//!     handle.subscribe("ESZ6", "CME").await?;
 //!
 //!     // Process real-time updates
 //!     loop {
@@ -128,6 +128,11 @@
 //! another task, and treat `Lagged` as a sign to resync (for example,
 //! re-request open orders and positions).
 //!
+//! What you missed may include the `ConnectionError` that says the plant
+//! stopped. The channel stays open while you hold the plant, so a loop that
+//! only waits on `recv` would then wait forever. Resync by reconnecting, or
+//! bound the loop with a timeout.
+//!
 //! The channel is allocated in full when the plant connects, about 22 MB at
 //! the default size. Raise the capacity for more headroom during bursts, or
 //! lower it to save memory:
@@ -154,12 +159,13 @@
 //! Handle methods return [`Result<_, RithmicError>`], but `Ok` does not mean
 //! success. A request the server turned down still comes back as `Ok`, with the
 //! reason in `resp.error`. Code that checks only for `Err` will read it as
-//! having worked. `login` is the exception — a rejected login is an `Err`.
+//! having worked. `login` is the exception — a rejected login is an `Err` —
+//! and so is a `load_*` replay the server refuses to continue.
 //!
 //! ```ignore
 //! use rithmic_rs::RithmicError;
 //!
-//! match handle.subscribe("ESM6", "CME").await {
+//! match handle.subscribe("ESZ6", "CME").await {
 //!     Ok(resp) => match &resp.error {
 //!         Some(err) => eprintln!("Server rejected: {err}"),
 //!         None => { /* success */ }
@@ -241,6 +247,26 @@
 //!
 //! This is a broadcast channel, so anything sent while you hold no receiver is
 //! gone. Keep it for as long as the plant lives.
+//!
+//! ### Order rejections
+//!
+//! `place_order` returning `Ok` with no `error` means Rithmic took the order;
+//! the exchange has not answered yet. A later rejection arrives on the order
+//! plant's channel as an `ExchangeOrderNotification` whose `notify_type` is
+//! `NotifyType::Reject`, with the reason in `text`:
+//!
+//! ```
+//! use rithmic_rs::RithmicResponse;
+//! use rithmic_rs::rti::{exchange_order_notification::NotifyType, messages::RithmicMessage};
+//!
+//! fn log_rejection(update: &RithmicResponse) {
+//!     if let RithmicMessage::ExchangeOrderNotification(n) = &update.message
+//!         && n.notify_type == Some(NotifyType::Reject as i32)
+//!     {
+//!         eprintln!("order {:?} rejected: {:?}", n.basket_id, n.text);
+//!     }
+//! }
+//! ```
 //!
 //! ### When a plant stops
 //!

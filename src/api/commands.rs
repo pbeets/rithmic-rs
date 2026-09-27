@@ -9,7 +9,7 @@
 //! use rithmic_rs::{OrderSide, OrderType, RithmicOrder};
 //!
 //! let order = RithmicOrder::new()
-//!     .symbol("ESH6")
+//!     .symbol("ESZ6")
 //!     .exchange("CME")
 //!     .quantity(1)
 //!     .transaction_type(OrderSide::Buy)

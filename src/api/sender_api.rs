@@ -1673,7 +1673,7 @@ mod tests {
     /// callers build one.
     fn advanced_bracket() -> RithmicBracketOrder {
         RithmicBracketOrder::new()
-            .symbol("ESM6")
+            .symbol("ESZ6")
             .exchange("CME")
             .quantity(3)
             .action(OrderSide::Buy)
@@ -1714,7 +1714,7 @@ mod tests {
     fn order_request_override_uses_supplied_account() {
         let mut api = RithmicSenderApi::new(&test_config());
         let order = RithmicOrder {
-            symbol: "ESM6".to_string(),
+            symbol: "ESZ6".to_string(),
             exchange: "CME".to_string(),
             quantity: 1,
             price: Some(5000.0),
@@ -1764,7 +1764,7 @@ mod tests {
     fn bracket_request_retains_static_shape_for_simple_helper() {
         let mut api = RithmicSenderApi::new(&test_config());
         let bracket = RithmicBracketOrder::new()
-            .symbol("ESM6")
+            .symbol("ESZ6")
             .exchange("CME")
             .quantity(1)
             .action(OrderSide::Buy)
@@ -1929,7 +1929,7 @@ mod tests {
     fn oco_request_override_uses_supplied_account() {
         let mut api = RithmicSenderApi::new(&test_config());
         let leg1 = RithmicOcoOrderLeg {
-            symbol: "ESM6".to_string(),
+            symbol: "ESZ6".to_string(),
             exchange: "CME".to_string(),
             quantity: 1,
             price: Some(5000.0),
@@ -1944,7 +1944,7 @@ mod tests {
             ..Default::default()
         };
         let leg2 = RithmicOcoOrderLeg {
-            symbol: "ESM6".to_string(),
+            symbol: "ESZ6".to_string(),
             exchange: "CME".to_string(),
             quantity: 1,
             price: Some(4990.0),
@@ -1985,7 +1985,7 @@ mod tests {
 
         let (buf, _) = api.request_exit_position(
             &RithmicExitPosition::new()
-                .symbol("ESM6")
+                .symbol("ESZ6")
                 .exchange("CME")
                 .build()
                 .expect("valid exit"),
@@ -2107,7 +2107,7 @@ mod tests {
         let mut api = RithmicSenderApi::new(&test_config());
 
         let leg0 = RithmicOcoOrderLeg {
-            symbol: "ESM6".to_string(),
+            symbol: "ESZ6".to_string(),
             exchange: "CME".to_string(),
             quantity: 1,
             price: Some(5000.0),
@@ -2168,7 +2168,7 @@ mod tests {
         assert_eq!(request.symbol.len(), 3);
         assert_eq!(
             request.symbol,
-            vec!["ESM6".to_string(), "NQM6".to_string(), "CLM6".to_string()]
+            vec!["ESZ6".to_string(), "NQM6".to_string(), "CLM6".to_string()]
         );
         assert_eq!(
             request.exchange,
@@ -2236,7 +2236,7 @@ mod tests {
     fn order_request_sets_trail_by_price_id() {
         let mut api = RithmicSenderApi::new(&test_config());
         let order = RithmicOrder {
-            symbol: "ESM6".to_string(),
+            symbol: "ESZ6".to_string(),
             exchange: "CME".to_string(),
             quantity: 1,
             price: Some(0.0),
@@ -2264,7 +2264,7 @@ mod tests {
         let modify = |trigger_price: Option<f64>| {
             let mut modification = RithmicModifyOrder::new()
                 .id("b")
-                .symbol("ESM6")
+                .symbol("ESZ6")
                 .exchange("CME")
                 .quantity(2)
                 .price(5005.0)
@@ -2302,7 +2302,7 @@ mod tests {
         ] {
             let modification = RithmicModifyOrder::new()
                 .id("b")
-                .symbol("ESM6")
+                .symbol("ESZ6")
                 .exchange("CME")
                 .quantity(1)
                 .price(5005.0)
@@ -2323,7 +2323,7 @@ mod tests {
         for price_type in [OrderType::Market, OrderType::Limit] {
             let modification = RithmicModifyOrder::new()
                 .id("b")
-                .symbol("ESM6")
+                .symbol("ESZ6")
                 .exchange("CME")
                 .quantity(1)
                 .price(5005.0)
@@ -2348,7 +2348,7 @@ mod tests {
         let mut api = RithmicSenderApi::new(&test_config());
         let modification = RithmicModifyOrder::new()
             .id("b")
-            .symbol("ESM6")
+            .symbol("ESZ6")
             .exchange("CME")
             .quantity(1)
             .price(5005.0)
@@ -2373,7 +2373,7 @@ mod tests {
         let mut api = RithmicSenderApi::new(&test_config());
         let modification = RithmicModifyOrder::new()
             .id("b")
-            .symbol("ESM6")
+            .symbol("ESZ6")
             .exchange("CME")
             .quantity(1)
             .price(5005.0)
@@ -2647,7 +2647,7 @@ mod tests {
         trigger_price: Option<f64>,
     ) -> RithmicOcoOrderLeg {
         RithmicOcoOrderLeg {
-            symbol: "ESM6".to_string(),
+            symbol: "ESZ6".to_string(),
             exchange: "CME".to_string(),
             quantity: 1,
             price,
@@ -2687,7 +2687,7 @@ mod tests {
     fn order_request_omits_price_when_the_order_has_none() {
         let mut api = RithmicSenderApi::new(&test_config());
         let mut order = RithmicOrder {
-            symbol: "ESM6".to_string(),
+            symbol: "ESZ6".to_string(),
             exchange: "CME".to_string(),
             quantity: 1,
             price: None,
@@ -2747,7 +2747,7 @@ mod tests {
     fn order_request_omits_an_empty_user_tag() {
         let mut api = RithmicSenderApi::new(&test_config());
         let mut order = RithmicOrder {
-            symbol: "ESM6".to_string(),
+            symbol: "ESZ6".to_string(),
             exchange: "CME".to_string(),
             quantity: 1,
             price: Some(5000.0),
@@ -2855,7 +2855,7 @@ mod tests {
     fn order_request_carries_the_requested_order_placement() {
         let mut api = RithmicSenderApi::new(&test_config());
         let mut order = RithmicOrder {
-            symbol: "ESM6".to_string(),
+            symbol: "ESZ6".to_string(),
             exchange: "CME".to_string(),
             quantity: 1,
             price_type: OrderType::Market,
@@ -2972,7 +2972,7 @@ mod tests {
         let (buf, _) = api.request_modify_order(
             &RithmicModifyOrder::new()
                 .id("basket-1")
-                .symbol("ESM6")
+                .symbol("ESZ6")
                 .exchange("CME")
                 .quantity(1)
                 .price(5000.0)
@@ -3018,7 +3018,7 @@ mod tests {
             (OrderSide::Sell, request_new_order::TransactionType::Sell),
         ] {
             let order = RithmicOrder::new()
-                .symbol("ESM6")
+                .symbol("ESZ6")
                 .exchange("CME")
                 .quantity(1)
                 .transaction_type(side)
@@ -3039,7 +3039,7 @@ mod tests {
             ),
         ] {
             let bracket = RithmicBracketOrder::new()
-                .symbol("ESM6")
+                .symbol("ESZ6")
                 .exchange("CME")
                 .quantity(1)
                 .action(side)
@@ -3066,7 +3066,7 @@ mod tests {
                 request_exit_position::OrderPlacement::Manual,
             ),
         ] {
-            let mut exit = RithmicExitPosition::new().symbol("ESM6").exchange("CME");
+            let mut exit = RithmicExitPosition::new().symbol("ESZ6").exchange("CME");
             if let Some(placement) = placement {
                 exit = exit.manual_or_auto(placement);
             }
@@ -3095,7 +3095,7 @@ mod tests {
 
         let (buf, _) = api.request_exit_position(
             &RithmicExitPosition::new()
-                .symbol("ESM6")
+                .symbol("ESZ6")
                 .exchange("CME")
                 .build()
                 .expect("valid exit"),
@@ -3103,7 +3103,7 @@ mod tests {
         );
         let request: RequestExitPosition = decode_request(&buf);
 
-        assert_eq!(request.symbol.as_deref(), Some("ESM6"));
+        assert_eq!(request.symbol.as_deref(), Some("ESZ6"));
         assert_eq!(request.exchange.as_deref(), Some("CME"));
     }
 
@@ -3117,7 +3117,7 @@ mod tests {
             .exchange("CME");
 
         let bracket = RithmicBracketOrder {
-            symbol: "ESM6".to_string(),
+            symbol: "ESZ6".to_string(),
             exchange: "CME".to_string(),
             quantity: 1,
             price: Some(5000.0),
@@ -3131,7 +3131,7 @@ mod tests {
 
         let modification = RithmicModifyOrder::new()
             .id("b")
-            .symbol("ESM6")
+            .symbol("ESZ6")
             .exchange("CME")
             .quantity(1)
             .price(5005.0)
@@ -3149,7 +3149,7 @@ mod tests {
 
         let (buf, _) = api.request_exit_position(
             &RithmicExitPosition::new()
-                .symbol("ESM6")
+                .symbol("ESZ6")
                 .exchange("CME")
                 .window_name("chart")
                 .trading_algorithm("mean-reversion")
@@ -3180,7 +3180,7 @@ mod tests {
 
         let (buf, _) = api.request_bracket_order(
             RithmicBracketOrder::new()
-                .symbol("ESM6")
+                .symbol("ESZ6")
                 .exchange("CME")
                 .quantity(1)
                 .price_type(OrderType::Market)
@@ -3199,7 +3199,7 @@ mod tests {
     fn order_request_encodes_the_timing_and_window_fields() {
         let mut api = RithmicSenderApi::new(&test_config());
         let order = RithmicOrder {
-            symbol: "ESM6".to_string(),
+            symbol: "ESZ6".to_string(),
             exchange: "CME".to_string(),
             quantity: 1,
             price: Some(5000.0),
@@ -3227,7 +3227,7 @@ mod tests {
     fn order_request_encodes_the_if_touched_group() {
         let mut api = RithmicSenderApi::new(&test_config());
         let order = RithmicOrder {
-            symbol: "ESM6".to_string(),
+            symbol: "ESZ6".to_string(),
             exchange: "CME".to_string(),
             quantity: 1,
             price: Some(5000.0),
@@ -3266,7 +3266,7 @@ mod tests {
     fn order_request_omits_an_unset_if_touched_price() {
         let mut api = RithmicSenderApi::new(&test_config());
         let order = RithmicOrder {
-            symbol: "ESM6".to_string(),
+            symbol: "ESZ6".to_string(),
             exchange: "CME".to_string(),
             quantity: 1,
             price: Some(5000.0),
@@ -3289,7 +3289,7 @@ mod tests {
     fn order_request_omits_the_optional_groups_when_unset() {
         let mut api = RithmicSenderApi::new(&test_config());
         let order = RithmicOrder {
-            symbol: "ESM6".to_string(),
+            symbol: "ESZ6".to_string(),
             exchange: "CME".to_string(),
             quantity: 1,
             price: Some(5000.0),
@@ -3338,14 +3338,14 @@ mod tests {
                 ),
             ),
             (12, api.request_logout()),
-            (14, api.request_reference_data("ESM6", "CME")),
+            (14, api.request_reference_data("ESZ6", "CME")),
             (16, api.request_rithmic_system_info()),
             (18, api.request_heartbeat()),
             (20, api.request_rithmic_system_gateway_info(None)),
             (
                 100,
                 api.request_market_data_update(
-                    "ESM6",
+                    "ESZ6",
                     "CME",
                     vec![UpdateBits::LastTrade],
                     Request::Subscribe,
@@ -3372,21 +3372,21 @@ mod tests {
             ),
             (111, api.request_product_codes(None, None)),
             (113, api.request_front_month_contract("ES", "CME", false)),
-            (115, api.request_depth_by_order_snapshot("ESM6", "CME")),
+            (115, api.request_depth_by_order_snapshot("ESZ6", "CME")),
             (
                 117,
                 api.request_depth_by_order_updates(
-                    "ESM6",
+                    "ESZ6",
                     "CME",
                     request_depth_by_order_updates::Request::Subscribe,
                 ),
             ),
-            (119, api.request_get_volume_at_price("ESM6", "CME")),
-            (121, api.request_auxilliary_reference_data("ESM6", "CME")),
+            (119, api.request_get_volume_at_price("ESZ6", "CME")),
+            (121, api.request_auxilliary_reference_data("ESZ6", "CME")),
             (
                 200,
                 api.request_time_bar_update(
-                    "ESM6",
+                    "ESZ6",
                     "CME",
                     request_time_bar_update::BarType::SecondBar,
                     1,
@@ -3400,7 +3400,7 @@ mod tests {
             (
                 204,
                 api.request_tick_bar_update(
-                    "ESM6",
+                    "ESZ6",
                     "CME",
                     request_tick_bar_update::BarType::TickBar,
                     request_tick_bar_update::BarSubType::Regular,

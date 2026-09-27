@@ -208,7 +208,7 @@ mod tests {
 
     fn oco_leg(exchange: &str, trade_route: Option<&str>) -> RithmicOcoOrderLeg {
         let mut leg = RithmicOcoOrderLeg::new()
-            .symbol("ESM6")
+            .symbol("ESZ6")
             .exchange(exchange)
             .quantity(1)
             .transaction_type(OrderSide::Buy)

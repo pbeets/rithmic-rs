@@ -1,29 +1,26 @@
-//! Example: backfill history and check that you got all of it
-//!
-//! Loads several windows for the front-month contract and prints one line per
-//! check: rows, time taken, the last timestamp against the end of the window,
-//! and whether the server ended the replay early. When the server cuts a large
-//! reply short, the plant's INFO log shows it asking the server to continue.
+//! Backfills several windows and checks each one arrived whole: one line per
+//! load with rows, time taken, the last timestamp against the window end, and
+//! whether the server ended the replay early.
 //!
 //! Run with: cargo run --release --example backfill
-//!
-//! To use another environment or product, change the constants below.
+//! Env: SYMBOL, EXCHANGE (see examples/README.md)
 
-use tracing::info;
+#[path = "shared/common.rs"]
+mod common;
 
 use std::{
     future::Future,
     time::{Duration, Instant, SystemTime},
 };
 
+use tracing::info;
+
 use rithmic_rs::{
     ConnectStrategy, RithmicConfig, RithmicEnv, RithmicError, RithmicHistoryPlant, RithmicResponse,
-    RithmicTickerPlant, TimeBarType, VolumeProfileMinuteBarsRequest, rti::messages::RithmicMessage,
+    TimeBarType, VolumeProfileMinuteBarsRequest, rti::messages::RithmicMessage,
 };
 
 const ENV: RithmicEnv = RithmicEnv::Demo;
-const PRODUCT: &str = "MNQ";
-const EXCHANGE: &str = "CME";
 
 /// How long each check may take before it is reported as a failure.
 const TIMEOUT: Duration = Duration::from_secs(300);
@@ -57,7 +54,6 @@ fn yyyymmdd(secs: i32) -> i32 {
 }
 
 /// The time a data frame covers: a bar's `marker`, or a tick's close time.
-/// `None` for the end marker and anything else without data.
 fn data_time(response: &RithmicResponse) -> Option<i32> {
     match &response.message {
         RithmicMessage::ResponseTimeBarReplay(bar) => bar.marker,
@@ -98,9 +94,12 @@ async fn check(
         Ok(Ok(responses)) => responses,
     };
 
-    let rows = responses.iter().filter(|r| data_time(r).is_some()).count();
-    let last = responses.iter().rev().find_map(data_time);
-    let ended_early = responses.last().and_then(|r| r.error.as_ref());
+    let Some((end, records)) = responses.split_last() else {
+        info!("FAIL  {name}: empty reply after {elapsed:.1}s");
+        return None;
+    };
+    let rows = records.len();
+    let last = records.iter().rev().find_map(data_time);
 
     let coverage = match (last, times) {
         (None, _) => "no data".to_string(),
@@ -111,7 +110,7 @@ async fn check(
         (Some(last), Times::Dates) => format!("last bar {last}, window ends {window_end}"),
     };
 
-    match ended_early {
+    match &end.error {
         Some(error) => info!(
             "CHECK {name}: {rows} rows in {elapsed:.1}s, {coverage}; the server ended it early: {error}"
         ),
@@ -127,23 +126,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt().init();
 
     let config = RithmicConfig::from_env(ENV)?;
-
-    // Contracts roll, so ask the ticker plant for the front month.
-    let ticker = RithmicTickerPlant::connect(&config, ConnectStrategy::Retry).await?;
-    let ticker_handle = ticker.get_handle();
-    ticker_handle.login().await?;
-
-    let response = ticker_handle
-        .get_front_month_contract(PRODUCT, EXCHANGE, false)
-        .await?;
-    ticker_handle.disconnect().await?;
-
-    let symbol = match &response.message {
-        RithmicMessage::ResponseFrontMonthContract(fm) => fm.trading_symbol.clone(),
-        _ => None,
-    }
-    .ok_or_else(|| format!("no front month for {PRODUCT} on {EXCHANGE}"))?;
-    let exchange = EXCHANGE.to_string();
+    let exchange = common::exchange();
+    let symbol = common::symbol();
 
     let history_plant = RithmicHistoryPlant::connect(&config, ConnectStrategy::Retry).await?;
     let history = history_plant.get_handle();
@@ -152,7 +136,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let now = now_secs();
     info!("Backfilling {symbol} on {exchange}");
 
-    // 1. Large enough to pass the 10,000-record cap.
+    // Large enough to pass the 10,000-record cap.
     let last_minute = check(
         "30 days of 1-minute bars",
         now,
@@ -168,27 +152,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     )
     .await;
 
-    // 2. Large enough that the server cuts the reply short; the log above each
-    //    verdict shows the plant asking it to continue.
-    let volume_profile = |days: i32| {
-        VolumeProfileMinuteBarsRequest::new()
-            .symbol(&symbol)
-            .exchange(&exchange)
-            .bar_type_period(1)
-            .start_time_sec(now - days * DAY)
-            .end_time_sec(now)
-            .resume_bars(true)
-    };
+    // Large enough that the server cuts the reply short and the plant has to
+    // ask it to continue.
+    let volume_profile = VolumeProfileMinuteBarsRequest::new()
+        .symbol(&symbol)
+        .exchange(&exchange)
+        .bar_type_period(1)
+        .start_time_sec(now - 7 * DAY)
+        .end_time_sec(now)
+        .resume_bars(true);
     check(
         "7 days of 1-minute volume profile",
         now,
         Times::UnixSeconds,
-        history.load_volume_profile_minute_bars(volume_profile(7)),
+        history.load_volume_profile_minute_bars(volume_profile),
     )
     .await;
 
-    // 3. Every trade in the 4 hours up to the last minute bar, so the window
-    //    has trading in it even on a weekend.
+    // The 4 hours up to the last minute bar, so the window has trading in it
+    // even on a weekend.
     let tick_end = last_minute.unwrap_or(now);
     check(
         "4 hours of ticks",
@@ -203,7 +185,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     )
     .await;
 
-    // 4. Daily bars take their window as YYYYMMDD dates, not Unix seconds.
+    // Daily bars take their window as YYYYMMDD dates, not Unix seconds.
     let (from, to) = (yyyymmdd(now - 100 * DAY), yyyymmdd(now));
     check(
         "100 days of daily bars",
@@ -216,35 +198,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             1,
             from,
             to,
-        ),
-    )
-    .await;
-
-    // 5. Giving up on a replay leaves the plant ready for the next request.
-    let dropped = tokio::time::timeout(
-        Duration::from_secs(2),
-        history.load_volume_profile_minute_bars(volume_profile(7)),
-    )
-    .await;
-    info!(
-        "      dropped a replay after 2s: {}",
-        if dropped.is_err() {
-            "gave up mid-replay"
-        } else {
-            "it finished first, so nothing was dropped"
-        }
-    );
-    check(
-        "a request after the dropped replay",
-        now,
-        Times::UnixSeconds,
-        history.load_time_bars(
-            symbol.clone(),
-            exchange.clone(),
-            TimeBarType::MinuteBar,
-            1,
-            now - DAY,
-            now,
         ),
     )
     .await;

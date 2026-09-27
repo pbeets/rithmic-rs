@@ -24,7 +24,7 @@ use crate::{
 /// use rithmic_rs::{OrderSide, OrderType, RithmicOrder};
 /// # fn main() -> Result<(), rithmic_rs::RithmicError> {
 /// let order = RithmicOrder::new()
-///     .symbol("ESH6")
+///     .symbol("ESZ6")
 ///     .exchange("CME")
 ///     .quantity(1)
 ///     .transaction_type(OrderSide::Buy)
@@ -45,7 +45,7 @@ use crate::{
 /// use rithmic_rs::{OrderSide, OrderType, RithmicOrder};
 /// # fn main() -> Result<(), rithmic_rs::RithmicError> {
 /// let order = RithmicOrder::new()
-///     .symbol("ESH6")
+///     .symbol("ESZ6")
 ///     .exchange("CME")
 ///     .quantity(1)
 ///     .transaction_type(OrderSide::Buy)
@@ -64,7 +64,7 @@ use crate::{
 /// use rithmic_rs::{OrderSide, OrderType, RithmicOrder};
 /// # fn main() -> Result<(), rithmic_rs::RithmicError> {
 /// let order = RithmicOrder::new()
-///     .symbol("ESH6")
+///     .symbol("ESZ6")
 ///     .exchange("CME")
 ///     .quantity(1)
 ///     .transaction_type(OrderSide::Sell)
@@ -81,7 +81,7 @@ use crate::{
 #[non_exhaustive]
 #[must_use = "an order does nothing until passed to a plant handle"]
 pub struct RithmicOrder {
-    /// Trading symbol (e.g., "ESH6")
+    /// Trading symbol (e.g., "ESZ6")
     pub symbol: String,
     /// Exchange code (e.g., "CME")
     pub exchange: String,
@@ -293,7 +293,7 @@ mod tests {
 
     fn order() -> RithmicOrder {
         RithmicOrder::new()
-            .symbol("ESH6")
+            .symbol("ESZ6")
             .exchange("CME")
             .quantity(1)
             .transaction_type(OrderSide::Buy)

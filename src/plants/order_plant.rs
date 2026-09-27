@@ -238,6 +238,14 @@ pub(crate) enum OrderPlantCommand {
 /// One plant is one WebSocket connection and one login. Get a handle per
 /// account with [`get_handle`](Self::get_handle).
 ///
+/// # Trade routes
+///
+/// Orders go out on the route the exchange publishes for your account, which
+/// the plant loads at [`login`](RithmicOrderPlantHandle::login) and keeps
+/// current. Set `.trade_route(..)` on a command to override it. With no route,
+/// nothing is sent and the call returns [`RithmicError::NoTradeRoute`]; check
+/// one with [`trade_route_for`](RithmicOrderPlantHandle::trade_route_for).
+///
 /// # Connection Health Monitoring
 ///
 /// The subscription receiver carries order notifications (fills,
@@ -275,7 +283,7 @@ pub(crate) enum OrderPlantCommand {
 ///     // Place a bracket order
 ///     let bracket_order =
 ///         RithmicBracketOrder::new()
-///             .symbol("ESH6")
+///             .symbol("ESZ6")
 ///             .exchange("CME")
 ///             .quantity(1)
 ///             .action(OrderSide::Buy)
@@ -1203,7 +1211,7 @@ impl RithmicOrderPlantHandle {
     /// # use rithmic_rs::{OrderSide, OrderType, RithmicBracketOrder, RithmicOrderPlantHandle};
     /// # async fn example(handle: RithmicOrderPlantHandle) -> Result<(), Box<dyn std::error::Error>> {
     /// let order = RithmicBracketOrder::new()
-    ///     .symbol("ESH6")
+    ///     .symbol("ESZ6")
     ///     .exchange("CME")
     ///     .quantity(1)
     ///     .action(OrderSide::Buy)
@@ -1637,7 +1645,7 @@ impl RithmicOrderPlantHandle {
     /// # use rithmic_rs::{OrderSide, OrderType, RithmicOrder, RithmicOrderPlantHandle};
     /// # async fn example(handle: RithmicOrderPlantHandle) -> Result<(), Box<dyn std::error::Error>> {
     /// let order = RithmicOrder::new()
-    ///     .symbol("ESH6")
+    ///     .symbol("ESZ6")
     ///     .exchange("CME")
     ///     .quantity(1)
     ///     .transaction_type(OrderSide::Buy)
@@ -1686,7 +1694,7 @@ impl RithmicOrderPlantHandle {
     /// # use rithmic_rs::{OrderSide, OrderType, RithmicOcoOrder, RithmicOcoOrderLeg, RithmicOrderPlantHandle};
     /// # async fn example(handle: RithmicOrderPlantHandle) -> Result<(), Box<dyn std::error::Error>> {
     /// let take_profit = RithmicOcoOrderLeg::new()
-    ///     .symbol("ESH6")
+    ///     .symbol("ESZ6")
     ///     .exchange("CME")
     ///     .quantity(1)
     ///     .transaction_type(OrderSide::Sell)
@@ -1694,7 +1702,7 @@ impl RithmicOrderPlantHandle {
     ///     .price(5020.0)
     ///     .build()?;
     /// let stop_loss = RithmicOcoOrderLeg::new()
-    ///     .symbol("ESH6")
+    ///     .symbol("ESZ6")
     ///     .exchange("CME")
     ///     .quantity(1)
     ///     .transaction_type(OrderSide::Sell)
@@ -1783,7 +1791,7 @@ impl RithmicOrderPlantHandle {
     /// # use rithmic_rs::{RithmicExitPosition, RithmicOrderPlantHandle};
     /// # async fn example(handle: RithmicOrderPlantHandle) -> Result<(), Box<dyn std::error::Error>> {
     /// // One instrument.
-    /// let one = RithmicExitPosition::new().symbol("ESM6").exchange("CME").build()?;
+    /// let one = RithmicExitPosition::new().symbol("ESZ6").exchange("CME").build()?;
     /// handle.exit_position(one).await?;
     ///
     /// // Every open position on the account.

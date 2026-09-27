@@ -76,7 +76,7 @@ impl std::error::Error for RithmicRequestError {}
 ///
 /// ```ignore
 /// // A `subscribe` the server turns down arrives as `Ok` with `error` set.
-/// match handle.subscribe("ESH6", "CME").await {
+/// match handle.subscribe("ESZ6", "CME").await {
 ///     Ok(resp) => match &resp.error {
 ///         Some(err) => eprintln!("rejected: {err}"),
 ///         None => { /* success */ }

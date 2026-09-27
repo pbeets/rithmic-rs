@@ -7,78 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+No API breaks. Three behavior changes to check when upgrading:
+
+- A `load_*` replay the server refuses to continue now returns
+  `Err(RithmicError::RequestRejected)` instead of partial data.
+- `login()` with a different `LoginConfig` than the plant is already using
+  returns `RithmicError::LoginConflict`.
+- The history plant's subscription channel holds 10,000 messages, down from 20,000.
+
 ### Added
 
-- `RithmicOrderPlant::subscribe_all()` and `RithmicPnlPlant::subscribe_all()`:
-  every account's updates, unfiltered, for proxies that relay a multi-account
-  login.
-- `RithmicConfigBuilder::subscription_capacity()` sets the capacity of each
-  plant's subscription broadcast channel, which is allocated up front
-  (roughly 22 MB per plant at the default of 10,000). The history plant's
-  default drops from 20,000 to 10,000, the same as the other plants: that
-  channel carries only live bar updates and connection events, not `load_*`
-  or replay results.
-- `examples/backfill.rs`: backfills large windows for the front-month
-  contract and reports, for each, whether you got all of it.
-- `RithmicHistoryPlantHandle::load_tick_bar_replay()` and `load_time_bar_replay()`: take a `TickBarReplayRequest` or `TimeBarReplayRequest` as built, reaching fields such as `user_max_count` that the positional loaders do not.
-- `RithmicConfigBuilder::retry_timeout()` and `RithmicConfig::retry_timeout`: bound how long `ConnectStrategy::Retry` and `AlternateWithRetry` keep trying; once it passes, `connect` returns `RithmicError::ConnectionFailed` with the attempt count.
-- `RithmicError::LoginConflict`: returned by a `login()` whose `LoginConfig`
-  differs from the one the plant is logging in, or logged in, with. Disconnect
-  and connect again to change it.
-- `Eq` for `LoginConfig`.
-
-### Deprecated
-
-- `RithmicHistoryPlantHandle::resume_bars()`: the plant now resumes truncated
-  replays itself, and a continuation requested by hand is counted rather than
-  delivered, so the call returns only the acknowledgement.
+- `subscribe_all()` on the order and PnL plants: every account's updates, for
+  multi-account logins.
+- `RithmicConfigBuilder::subscription_capacity()` to size the subscription channels.
+- `RithmicConfigBuilder::retry_timeout()` to bound how long `Retry` and
+  `AlternateWithRetry` keep trying.
+- `load_time_bar_replay()` and `load_tick_bar_replay()`, which take a full
+  request struct.
+- `examples/backfill.rs`: backfill large windows and check you got all of them.
 
 ### Changed
 
-- The history plant now continues replays the server cuts short after about
-  four seconds of streaming, so the `load_*` methods return the whole window.
-- A `load_*` replay the server refuses to continue now returns
-  `Err(RithmicError::RequestRejected)` instead of the partial data.
-- A frame that fails to decode mid-replay no longer discards the frames
-  received before it.
-- Frames that arrive after a request is answered are counted and logged once
-  at `INFO`, instead of a `WARN` per frame and a full dump at `ERROR`.
-- If a caller stops waiting mid-reply, the rest of the reply is no longer held
-  in memory.
-- An unexpected final response is logged as one `ERROR` line, not a dump.
-- An update that arrives with no subscriber is logged as one `DEBUG` line,
-  instead of a `WARN` with a dump of the frame for every update.
-- A plant logs in once per connection. Concurrent `login()` calls share one
-  login request and all get its reply, and `login()` on a plant that is
-  already logged in returns the kept reply without sending anything. A
-  `login()` with a different `LoginConfig` fails with
-  `RithmicError::LoginConflict`.
+- The history plant resumes replays the server cuts short after about four
+  seconds, so `load_*` returns the whole window.
+- A plant logs in once per connection. Concurrent `login()` calls share one request.
+- Much quieter logs: per-frame `WARN`/`ERROR` dumps are now single `INFO`/`DEBUG` lines.
+- Examples share one layout, need only the plants they use, never block on a quiet
+  market, and cancel the orders they place. Setup is in `examples/README.md`.
+
+### Deprecated
+
+- `RithmicHistoryPlantHandle::resume_bars()`: the plant resumes replays itself.
 
 ### Fixed
 
-- `UserAccountUpdate` frames from template version 5.42 (template 358) are now
-  decoded instead of surfacing as `UnknownTemplate`. A generated-schema coverage
-  test now exercises every inbound template and fails when a future `src/rti.rs`
-  refresh adds an unregistered message or a template decodes as the wrong type.
-- Daily and weekly time bars are documented as taking `YYYYMMDD` dates, not
-  Unix seconds. Unix seconds there return an empty reply rather than an error.
-- The `_all` loaders' docs no longer claim they always return the whole window.
-- A login whose caller stops waiting after the reply arrives no longer leaves
-  the plant without heartbeats.
-- An order plant login whose caller stops waiting after the reply, for example
-  under `tokio::time::timeout`, now still loads the login scope and trade
-  routes, so orders no longer fail with `NoTradeRoute`.
-- `disconnect()`, `abort()`, a dropped connection or a timed-out write during
-  a login now fails that login with `ConnectionClosed` at once, instead of
-  leaving it waiting.
-- `RithmicResponse::resume_key` is documented as the key the server's
-  truncation notice carries.
-- `RithmicError::SendFailed` displays as "WebSocket send failed". It dropped
-  "or timed out": a timed-out write fails calls with `ConnectionClosed`.
-- Doc fixes across the public API, among them: `RithmicConfig` builder
-  examples that failed `build()` without `url` and `beta_url`, the
-  order-history and PnL snapshot methods said to return data their replies
-  don't carry, and `get_system_info` said to return gateway info and services.
+- `UserAccountUpdate` (template 358) decodes instead of arriving as `UnknownTemplate`.
+- An order plant login abandoned by its caller (e.g. under `timeout`) still loads
+  trade routes, so orders no longer fail with `NoTradeRoute`, and keeps its heartbeats.
+- `disconnect()`, `abort()` or a dropped connection during `login()` fails it
+  with `ConnectionClosed` at once instead of leaving it waiting.
+- Public API docs rewritten. Daily and weekly bars are now documented as taking
+  `YYYYMMDD` dates, not Unix seconds. The history docs now say a replay's end
+  marker has the same message type as its data and must be split off.
 
 ## [3.1.0]
 

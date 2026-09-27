@@ -1,28 +1,27 @@
-//! Example: Connect to the RithmicTickerPlant
+//! Setup check: connect to the ticker plant and log in. If this works, your
+//! credentials and environment are right.
+//!
+//! Run with: cargo run --example connect
+
 use tracing::info;
 
 use rithmic_rs::{ConnectStrategy, RithmicConfig, RithmicEnv, RithmicTickerPlant};
 
+const ENV: RithmicEnv = RithmicEnv::Demo;
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Load environment variables from .env file
     dotenvy::dotenv().ok();
-
-    // Create configuration from environment variables
-    let config = RithmicConfig::from_env(RithmicEnv::Demo)?;
-
     tracing_subscriber::fmt().init();
+    let config = RithmicConfig::from_env(ENV)?;
 
     let ticker_plant = RithmicTickerPlant::connect(&config, ConnectStrategy::Retry).await?;
-    let ticker_plant_handle = ticker_plant.get_handle();
+    let handle = ticker_plant.get_handle();
 
-    let resp = ticker_plant_handle.login().await?;
-
+    let resp = handle.login().await?;
     info!("Login response: {:#?}", resp);
 
-    ticker_plant_handle.disconnect().await?;
-
+    handle.disconnect().await?;
     info!("Disconnected from Rithmic");
-
     Ok(())
 }

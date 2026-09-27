@@ -40,7 +40,7 @@ fn adjustment(id: &str, ticks: i32, level: Option<i32>) -> RithmicBracketLevelAd
 fn leg(tag: &str) -> RithmicOcoOrderLeg {
     RithmicOcoOrderLeg {
         manual_or_auto: ManualOrAutoEntry::Auto,
-        symbol: "ESM6".to_string(),
+        symbol: "ESZ6".to_string(),
         exchange: "CME".to_string(),
         quantity: 1,
         price: Some(5000.0),
@@ -211,7 +211,7 @@ async fn place_order_through_the_handle_after_close_requested_reports_connection
         std::time::Duration::from_secs(5),
         handle.place_order(
             RithmicOrder::new()
-                .symbol("ESH6")
+                .symbol("ESZ6")
                 .exchange("CME")
                 .quantity(1)
                 .price_type(OrderType::Market),
@@ -945,7 +945,7 @@ async fn sent_request<M: prost::Message + Default>(
 
 fn bracket_order() -> RithmicBracketOrder {
     RithmicBracketOrder::new()
-        .symbol("ESM6")
+        .symbol("ESZ6")
         .exchange("CME")
         .quantity(1)
         .action(OrderSide::Buy)
@@ -1066,7 +1066,7 @@ async fn bracket_level_commands_carry_their_level_to_the_wire() {
 /// A bracket that names its own exchange, and optionally its own route.
 fn bracket_order_on(exchange: &str, trade_route: Option<&str>) -> RithmicBracketOrder {
     let mut order = RithmicBracketOrder::new()
-        .symbol("ESM6")
+        .symbol("ESZ6")
         .exchange(exchange)
         .quantity(1)
         .action(OrderSide::Buy)
@@ -1490,7 +1490,7 @@ async fn exit_position_encodes_auto_placement_by_default() {
         handle
             .exit_position(
                 RithmicExitPosition::new()
-                    .symbol("ESM6")
+                    .symbol("ESZ6")
                     .exchange("CME")
                     .build()
                     .expect("valid exit"),

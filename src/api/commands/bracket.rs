@@ -27,7 +27,7 @@ use crate::{
 /// use rithmic_rs::{OrderSide, OrderType, RithmicBracketOrder};
 /// # fn main() -> Result<(), rithmic_rs::RithmicError> {
 /// let order = RithmicBracketOrder::new()
-///     .symbol("ESH6")
+///     .symbol("ESZ6")
 ///     .exchange("CME")
 ///     .quantity(1)
 ///     .action(OrderSide::Buy)
@@ -47,7 +47,7 @@ use crate::{
 /// use rithmic_rs::{OrderSide, OrderType, RithmicBracketOrder};
 /// # fn main() -> Result<(), rithmic_rs::RithmicError> {
 /// let order = RithmicBracketOrder::new()
-///     .symbol("ESM6")
+///     .symbol("ESZ6")
 ///     .exchange("CME")
 ///     .quantity(3)
 ///     .action(OrderSide::Buy)
@@ -88,7 +88,7 @@ pub struct RithmicBracketOrder {
     /// `target_quantity` across all target legs. The crate does not validate
     /// this invariant.
     pub quantity: i32,
-    /// Trading symbol (e.g., "ESH6").
+    /// Trading symbol (e.g., "ESZ6").
     pub symbol: String,
     /// Rithmic bracket shape. When `None`, [`Self::build`] picks the `Static`
     /// variant that matches the legs supplied, and leaves it unset when there
@@ -576,7 +576,7 @@ mod tests {
 
     fn bracket(quantity: i32, price_type: OrderType) -> RithmicBracketOrder {
         RithmicBracketOrder::new()
-            .symbol("ESH6")
+            .symbol("ESZ6")
             .exchange("CME")
             .quantity(quantity)
             .action(OrderSide::Buy)
@@ -677,7 +677,7 @@ mod tests {
     #[test]
     fn the_bracket_sugar_sizes_its_leg_to_the_quantity_set_so_far() {
         let after = RithmicBracketOrder::new()
-            .symbol("ESH6")
+            .symbol("ESZ6")
             .exchange("CME")
             .price_type(OrderType::Market)
             .quantity(3)
@@ -687,7 +687,7 @@ mod tests {
         assert_eq!(after.target_quantity, vec![3]);
 
         let before = RithmicBracketOrder::new()
-            .symbol("ESH6")
+            .symbol("ESZ6")
             .exchange("CME")
             .price_type(OrderType::Market)
             .target(20)

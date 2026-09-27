@@ -677,7 +677,7 @@ impl From<RmsUpdateBits> for request_account_rms_updates::UpdateBits {
 /// use rithmic_rs::VolumeProfileMinuteBarsRequest;
 /// # fn main() -> Result<(), rithmic_rs::RithmicError> {
 /// let request = VolumeProfileMinuteBarsRequest::new()
-///     .symbol("ESH6")
+///     .symbol("ESZ6")
 ///     .exchange("CME")
 ///     .bar_type_period(5)
 ///     .start_time_sec(1_750_000_000)
@@ -693,7 +693,7 @@ impl From<RmsUpdateBits> for request_account_rms_updates::UpdateBits {
 #[non_exhaustive]
 #[must_use = "a request does nothing until passed to the history handle"]
 pub struct VolumeProfileMinuteBarsRequest {
-    /// The trading symbol, e.g. `"ESH6"`.
+    /// The trading symbol, e.g. `"ESZ6"`.
     pub symbol: String,
     /// The exchange code, e.g. `"CME"`.
     pub exchange: String,
@@ -717,7 +717,7 @@ impl VolumeProfileMinuteBarsRequest {
         Self::default()
     }
 
-    /// The trading symbol, e.g. `"ESH6"`.
+    /// The trading symbol, e.g. `"ESZ6"`.
     pub fn symbol(mut self, symbol: impl Into<String>) -> Self {
         self.symbol = symbol.into();
         self
@@ -833,7 +833,7 @@ fn validate_replay_window(
 /// use rithmic_rs::TickBarReplayRequest;
 /// # fn main() -> Result<(), rithmic_rs::RithmicError> {
 /// let request = TickBarReplayRequest::new()
-///     .symbol("ESU6")
+///     .symbol("ESZ6")
 ///     .exchange("CME")
 ///     .bar_length(1)
 ///     .start_time_sec(1_750_000_000)
@@ -850,7 +850,7 @@ fn validate_replay_window(
 #[non_exhaustive]
 #[must_use = "a request does nothing until passed to the history handle"]
 pub struct TickBarReplayRequest {
-    /// The trading symbol, e.g. `"ESU6"`.
+    /// The trading symbol, e.g. `"ESZ6"`.
     pub symbol: String,
     /// The exchange code, e.g. `"CME"`.
     pub exchange: String,
@@ -875,7 +875,7 @@ impl TickBarReplayRequest {
         Self::default()
     }
 
-    /// The trading symbol, e.g. `"ESU6"`.
+    /// The trading symbol, e.g. `"ESZ6"`.
     pub fn symbol(mut self, symbol: impl Into<String>) -> Self {
         self.symbol = symbol.into();
         self
@@ -969,7 +969,7 @@ impl TickBarReplayRequest {
 /// use rithmic_rs::{TimeBarReplayRequest, rti::request_time_bar_replay::BarType};
 /// # fn main() -> Result<(), rithmic_rs::RithmicError> {
 /// let request = TimeBarReplayRequest::new()
-///     .symbol("ESU6")
+///     .symbol("ESZ6")
 ///     .exchange("CME")
 ///     .bar_type(BarType::MinuteBar)
 ///     .bar_type_period(5)
@@ -988,7 +988,7 @@ impl TickBarReplayRequest {
 #[non_exhaustive]
 #[must_use = "a request does nothing until passed to the history handle"]
 pub struct TimeBarReplayRequest {
-    /// The trading symbol, e.g. `"ESU6"`.
+    /// The trading symbol, e.g. `"ESZ6"`.
     pub symbol: String,
     /// The exchange code, e.g. `"CME"`.
     pub exchange: String,
@@ -1014,7 +1014,7 @@ impl TimeBarReplayRequest {
         Self::default()
     }
 
-    /// The trading symbol, e.g. `"ESU6"`.
+    /// The trading symbol, e.g. `"ESZ6"`.
     pub fn symbol(mut self, symbol: impl Into<String>) -> Self {
         self.symbol = symbol.into();
         self
@@ -1272,7 +1272,7 @@ mod tests {
     #[test]
     fn volume_profile_request_rejects_a_missing_or_reversed_window() {
         let request = VolumeProfileMinuteBarsRequest::new()
-            .symbol("ESH6")
+            .symbol("ESZ6")
             .exchange("CME")
             .bar_type_period(5);
 
@@ -1340,7 +1340,7 @@ mod tests {
 
     fn tick_replay() -> TickBarReplayRequest {
         TickBarReplayRequest::new()
-            .symbol("ESU6")
+            .symbol("ESZ6")
             .exchange("CME")
             .bar_length(1)
             .start_time_sec(1_750_000_000)
@@ -1349,7 +1349,7 @@ mod tests {
 
     fn time_replay() -> TimeBarReplayRequest {
         TimeBarReplayRequest::new()
-            .symbol("ESU6")
+            .symbol("ESZ6")
             .exchange("CME")
             .bar_type(TimeBarType::MinuteBar)
             .bar_type_period(5)
