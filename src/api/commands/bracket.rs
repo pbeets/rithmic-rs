@@ -14,6 +14,13 @@ use crate::{
 /// Supports multiple target and stop legs, triggered entry, break-even, trailing
 /// stops, and timed release/cancel.
 ///
+/// Leg quantities are in contracts and leg distances in ticks.
+/// Rithmic's proto names most exit-leg fields without describing them, so the
+/// field docs below say what the name implies, not documented server behaviour.
+///
+/// [`build`](Self::build) checks the order and fills in [`Self::bracket_type`].
+/// The plant handle sends what it is given without checking again.
+///
 /// # Example: one target, one stop
 ///
 /// ```
@@ -59,15 +66,17 @@ use crate::{
 #[non_exhaustive]
 #[must_use = "an order does nothing until passed to a plant handle"]
 pub struct RithmicBracketOrder {
-    /// Buy or Sell.
+    /// Buy or sell on the entry. Defaults to `Buy`.
     pub action: OrderSide,
-    /// Order duration.
+    /// How long the entry stays working. Defaults to `Day`.
     pub duration: TimeInForce,
     /// Exchange code (e.g., "CME").
     pub exchange: String,
-    /// Your identifier for tracking this order.
+    /// Your identifier for this order, sent as `user_tag`. Left off the
+    /// request when empty.
     pub localid: String,
-    /// Order type.
+    /// Entry order type. Defaults to `Limit`. Decides which of `price` and
+    /// `trigger_price` are required.
     pub price_type: OrderType,
     /// Entry price. A market entry does not need one.
     pub price: Option<f64>,
@@ -81,17 +90,17 @@ pub struct RithmicBracketOrder {
     pub quantity: i32,
     /// Trading symbol (e.g., "ESH6").
     pub symbol: String,
-    /// Rithmic bracket shape. `None` means "derive it from the legs supplied";
-    /// [`Self::build`] resolves it from the target and stop legs, and leaves it
-    /// unset when there are none.
+    /// Rithmic bracket shape. When `None`, [`Self::build`] picks the `Static`
+    /// variant that matches the legs supplied, and leaves it unset when there
+    /// are no legs. A value set by hand must match the legs.
     pub bracket_type: Option<BracketType>,
-    /// Exit target quantities, one value per target leg.
+    /// Contracts on each target leg. Pairs by index with `target_ticks`.
     pub target_quantity: Vec<i32>,
-    /// Exit target distances in ticks.
+    /// Distance of each target leg, in ticks.
     pub target_ticks: Vec<i32>,
-    /// Exit stop quantities.
+    /// Contracts on each stop leg. Pairs by index with `stop_ticks`.
     pub stop_quantity: Vec<i32>,
-    /// Exit stop distances in ticks.
+    /// Distance of each stop leg, in ticks.
     pub stop_ticks: Vec<i32>,
     /// Optional if-touched trigger settings.
     pub if_touched: Option<RithmicIfTouchedTrigger>,
@@ -127,9 +136,12 @@ pub struct RithmicBracketOrder {
     pub cancel_at_usecs: Option<i32>,
     /// Cancel order after this many seconds.
     pub cancel_after_secs: Option<i32>,
-    /// Route to send on. `None` uses the route the server published for `exchange`.
+    /// Route to send on. `None` uses the route the server published for
+    /// `exchange`; if there is none, placing the order fails with
+    /// [`RithmicError::NoTradeRoute`] and nothing is sent.
     pub trade_route: Option<String>,
-    /// Whether the order was placed by a human or automatically.
+    /// Whether the order was placed by a human or automatically. Defaults to
+    /// `Auto`.
     pub manual_or_auto: ManualOrAutoEntry,
     /// Originating window name reported to Rithmic.
     pub window_name: Option<String>,
@@ -195,7 +207,7 @@ impl RithmicBracketOrder {
         self
     }
 
-    /// Your identifier for tracking this order.
+    /// Your identifier for this order, sent as `user_tag`.
     pub fn localid(mut self, localid: impl Into<String>) -> Self {
         self.localid = localid.into();
         self
@@ -396,13 +408,15 @@ impl RithmicBracketOrder {
         self
     }
 
-    /// The `order_operation_type` sent to Rithmic.
+    /// The `order_operation_type` sent to Rithmic. Leave it unset unless you
+    /// need a specific grouping; see [`BracketOperationType`].
     pub fn operation_type(mut self, operation_type: BracketOperationType) -> Self {
         self.operation_type = Some(operation_type);
         self
     }
 
-    /// Check the entry carries the prices its [`Self::price_type`] requires:
+    /// Check the entry names an instrument (symbol, exchange, a quantity of at
+    /// least 1) and carries the prices its [`Self::price_type`] requires:
     /// `Limit`, `StopLimit` and `LimitIfTouched` need [`Self::price`];
     /// `StopMarket`, `StopLimit`, `MarketIfTouched` and `LimitIfTouched` need
     /// [`Self::trigger_price`]. `Market` needs neither.
@@ -459,8 +473,9 @@ impl RithmicBracketOrder {
         Ok(())
     }
 
-    /// Validate and return the order, deriving an unset [`Self::bracket_type`]
-    /// from the exit legs supplied.
+    /// Validate and return the order. An unset [`Self::bracket_type`] becomes
+    /// `TargetAndStopStatic`, `TargetOnlyStatic` or `StopOnlyStatic` to match
+    /// the legs, or stays `None` when there are no legs.
     pub fn build(mut self) -> Result<Self, RithmicError> {
         self.validate()?;
 
@@ -504,12 +519,12 @@ impl RithmicBracketOrder {
 #[non_exhaustive]
 #[must_use = "an adjustment does nothing until passed to a plant handle"]
 pub struct RithmicBracketLevelAdjustment {
-    /// The `basket_id` from the order notification
+    /// The `basket_id` from the order notification. Required.
     pub id: String,
-    /// The new distance in ticks
+    /// The new distance in ticks. Not checked by [`Self::build`].
     pub ticks: i32,
     /// Which bracket leg to adjust — a target leg via `adjust_target`, a stop
-    /// leg via `adjust_stop`.
+    /// leg via `adjust_stop`. Sent as given; `None` leaves it off the request.
     pub level: Option<i32>,
 }
 

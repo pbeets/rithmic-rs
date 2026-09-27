@@ -1,3 +1,31 @@
+//! What every plant does, with no I/O: events in, effects out.
+//!
+//! How a request travels, taking
+//! [`RithmicPnlPlantHandle::get_system_info`](crate::RithmicPnlPlantHandle::get_system_info):
+//!
+//! 1. The handle puts the sender half of a oneshot in a command, sends the
+//!    command down the plant's mpsc channel, and awaits the oneshot.
+//! 2. The actor loop, [`Plant::run`](crate::plants::actor::Plant::run), reads
+//!    the command and hands it to [`PlantCore::on_event`] as [`Event::Command`].
+//! 3. The core builds the request, which gets a new request id, registers a
+//!    [`Tag`] under that id in the request handler, and returns
+//!    [`Effect::Send`]. A plant's own commands go to
+//!    [`PlantKind::on_command`], which queues requests on a [`Cx`] for the
+//!    core to register and send the same way.
+//! 4. The actor writes the frame and reports how it went as [`Event::Sent`],
+//!    [`Event::SendFailed`] or [`Event::SendTimedOut`].
+//! 5. The reply arrives. The actor decodes it and hands it in as
+//!    [`Event::Frame`]. The request handler matches it to its id and collects
+//!    the parts of a multi-part reply until the last one.
+//! 6. The handler returns the tag with the whole reply, and the core acts on
+//!    it: [`Tag::Caller`] gets the reply on its oneshot, [`Tag::Login`] moves
+//!    the [`Session`], and [`Tag::Kind`] goes to [`PlantKind::on_reply`].
+//!
+//! Updates, the frames the server sends unasked, skip the request handler and
+//! go to subscribers as [`Effect::Forward`]. History replays are tracked apart
+//! as a [`PendingReplay`](crate::request_handler::PendingReplay), since the
+//! server can cut them short and continue them.
+
 use std::{mem, time::Duration};
 use tracing::{debug, error, info, warn};
 
@@ -229,10 +257,9 @@ impl<K: PlantKind> PlantCore<K> {
         }
     }
 
-    /// Act on a completed reply according to what its request was for.
+    /// Act on a finished request, answered or failed, according to its tag.
     ///
-    /// A login reply never gets here, only a failed login request: an
-    /// accepted login has requests of its own to send, so
+    /// [`Tag::Login`] gets here only when the login request failed:
     /// [`Self::route_reply`] hands every login reply to [`Self::on_login_reply`].
     fn dispatch(&mut self, tag: Tag<K::Tag>, reply: RequestResult) {
         match tag {
@@ -257,14 +284,13 @@ impl<K: PlantKind> PlantCore<K> {
         }
     }
 
-    /// A write that timed out may still sit in the sink, which must be
-    /// treated as poisoned. A half-open TCP connection may not surface through
-    /// the reader, so fail every pending request and broadcast
-    /// `ConnectionError` now rather than letting later sends pile into a dead
-    /// sink. The session is not closed: the loop stops when the next ping
-    /// fails to go out, and a closed session would skip that ping. A login
-    /// still preparing fails with [`RithmicError::ConnectionClosed`] first, so
-    /// its loads settling below cannot complete it on a poisoned sink.
+    /// A write that timed out may still sit in the sink, so treat it as
+    /// poisoned: broadcast `ConnectionError` and fail every pending request
+    /// now, since a half-open TCP connection may never show up on the reader.
+    ///
+    /// The session is not closed: the loop stops when the next ping fails to
+    /// go out, and a closed session would skip that ping. A preparing login
+    /// fails first, so its loads failing below cannot complete it.
     fn on_send_timed_out(&mut self, request_id: &str) {
         self.emit_connection_health_event(
             request_id,
@@ -278,8 +304,8 @@ impl<K: PlantKind> PlantCore<K> {
         self.fail_pending_requests();
     }
 
-    /// Heartbeat, unless the session is not logged in: only while preparing
-    /// or ready, and never once a close is requested.
+    /// Heartbeat while the session is logged in, preparing or ready. Nothing
+    /// goes out before the login is accepted or once a close is requested.
     fn heartbeat(&mut self) {
         if !self.session.heartbeats() {
             return;
@@ -302,16 +328,13 @@ impl<K: PlantKind> PlantCore<K> {
         }
     }
 
-    /// Send a response where it belongs: updates go out on the subscription
-    /// broadcast, replies go to the per-request responder. Responses that
-    /// failed to decode take the same paths. Heartbeats are the one special
-    /// case: a failed heartbeat is also broadcast as `HeartbeatTimeout`, while
-    /// the original frame still resolves any request waiting on it.
+    /// Send a response where it belongs: updates to subscribers, replies to
+    /// the request they answer. A frame that failed to decode takes the same
+    /// paths. Heartbeat replies never reach subscribers as they are.
     fn forward_response(&mut self, response: RithmicResponse) {
-        // A failed heartbeat is broadcast as a synthetic HeartbeatTimeout, but
-        // handle_response must get the original ResponseHeartbeat, not the
-        // synthetic: it dispatches on message type, and a caller awaiting the
-        // heartbeat still needs its oneshot resolved.
+        // Only a failed heartbeat is broadcast, as `HeartbeatTimeout`. The
+        // frame is still routed as a reply, though the core registers no
+        // request for its own heartbeats, so nothing is waiting on it.
         if matches!(response.message, RithmicMessage::ResponseHeartbeat(_)) {
             if response.error.is_some() {
                 self.effects.push(Effect::Broadcast(RithmicResponse {
@@ -434,10 +457,8 @@ impl<K: PlantKind> PlantCore<K> {
 
     /// Continue a replay the venue truncated: send `RequestResumeBars` with
     /// the key its notice carried. The venue acknowledges on the resume's own
-    /// id and streams the rest of the reply on the replay's id, so the
-    /// caller waiting on the replay gets the whole window. The write goes out
-    /// under the replay's id, so a failed write fails the replay itself: its
-    /// caller is the one waiting.
+    /// id and streams the rest on the replay's id. The write is reported under
+    /// the replay's id, so a failed write fails the replay's caller.
     fn resume_truncated_replay(&mut self, resume: Resume) {
         // Nobody would get the rest of a replay whose caller stopped waiting.
         if !self.request_handler.replay_waiting(&resume.request_id) {

@@ -5,6 +5,9 @@
 
 /// Convert Rithmic timestamp (ssboe + usecs) to Unix nanoseconds.
 ///
+/// Both inputs must be non-negative. A negative value panics in debug builds
+/// and gives a meaningless result in release builds.
+///
 /// # Example
 /// ```
 /// use rithmic_rs::rithmic_to_unix_nanos;
@@ -21,6 +24,8 @@ pub fn rithmic_to_unix_nanos(ssboe: i32, usecs: i32) -> u64 {
 /// Convert Rithmic timestamp to Unix nanoseconds with optional nanosecond precision.
 ///
 /// Use this variant for messages that include exchange-level nanosecond timestamps.
+/// `nsecs` is added on top of `usecs`, and `None` gives the same result as
+/// [`rithmic_to_unix_nanos`]. The same non-negative rule applies.
 ///
 /// # Example
 /// ```

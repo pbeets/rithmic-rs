@@ -10,7 +10,7 @@ use crate::{
 /// no bearing on WebSocket/connection health.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum RpCodeClassification {
-    /// Request succeeded (rp_code is empty or `["0"]`).
+    /// Request succeeded: rp_code is empty or starts with `"0"`.
     Success,
     /// Benign empty result — currently only `["7", "no data"]` (case-insensitive).
     KnownBenignEmpty,
@@ -19,10 +19,8 @@ pub(crate) enum RpCodeClassification {
 }
 
 impl RpCodeClassification {
-    /// Converts the classification into an optional structured error.
-    /// `Success` / `KnownBenignEmpty` yield `None`; `RequestRejected` yields
-    /// `Some(RithmicError::RequestRejected(..))` preserving the full rp_code
-    /// payload (including the `None` message for single-element rp_codes).
+    /// `None` for `Success` and `KnownBenignEmpty`; otherwise the rejection as
+    /// [`RithmicError::RequestRejected`], full rp_code kept.
     pub(crate) fn into_error(self) -> Option<RithmicError> {
         match self {
             Self::Success | Self::KnownBenignEmpty => None,
@@ -110,6 +108,7 @@ macro_rules! rp_code_response_variants {
 
 macro_rules! define_response_rp_code_info {
     ($($variant:ident),* $(,)?) => {
+        /// The variant name and `rp_code` of a message that has one.
         pub(crate) fn response_rp_code_info(message: &RithmicMessage) -> Option<(&'static str, &[String])> {
             match message {
                 $(RithmicMessage::$variant(resp) => {
@@ -132,9 +131,8 @@ pub(crate) fn response_rp_code_slice(message: &RithmicMessage) -> Option<&[Strin
 // decode test — e.g. `["7", "an error occurred while parsing data."]` shares
 // code "7" but is a real error.
 pub(crate) fn classify_rp_code(rp_code: &[String]) -> RpCodeClassification {
-    // `rp_code[0] == "0"` is the success signal. Empty rp_code is also treated
-    // as success (defensive — multipart intermediates don't carry rp_code and
-    // short-circuit earlier, but this covers any edge case).
+    // `rp_code[0] == "0"` is success. Empty counts as success too: the data
+    // frames of a multipart reply carry no rp_code and are classified as well.
     if rp_code.is_empty() || rp_code[0] == "0" {
         return RpCodeClassification::Success;
     }

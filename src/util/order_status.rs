@@ -23,7 +23,8 @@ pub const EXPIRED: &str = "expired";
 /// Order status with helpers for checking terminal/active states.
 ///
 /// Parses case-insensitively and handles common variations like "filled" for Complete
-/// and "canceled" (US spelling) for Cancelled.
+/// and "canceled" (US spelling) for Cancelled. Parsing never fails: a string it
+/// does not recognise becomes [`OrderStatus::Unknown`].
 ///
 /// # Example
 /// ```

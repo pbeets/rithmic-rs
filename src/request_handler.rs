@@ -61,8 +61,9 @@ pub(crate) enum Routed<T> {
 /// Matches Rithmic responses to the requests waiting on them.
 ///
 /// A registered request is resolved by a response carrying its id, by
-/// [`Self::fail_request`], or by [`Self::drain_and_drop`] on disconnect. It is
-/// never failed on a clock: the caller owns its own deadline.
+/// [`Self::fail_request`], or by [`Self::drain_and_drop`] on disconnect, and
+/// dropped once its caller stops waiting. It is never failed on a clock: the
+/// caller owns its own deadline.
 ///
 /// The handler keeps a tag `T` for each request and hands it back with the
 /// completed reply, so the plant decides who gets it.
@@ -110,10 +111,8 @@ impl<T: RequestTag> RithmicRequestHandler<T> {
         self.resumes.insert(resume_id, request_id);
     }
 
-    /// Remove a pending request and fail it with `error`.
-    ///
-    /// Also removes any partially-accumulated multi-part responses for the same
-    /// request ID so that `response_vec_map` does not retain stale data.
+    /// Remove a pending request, and any parts collected for it, and fail it
+    /// with `error`.
     ///
     /// A replay is failed here. Any other request is handed back with its
     /// failed reply for the plant to answer. Returns `None` for a replay or an
@@ -346,8 +345,8 @@ impl<T: RequestTag> RithmicRequestHandler<T> {
     /// internal state, and hand back the tag of every other pending request
     /// for the plant to fail the same way.
     ///
-    /// Call this during an unclean shutdown (e.g., abort) to unblock any tasks that are
-    /// waiting for a response that will never arrive.
+    /// The plant calls this once no reply can be trusted to arrive: on a
+    /// close, an abort, a lost connection, or a timed-out write.
     pub(crate) fn drain_and_drop(&mut self) -> Vec<T> {
         self.drain_replays();
 

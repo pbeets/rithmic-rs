@@ -4,6 +4,9 @@ use crate::error::RithmicError;
 
 /// Link working orders together so the server treats them as one group.
 ///
+/// Every basket is sent under the handle's account, so all of them must
+/// belong to it.
+///
 /// # Example
 ///
 /// ```

@@ -75,6 +75,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   truncation notice carries.
 - `RithmicError::SendFailed` displays as "WebSocket send failed". It dropped
   "or timed out": a timed-out write fails calls with `ConnectionClosed`.
+- Doc fixes across the public API, among them: `RithmicConfig` builder
+  examples that failed `build()` without `url` and `beta_url`, the
+  order-history and PnL snapshot methods said to return data their replies
+  don't carry, and `get_system_info` said to return gateway info and services.
 
 ## [3.1.0]
 

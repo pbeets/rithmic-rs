@@ -20,7 +20,9 @@ use crate::{
 /// that reads better on [`TimeBarReplayRequest`].
 pub use crate::rti::request_time_bar_replay::BarType as TimeBarType;
 
-/// Buy or sell.
+/// Buy or sell. Defaults to `Buy`.
+///
+/// Parses from `"BUY"`, `"B"`, `"SELL"` or `"S"`, in any case.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[non_exhaustive]
@@ -99,7 +101,11 @@ impl From<OrderSide> for request_oco_order::TransactionType {
     }
 }
 
-/// Order price type.
+/// Order price type. Defaults to `Limit`.
+///
+/// Parses from the protobuf spelling (`"STOP_LIMIT"`), the same with dashes or
+/// no separator, or a short form (`"MKT"`, `"LMT"`, `"STPMKT"`, `"STPLMT"`,
+/// `"MIT"`, `"LIT"`), in any case.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[non_exhaustive]
@@ -231,7 +237,10 @@ impl TryFrom<OrderType> for request_oco_order::PriceType {
     }
 }
 
-/// How long an order remains active before expiring.
+/// How long an order stays working. Defaults to `Day`.
+///
+/// Parses from `"DAY"`, `"GTC"`, `"IOC"`, `"FOK"` or the spelled-out names
+/// (`"GOOD_TILL_CANCELLED"`, `"FILL-OR-KILL"`, ...), in any case.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[non_exhaustive]
@@ -659,6 +668,9 @@ impl From<RmsUpdateBits> for request_account_rms_updates::UpdateBits {
 /// A volume-profile minute-bars request, passed to
 /// [`load_volume_profile_minute_bars`].
 ///
+/// Call [`build`](Self::build) before sending it. Unlike the tick and time bar
+/// replays, the handle does not validate this request itself.
+///
 /// # Example
 ///
 /// ```
@@ -685,16 +697,17 @@ pub struct VolumeProfileMinuteBarsRequest {
     pub symbol: String,
     /// The exchange code, e.g. `"CME"`.
     pub exchange: String,
-    /// Number of minutes each bar aggregates.
+    /// Number of minutes each bar aggregates. Must be at least 1.
     pub bar_type_period: i32,
     /// Start of the window as a Unix timestamp in seconds.
     pub start_time_sec: i32,
     /// End of the window as a Unix timestamp in seconds.
     pub end_time_sec: i32,
-    /// Maximum number of bars to return; the server applies its own default
-    /// when unset.
+    /// Maximum number of bars to return. Left off the request when unset, so
+    /// the server applies its own default.
     pub user_max_count: Option<i32>,
-    /// Whether to resume from a previous request.
+    /// Rithmic's `resume_bars` flag, sent as given and left off when unset. On
+    /// tick and time bar replays `Some(true)` lifts the 10,000 record cap.
     pub resume_bars: Option<bool>,
 }
 
@@ -740,14 +753,14 @@ impl VolumeProfileMinuteBarsRequest {
         self
     }
 
-    /// Whether to resume from a previous request.
+    /// Set Rithmic's `resume_bars` flag. See the field of the same name.
     pub fn resume_bars(mut self, resume_bars: bool) -> Self {
         self.resume_bars = Some(resume_bars);
         self
     }
 
-    /// Requires a symbol, an exchange, a bar period, and an ordered time
-    /// window.
+    /// Requires a symbol, an exchange, a bar period of at least 1, and two
+    /// positive timestamps with the end not before the start.
     pub fn validate(&self) -> Result<(), RithmicError> {
         validate_replay_window(
             "volume-profile",
@@ -809,7 +822,7 @@ fn validate_replay_window(
     Ok(())
 }
 
-/// A tick bar replay request, passed to [`load_tick_bars`] and its siblings.
+/// A tick bar replay request, passed to [`load_tick_bar_replay`].
 ///
 /// A tick bar groups a fixed number of trades. [`bar_length`](Self::bar_length)
 /// of 1 gives one bar per trade — the raw tape.
@@ -831,7 +844,7 @@ fn validate_replay_window(
 /// # }
 /// ```
 ///
-/// [`load_tick_bars`]: crate::RithmicHistoryPlantHandle::load_tick_bars
+/// [`load_tick_bar_replay`]: crate::RithmicHistoryPlantHandle::load_tick_bar_replay
 #[derive(Debug, Clone, Default, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[non_exhaustive]
@@ -938,7 +951,7 @@ impl TickBarReplayRequest {
     }
 }
 
-/// A time bar replay request, passed to [`load_time_bars`] and its siblings.
+/// A time bar replay request, passed to [`load_time_bar_replay`].
 ///
 /// A time bar covers a fixed span: [`bar_type`](Self::bar_type) picks the unit
 /// and [`bar_type_period`](Self::bar_type_period) how many of them per bar.
@@ -967,7 +980,7 @@ impl TickBarReplayRequest {
 /// # }
 /// ```
 ///
-/// [`load_time_bars`]: crate::RithmicHistoryPlantHandle::load_time_bars
+/// [`load_time_bar_replay`]: crate::RithmicHistoryPlantHandle::load_time_bar_replay
 //
 // No serde derive: `bar_type` is a generated protobuf enum, which does not
 // implement `Serialize`.
@@ -981,7 +994,7 @@ pub struct TimeBarReplayRequest {
     pub exchange: String,
     /// Second, minute, day or week. Required.
     pub bar_type: Option<TimeBarType>,
-    /// How many of those units each bar covers.
+    /// How many of those units each bar covers. Must be at least 1.
     pub bar_type_period: i32,
     /// Window start: Unix seconds, or `YYYYMMDD` for daily and weekly bars.
     pub start_time_sec: i32,

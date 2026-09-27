@@ -12,7 +12,10 @@ use crate::{
 /// The commands every plant takes, and handles the same way.
 #[derive(Debug)]
 pub(crate) enum PlantCommand {
+    /// Fail pending requests and send the close frame. The loop keeps running
+    /// until the connection ends, usually on the server's close echo.
     Close,
+    /// Fail pending requests and stop the loop at once, sending nothing.
     Abort,
     GetSystemInfo {
         response_sender: Responder,

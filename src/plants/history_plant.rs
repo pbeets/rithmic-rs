@@ -27,6 +27,7 @@ use crate::{
 /// Default subscription channel capacity.
 const DEFAULT_SUBSCRIPTION_CAPACITY: usize = 10_000;
 
+/// What a [`RithmicHistoryPlantHandle`] asks the plant's task to do.
 pub(crate) enum HistoryPlantCommand {
     Close,
     Abort,
@@ -205,14 +206,15 @@ pub struct RithmicHistoryPlant {
 }
 
 impl RithmicHistoryPlant {
-    /// Create a new History Plant connection to access historical market data.
+    /// Connect to the Rithmic history plant.
     ///
     /// # Arguments
     /// * `config` - Rithmic configuration
     /// * `strategy` - Connection strategy; see [`ConnectStrategy`]
     ///
     /// # Returns
-    /// A `Result` containing the connected `RithmicHistoryPlant` instance, or an error if the connection fails.
+    /// The connected plant, not yet logged in. Log in through
+    /// [`get_handle`](Self::get_handle) before making requests.
     ///
     /// # Errors
     /// [`RithmicError::ConnectionFailed`] under [`ConnectStrategy::Simple`] when
@@ -247,15 +249,19 @@ impl RithmicHistoryPlant {
 }
 
 impl RithmicHistoryPlant {
-    /// Wait for the plant's background connection task to finish.
+    /// Wait for the plant's background task to finish.
+    ///
+    /// It finishes after a disconnect or abort, or once the connection is
+    /// lost. Until then this waits.
     pub async fn await_shutdown(self) -> Result<(), tokio::task::JoinError> {
         self.connection_handle.await
     }
 
-    /// Get a handle to interact with the history plant.
+    /// Get a handle to log in, load history and subscribe to live bars.
     ///
-    /// The handle provides methods to load historical ticks, time bars, and subscribe to bar updates.
-    /// Multiple handles can be created from the same plant.
+    /// Every handle talks to the same connection. Each gets its own
+    /// [`subscription_receiver`](RithmicHistoryPlantHandle::subscription_receiver),
+    /// which sees every update sent after the handle was made.
     pub fn get_handle(&self) -> RithmicHistoryPlantHandle {
         RithmicHistoryPlantHandle {
             sender: self.sender.clone(),
@@ -380,13 +386,23 @@ impl PlantKind for HistoryPlant {
 /// only an acknowledgement, and the bars arrive on
 /// [`subscription_receiver`](Self::subscription_receiver).
 ///
+/// A server refusal of a subscription, or of [`get_system_info`](Self::get_system_info),
+/// comes back as `Ok` with [`RithmicResponse::error`] set, so check it.
+/// `Err(ConnectionClosed)` means the plant has stopped or is disconnecting.
+///
 /// See [`RithmicHistoryPlant`] for what the responses look like and which loader
 /// to reach for.
 pub struct RithmicHistoryPlantHandle {
     sender: mpsc::Sender<HistoryPlantCommand>,
     subscription_sender: broadcast::Sender<RithmicResponse>,
 
-    /// Receiver for historical data responses.
+    /// Live bars from the `subscribe_*` methods, and connection events.
+    ///
+    /// Replayed history does not come here; the `load_*` calls return it. A
+    /// [`broadcast`] receiver: if you fall more than the
+    /// [`subscription_capacity`](crate::RithmicConfigBuilder::subscription_capacity)
+    /// behind (10,000 by default), `recv` returns `RecvError::Lagged` and the
+    /// skipped updates are gone.
     pub subscription_receiver: broadcast::Receiver<RithmicResponse>,
 }
 
@@ -400,10 +416,10 @@ impl std::fmt::Debug for RithmicHistoryPlantHandle {
 }
 
 impl RithmicHistoryPlantHandle {
-    /// List available Rithmic system infrastructure information.
+    /// Ask the server which Rithmic systems it offers.
     ///
-    /// Returns information about the connected Rithmic system, including
-    /// system name, gateway info, and available services.
+    /// The reply is a [`RithmicMessage::ResponseRithmicSystemInfo`] listing
+    /// the system names and whether each supports aggregated quotes.
     pub async fn get_system_info(&self) -> Result<RithmicResponse, RithmicError> {
         let (tx, rx) = oneshot::channel::<Result<Vec<RithmicResponse>, RithmicError>>();
 
@@ -491,10 +507,16 @@ impl RithmicHistoryPlantHandle {
         Ok(response)
     }
 
-    /// Disconnect from the Rithmic History plant
+    /// Log out and close the connection.
+    ///
+    /// Waits for the logout reply, then closes the WebSocket whether or not
+    /// the logout succeeded. Requests still waiting, and anything sent later
+    /// from any handle, fail with [`RithmicError::ConnectionClosed`]. Use
+    /// [`RithmicHistoryPlant::await_shutdown`] to wait for the plant to stop.
     ///
     /// # Returns
-    /// The logout response or an error message
+    /// The logout reply, or [`RithmicError::ConnectionClosed`] if the plant
+    /// had already stopped.
     pub async fn disconnect(&self) -> Result<RithmicResponse, RithmicError> {
         let (tx, rx) = oneshot::channel::<Result<Vec<RithmicResponse>, RithmicError>>();
 
@@ -518,10 +540,13 @@ impl RithmicHistoryPlantHandle {
 
     /// Immediately shut down the history plant actor without a graceful logout.
     ///
-    /// Use when the connection is known to be dead and a graceful `disconnect()`
-    /// would not get through.
-    /// All pending request callers will receive an error. The subscription channel
-    /// receives a `ConnectionError` notification. Safe to call if the actor is already dead.
+    /// Use when the connection is known to be dead and a graceful
+    /// [`disconnect`](Self::disconnect) would not get through. Waiting
+    /// requests, replays included, fail with [`RithmicError::ConnectionClosed`],
+    /// and the subscription channel gets a [`RithmicMessage::ConnectionError`].
+    ///
+    /// Does not wait. Safe to call if the plant has already stopped. If the
+    /// plant's command queue is full, the abort is dropped.
     pub fn abort(&self) {
         let _ = self.sender.try_send(HistoryPlantCommand::Abort);
     }
@@ -968,8 +993,9 @@ impl RithmicHistoryPlantHandle {
     ///
     /// Unlike the loaders, this does not return the bars. It returns the
     /// server's acknowledgement, and the bars themselves then arrive on
-    /// [`subscription_receiver`](Self::subscription_receiver) as they close.
-    /// Pass `Request::Unsubscribe` to stop.
+    /// [`subscription_receiver`](Self::subscription_receiver) as
+    /// [`RithmicMessage::TimeBar`] when they close. Pass `Request::Unsubscribe`
+    /// to stop.
     ///
     /// # Arguments
     /// * `symbol` - The trading symbol, e.g. `"ESU6"`
@@ -1005,14 +1031,16 @@ impl RithmicHistoryPlantHandle {
     ///
     /// Works like [`subscribe_time_bar_updates`](Self::subscribe_time_bar_updates):
     /// the acknowledgement comes back from this call, the bars arrive on
-    /// [`subscription_receiver`](Self::subscription_receiver).
+    /// [`subscription_receiver`](Self::subscription_receiver) as
+    /// [`RithmicMessage::TickBar`].
     ///
     /// # Arguments
     /// * `symbol` - The trading symbol, e.g. `"ESU6"`
     /// * `exchange` - The exchange code, e.g. `"CME"`
-    /// * `bar_type` - The kind of tick bar
-    /// * `bar_sub_type` - Regular or custom aggregation
-    /// * `bar_type_specifier` - Trades per bar, as a string, e.g. `"1"`
+    /// * `bar_type` - `TickBar`, `RangeBar` or `VolumeBar`
+    /// * `bar_sub_type` - `Regular` or `Custom`
+    /// * `bar_type_specifier` - The bar size as a string, e.g. `"1"`; for
+    ///   `TickBar`, trades per bar
     /// * `request` - `Subscribe` or `Unsubscribe`
     pub async fn subscribe_tick_bar_updates(
         &self,

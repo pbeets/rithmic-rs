@@ -84,7 +84,10 @@
 //!
 //! ## Configuration
 //!
-//! Use [`RithmicConfig`] for modern, ergonomic configuration:
+//! [`RithmicConfig`] holds the server URLs and login details and is shared by
+//! every plant. [`RithmicAccount`] names the trading account, which the order
+//! and PnL plants need. Load both from environment variables, or build them in
+//! code:
 //!
 //! ```no_run
 //! use rithmic_rs::{RithmicAccount, RithmicConfig, RithmicEnv};
@@ -96,6 +99,8 @@
 //!
 //!     // Or using builder pattern
 //!     let config = RithmicConfig::builder(RithmicEnv::Demo)
+//!         .url("wss://<url from Rithmic>".to_string())
+//!         .beta_url("wss://<alt url from Rithmic>".to_string())
 //!         .user("your_user".to_string())
 //!         .password("your_password".to_string())
 //!         .system_name("Rithmic Paper Trading".to_string())
@@ -269,10 +274,10 @@
 //! - [`plants`]: Specialized clients for different data types (ticker, order, P&L, history)
 //! - [`config`]: Configuration API for connecting to Rithmic
 //! - [`error`]: Typed error enum for plant handle methods
-//! - [`api`]: Low-level API interfaces for sending and receiving messages
+//! - [`api`]: Order command types, [`LoginConfig`] and [`RithmicResponse`], the wrapper every message arrives in
 //! - [`types`]: High-level trading enums (order side, type, time-in-force, …)
 //! - [`rti`]: Protocol message definitions
-//! - [`util`]: Utility types and helpers (timestamps, order status, instrument info)
+//! - [`util`]: Utility types and helpers (timestamps, order status, instrument info, unmapped templates)
 
 pub mod api;
 

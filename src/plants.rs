@@ -5,10 +5,12 @@
 //!
 //! This module contains implementations for each Rithmic API plant:
 //!
-//! - **TickerPlant**: Realtime market data subscription (price quotes, trades, etc.)
-//! - **OrderPlant**: Order placement and management
-//! - **PnlPlant**: Position and profit/loss tracking
-//! - **HistoryPlant**: Historical data retrieval
+//! - [`RithmicTickerPlant`](crate::RithmicTickerPlant): real-time market data and instrument reference data
+//! - [`RithmicOrderPlant`](crate::RithmicOrderPlant): order placement and management
+//! - [`RithmicPnlPlant`](crate::RithmicPnlPlant): positions and profit and loss
+//! - [`RithmicHistoryPlant`](crate::RithmicHistoryPlant): historical ticks and bars
+//!
+//! Each plant is its own WebSocket connection with its own login.
 
 use tokio::sync::oneshot;
 
@@ -24,7 +26,7 @@ pub mod order_plant;
 /// Position and P&L tracking
 pub mod pnl_plant;
 pub(crate) mod session;
-/// Account-scoped subscription helpers for shared order/PnL plants
+/// Per-account filtering of the order and PnL plants' update streams
 pub mod subscription;
 pub(crate) mod tag;
 #[cfg(test)]

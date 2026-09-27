@@ -32,9 +32,11 @@ use crate::{
     types::{EasyToBorrowRequest, FillHistoryRange, RmsUpdateBits},
 };
 
-/// Default subscription channel capacity.
+/// Subscription channel capacity used when the config sets none.
 const DEFAULT_SUBSCRIPTION_CAPACITY: usize = 10_000;
 
+/// What a handle asks the order plant actor to do. Most variants send one
+/// request and answer `response_sender` with its reply.
 pub(crate) enum OrderPlantCommand {
     Close,
     Abort,
@@ -105,7 +107,9 @@ pub(crate) enum OrderPlantCommand {
         subscribe_for_updates: bool,
         response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
     },
+    /// Apply a `TradeRoute` (350) update to the route cache. Sends nothing.
     RecordTradeRouteUpdate(Box<TradeRoute>),
+    /// Look up the cached route for `exchange`. Sends nothing.
     TradeRouteFor {
         exchange: String,
         response_sender: oneshot::Sender<Result<String, RithmicError>>,
@@ -223,21 +227,25 @@ pub(crate) enum OrderPlantCommand {
     },
 }
 
-/// The RithmicOrderPlant provides functionality to manage trading orders through the Rithmic API.
+/// A connection to Rithmic's order plant, for placing and managing orders.
 ///
-/// It allows applications to:
-/// - Place, modify and cancel orders
-/// - Work with bracket orders (entry orders with profit targets and stop losses)
-/// - Receive real-time order status updates
-/// - Track positions and execution reports
+/// Through a [`RithmicOrderPlantHandle`] you can:
+/// - Place, modify and cancel orders, including brackets and OCO groups
+/// - Receive order status updates and fills
+/// - Query order and fill history, RMS limits, and trade routes
+/// - List and accept market data agreements
+///
+/// One plant is one WebSocket connection and one login. Get a handle per
+/// account with [`get_handle`](Self::get_handle).
 ///
 /// # Connection Health Monitoring
 ///
-/// The subscription receiver carries real-time order notifications (fills,
+/// The subscription receiver carries order notifications (fills,
 /// cancellations, and status changes) as well as connection health events:
-/// - **WebSocket ping/pong timeouts**: primary dead-connection signal (auto-detected)
+/// - **WebSocket ping/pong timeouts**: primary dead-connection signal, sent as `HeartbeatTimeout`
 /// - **Heartbeat errors**: forwarded as `HeartbeatTimeout`
 /// - **Forced logout events**: session terminated by the server
+/// - **Unexpected disconnects**: sent as `ConnectionError`
 ///
 /// **Note:** Heartbeat requests are sent automatically for protocol compliance,
 /// but successful responses are silently dropped. Only heartbeat errors from the server
@@ -327,14 +335,14 @@ pub struct RithmicOrderPlant {
 }
 
 impl RithmicOrderPlant {
-    /// Create a new Order Plant connection to manage trading orders.
+    /// Open a WebSocket connection to the order plant.
+    ///
+    /// This only connects. Call [`RithmicOrderPlantHandle::login`] on a handle
+    /// before sending anything else.
     ///
     /// # Arguments
     /// * `config` - Rithmic configuration
     /// * `strategy` - Connection strategy; see [`ConnectStrategy`]
-    ///
-    /// # Returns
-    /// A `Result` containing the connected `RithmicOrderPlant` instance, or an error if the connection fails.
     ///
     /// # Errors
     /// [`RithmicError::ConnectionFailed`] under [`ConnectStrategy::Simple`] when
@@ -376,14 +384,19 @@ impl RithmicOrderPlant {
 
 impl RithmicOrderPlant {
     /// Wait for the plant's background connection task to finish.
+    ///
+    /// The task ends after [`disconnect`](RithmicOrderPlantHandle::disconnect),
+    /// [`abort`](RithmicOrderPlantHandle::abort), or when the connection drops.
     pub async fn await_shutdown(self) -> Result<(), tokio::task::JoinError> {
         self.connection_handle.await
     }
 
-    /// Get a handle to interact with the order plant.
+    /// Get a handle that sends commands for `account`.
     ///
-    /// The handle provides methods to place orders, subscribe to updates, and manage positions.
-    /// Multiple handles can be created from the same plant for different accounts.
+    /// You can create several handles on one plant, one per account. They
+    /// share the connection and the login. Each handle's
+    /// [`subscription_receiver`](RithmicOrderPlantHandle::subscription_receiver)
+    /// only sees updates sent after the handle was created.
     pub fn get_handle(&self, account: &RithmicAccount) -> RithmicOrderPlantHandle {
         let account = Arc::new(account.clone());
         let account_for_filter = Arc::clone(&account);
@@ -402,7 +415,7 @@ impl RithmicOrderPlant {
     ///
     /// Unlike the handle from [`Self::get_handle`], which only yields updates
     /// for its own account, this receiver yields updates for every account on
-    /// the login.
+    /// the login, plus the connection health events.
     pub fn subscribe_all(&self) -> broadcast::Receiver<RithmicResponse> {
         self.subscription_sender.subscribe()
     }
@@ -500,10 +513,9 @@ impl PlantKind for OrderPlant {
         }
     }
 
-    /// Load the login info and the routes orders are sent on. The routes are
-    /// the snapshot orders route from for the life of the connection. The
-    /// request subscribes, so updates reach the subscription channel, but only
-    /// `record_trade_route` applies one.
+    /// Load the login info and the routes orders are sent on. The route
+    /// request subscribes, so updates reach subscribers, but only
+    /// [`RithmicOrderPlantHandle::record_trade_route`] applies one.
     fn after_login(&mut self, cx: &mut Cx<'_, OrderTag>) {
         self.loading_login_info = true;
         self.loading_trade_routes = true;
@@ -931,10 +943,28 @@ impl PlantKind for OrderPlant {
 /// on this handle to log in, place/modify/cancel orders, and query account
 /// information. Real-time order updates arrive on
 /// [`subscription_receiver`](Self::subscription_receiver).
+///
+/// # What the methods return
+///
+/// A request the server turns down still comes back as `Ok`. Check
+/// [`RithmicResponse::error`] on each response. [`login`](Self::login) is the
+/// exception and returns the refusal as `Err`.
+///
+/// Methods that return a `Vec` collect every frame of a multi-part reply. The
+/// last frame ends the reply and usually carries no data of its own.
+///
+/// `Err` means no reply: [`RithmicError::ConnectionClosed`] when the plant
+/// shut down or disconnected first, [`RithmicError::SendFailed`] when the
+/// request could not be written, and [`RithmicError::EmptyResponse`] when a
+/// single-response method got no frames.
+///
+/// Many requests only get an acknowledgement back. What they ask for, such
+/// as order status or cancels, arrives later on the subscription receiver.
 pub struct RithmicOrderPlantHandle {
     account: Arc<RithmicAccount>,
     sender: mpsc::Sender<OrderPlantCommand>,
-    /// Receiver for real-time order updates and responses.
+    /// Updates for this handle's account, plus connection health events and
+    /// updates that name no account, such as `TradeRoute`.
     pub subscription_receiver: SubscriptionFilter,
 }
 
@@ -948,10 +978,8 @@ impl std::fmt::Debug for RithmicOrderPlantHandle {
 }
 
 impl RithmicOrderPlantHandle {
-    /// List available Rithmic system infrastructure information.
-    ///
-    /// Returns information about the connected Rithmic system, including
-    /// system name, gateway info, and available services.
+    /// List the Rithmic systems (such as `Rithmic Paper Trading`) this server
+    /// offers, and whether each has aggregated quotes. Does not need a login.
     pub async fn get_system_info(&self) -> Result<RithmicResponse, RithmicError> {
         let (tx, rx) = oneshot::channel::<Result<Vec<RithmicResponse>, RithmicError>>();
 
@@ -971,8 +999,9 @@ impl RithmicOrderPlantHandle {
     /// Once the server accepts the login, the plant loads the login info, which
     /// scopes later requests, and the trade routes orders are sent on. It does
     /// so even if you stop waiting for this call. A failure to load either is
-    /// only logged: the login still succeeds, and orders fail with
-    /// [`RithmicError::NoTradeRoute`].
+    /// only logged and the login still succeeds. Without the login info,
+    /// requests such as [`get_account_list`](Self::get_account_list) go out
+    /// unscoped. Without routes, orders fail with [`RithmicError::NoTradeRoute`].
     ///
     /// The plant logs in once per connection. A call with the same config made
     /// while that login is in progress waits for it, and one made after it
@@ -1048,10 +1077,14 @@ impl RithmicOrderPlantHandle {
         Ok(response)
     }
 
-    /// Disconnect from the Rithmic Order plant
+    /// Log out, then close the connection.
+    ///
+    /// The connection is closed even if the logout fails or gets no reply.
+    /// Pending requests fail with [`RithmicError::ConnectionClosed`], and so
+    /// do commands sent after this from any handle on the plant.
     ///
     /// # Returns
-    /// The logout response or an error message
+    /// The logout response. A server refusal is on its `error` field.
     pub async fn disconnect(&self) -> Result<RithmicResponse, RithmicError> {
         let (tx, rx) = oneshot::channel::<Result<Vec<RithmicResponse>, RithmicError>>();
 
@@ -1076,20 +1109,20 @@ impl RithmicOrderPlantHandle {
     /// Immediately shut down the order plant actor without a graceful logout.
     ///
     /// Use when the connection is known to be dead and a graceful `disconnect()`
-    /// would not get through.
-    /// All pending request callers will receive an error. The subscription channel
-    /// receives a `ConnectionError` notification. Safe to call if the actor is already dead.
+    /// would not get through. Pending requests fail with
+    /// [`RithmicError::ConnectionClosed`] and the subscription channel receives a
+    /// `ConnectionError` notification. Safe to call if the actor is already dead.
+    ///
+    /// The abort is queued behind commands already sent. If that queue is
+    /// full, the abort is dropped without notice.
     pub fn abort(&self) {
         let _ = self.sender.try_send(OrderPlantCommand::Abort);
     }
 
-    /// Get a list of available trading accounts
+    /// List the accounts this login can trade, one response per account.
     ///
-    /// Returns the accounts the login covers. Unscoped, and so possibly wider, if
-    /// [`Self::login`] could not retrieve the login info.
-    ///
-    /// # Returns
-    /// A vector of account list responses or an error message
+    /// The request is scoped by the login info [`Self::login`] loads. If that
+    /// load failed, it goes out unscoped and may list more accounts.
     pub async fn get_account_list(&self) -> Result<Vec<RithmicResponse>, RithmicError> {
         let (tx, rx) = oneshot::channel::<Result<Vec<RithmicResponse>, RithmicError>>();
 
@@ -1139,10 +1172,11 @@ impl RithmicOrderPlantHandle {
         await_first_response(rx).await
     }
 
-    /// Subscribe to bracket order status updates
+    /// Subscribe to bracket updates for this handle's account.
     ///
-    /// # Returns
-    /// The subscription response or an error message
+    /// Updates arrive on [`subscription_receiver`](Self::subscription_receiver)
+    /// as [`RithmicMessage::BracketUpdates`]. Order status for the bracket's
+    /// legs needs [`subscribe_order_updates`](Self::subscribe_order_updates).
     pub async fn subscribe_bracket_updates(&self) -> Result<RithmicResponse, RithmicError> {
         let (tx, rx) = oneshot::channel::<Result<Vec<RithmicResponse>, RithmicError>>();
 
@@ -1210,13 +1244,14 @@ impl RithmicOrderPlantHandle {
         await_all_responses(rx).await
     }
 
-    /// Modify an existing order
+    /// Modify a working order's price, quantity or type.
     ///
-    /// # Arguments
-    /// * `order` - The order parameters to modify
+    /// A modify restates the order, so see [`RithmicModifyOrder`] for which
+    /// fields to carry over unchanged.
     ///
-    /// # Returns
-    /// A vector of order modification responses or an error message
+    /// Like [`cancel_order`](Self::cancel_order), the result describes the
+    /// request. The order's new state arrives as order notifications on the
+    /// subscription receiver.
     pub async fn modify_order(
         &self,
         order: RithmicModifyOrder,
@@ -1234,7 +1269,7 @@ impl RithmicOrderPlantHandle {
         await_all_responses(rx).await
     }
 
-    /// Cancel an order
+    /// Cancel one working order by its basket id.
     ///
     /// Resolves when the final frame of the response sequence arrives. That
     /// result describes the request, not the order. Order state arrives
@@ -1273,13 +1308,10 @@ impl RithmicOrderPlantHandle {
         await_all_responses(rx).await
     }
 
-    /// Adjust the target level of a bracket order
+    /// Move the profit target of a bracket to a new distance in ticks.
     ///
     /// # Arguments
     /// * `adjustment` - The bracket, the new tick distance, and the leg to adjust
-    ///
-    /// # Returns
-    /// The adjustment response or an error message
     pub async fn adjust_target(
         &self,
         adjustment: RithmicBracketLevelAdjustment,
@@ -1297,13 +1329,10 @@ impl RithmicOrderPlantHandle {
         await_first_response(rx).await
     }
 
-    /// Adjust the stop loss level of a bracket order
+    /// Move the stop loss of a bracket to a new distance in ticks.
     ///
     /// # Arguments
     /// * `adjustment` - The bracket, the new tick distance, and the leg to adjust
-    ///
-    /// # Returns
-    /// The adjustment response or an error message
     pub async fn adjust_stop(
         &self,
         adjustment: RithmicBracketLevelAdjustment,
@@ -1360,10 +1389,10 @@ impl RithmicOrderPlantHandle {
         await_first_response(rx).await
     }
 
-    /// Cancel all active orders on the account.
+    /// Cancel every working order on this handle's account.
     ///
-    /// # Returns
-    /// The cancel-all response or an error message
+    /// The response only acknowledges the request. Each cancel arrives as an
+    /// order notification on the subscription receiver.
     pub async fn cancel_all_orders(
         &self,
         command: RithmicCancelAllOrders,
@@ -1381,13 +1410,10 @@ impl RithmicOrderPlantHandle {
         await_first_response(rx).await
     }
 
-    /// Get account RMS (Risk Management System) information
+    /// Get account RMS (Risk Management System) limits, one response per account.
     ///
     /// Template 304 names no account, so like [`get_account_list`](Self::get_account_list)
     /// this covers every account the login reaches, not just this handle's.
-    ///
-    /// # Returns
-    /// A vector of RMS info responses or an error message
     pub async fn get_account_rms_info(&self) -> Result<Vec<RithmicResponse>, RithmicError> {
         let (tx, rx) = oneshot::channel::<Result<Vec<RithmicResponse>, RithmicError>>();
 
@@ -1401,10 +1427,8 @@ impl RithmicOrderPlantHandle {
         await_all_responses(rx).await
     }
 
-    /// Get product RMS (Risk Management System) information
-    ///
-    /// # Returns
-    /// A vector of product RMS info responses or an error message
+    /// Get this account's per-product RMS (Risk Management System) limits,
+    /// one response per product.
     pub async fn get_product_rms_info(&self) -> Result<Vec<RithmicResponse>, RithmicError> {
         let (tx, rx) = oneshot::channel::<Result<Vec<RithmicResponse>, RithmicError>>();
 
@@ -1418,13 +1442,14 @@ impl RithmicOrderPlantHandle {
         await_all_responses(rx).await
     }
 
-    /// Get available trade routes
+    /// List the trade routes the server publishes, one response per route.
+    ///
+    /// This only reports the routes. It does not change the routes orders go
+    /// out on; see [`record_trade_route`](Self::record_trade_route) for that.
+    /// [`login`](Self::login) already subscribes to route updates.
     ///
     /// # Arguments
-    /// * `subscribe_for_updates` - Whether to receive updates when routes change
-    ///
-    /// # Returns
-    /// The list of trade routes or an error message
+    /// * `subscribe_for_updates` - Whether to receive `TradeRoute` updates when routes change
     pub async fn get_trade_routes(
         &self,
         subscribe_for_updates: bool,
@@ -1445,7 +1470,10 @@ impl RithmicOrderPlantHandle {
     ///
     /// [`login`](Self::login) subscribes, so updates arrive on
     /// [`subscription_receiver`](Self::subscription_receiver); applying them is up
-    /// to you.
+    /// to you. The update replaces the route held for its exchange.
+    ///
+    /// This returns once the update is queued, not applied. Orders sent after
+    /// it from the same task still go out on the new route.
     ///
     /// ```no_run
     /// # use rithmic_rs::{RithmicOrderPlantHandle, rti::messages::RithmicMessage};
@@ -1460,6 +1488,9 @@ impl RithmicOrderPlantHandle {
     /// # Ok(())
     /// # }
     /// ```
+    ///
+    /// # Errors
+    /// [`RithmicError::ConnectionClosed`] if the plant has shut down.
     pub async fn record_trade_route(&self, update: &TradeRoute) -> Result<(), RithmicError> {
         self.sender
             .send(OrderPlantCommand::RecordTradeRouteUpdate(Box::new(
@@ -1475,8 +1506,10 @@ impl RithmicOrderPlantHandle {
     /// # Arguments
     /// * `exchange` - The exchange to look up, as it appears on your orders
     ///
-    /// # Returns
-    /// The route name, or an error naming what is cached instead
+    /// # Errors
+    /// * [`RithmicError::NoTradeRoute`] if no route is held for `exchange`. It
+    ///   lists the exchanges that do have one.
+    /// * [`RithmicError::ConnectionClosed`] if the plant has shut down.
     pub async fn trade_route_for(&self, exchange: &str) -> Result<String, RithmicError> {
         let (tx, rx) = oneshot::channel::<Result<String, RithmicError>>();
 
@@ -1490,10 +1523,8 @@ impl RithmicOrderPlantHandle {
         rx.await.map_err(|_| RithmicError::ConnectionClosed)?
     }
 
-    /// Get dates for which order history is available
-    ///
-    /// # Returns
-    /// The list of available dates or an error message
+    /// List the dates (YYYYMMDD) that have order history, for use with
+    /// [`show_order_history_summary`](Self::show_order_history_summary).
     pub async fn show_order_history_dates(&self) -> Result<Vec<RithmicResponse>, RithmicError> {
         let (tx, rx) = oneshot::channel::<Result<Vec<RithmicResponse>, RithmicError>>();
 
@@ -1506,13 +1537,14 @@ impl RithmicOrderPlantHandle {
         await_all_responses(rx).await
     }
 
-    /// Get order history summary for a specific date
+    /// Ask for a summary of this account's orders on one date.
+    ///
+    /// The response only acknowledges the request and has no order fields.
+    /// Watch [`subscription_receiver`](Self::subscription_receiver) for the
+    /// orders the server sends back.
     ///
     /// # Arguments
     /// * `date` - Date in YYYYMMDD format (e.g., "20250122")
-    ///
-    /// # Returns
-    /// The list of order summaries or an error message
     pub async fn show_order_history_summary(
         &self,
         date: &str,
@@ -1530,14 +1562,15 @@ impl RithmicOrderPlantHandle {
         await_all_responses(rx).await
     }
 
-    /// Get detailed order history for a specific order
+    /// Ask for the full history of one order on one date.
+    ///
+    /// The response only acknowledges the request and has no order fields.
+    /// Watch [`subscription_receiver`](Self::subscription_receiver) for the
+    /// orders the server sends back.
     ///
     /// # Arguments
     /// * `basket_id` - Order/basket identifier
     /// * `date` - Date in YYYYMMDD format
-    ///
-    /// # Returns
-    /// The detailed order history response or an error message
     pub async fn show_order_history_detail(
         &self,
         basket_id: &str,
@@ -1557,13 +1590,14 @@ impl RithmicOrderPlantHandle {
         await_first_response(rx).await
     }
 
-    /// Get general order history
+    /// Ask for this account's order history, optionally for one basket.
+    ///
+    /// The response only acknowledges the request and has no order fields.
+    /// Watch [`subscription_receiver`](Self::subscription_receiver) for the
+    /// orders the server sends back.
     ///
     /// # Arguments
-    /// * `basket_id` - Optional order/basket identifier filter
-    ///
-    /// # Returns
-    /// The list of order history entries or an error message
+    /// * `basket_id` - Limit the history to this order. `None` asks for all.
     pub async fn show_order_history(
         &self,
         basket_id: Option<&str>,
@@ -1581,20 +1615,14 @@ impl RithmicOrderPlantHandle {
         await_all_responses(rx).await
     }
 
-    /// Place a new order using [`RithmicOrder`]
+    /// Place a single order built with [`RithmicOrder`].
     ///
-    /// This is the preferred method for placing standalone orders. It supports
-    /// all order types including those with trigger prices (stop orders) and
-    /// trailing stops.
+    /// Supports every order type, including stop orders with a trigger price
+    /// and trailing stops. For an entry with an attached profit target and
+    /// stop loss, use [`place_bracket_order`](Self::place_bracket_order).
     ///
-    /// For orders with automatic profit targets and stop losses, use
-    /// [`place_bracket_order`](Self::place_bracket_order) instead.
-    ///
-    /// # Arguments
-    /// * `order` - The order parameters
-    ///
-    /// # Returns
-    /// A vector of order placement responses or an error message
+    /// The order goes out on the route held for its exchange, unless it names
+    /// its own `trade_route`.
     ///
     /// Build the order with [`RithmicOrder::build`], which validates it. This method
     /// does not re-validate: an order assembled without `build()` goes to the
@@ -1651,7 +1679,8 @@ impl RithmicOrderPlantHandle {
     /// Place an OCO (One Cancels Other) order.
     ///
     /// When one leg is filled, the others are automatically cancelled. See
-    /// [`RithmicOcoOrder`] for building the legs.
+    /// [`RithmicOcoOrder`] for building the legs. Each leg goes out on the
+    /// route for its own exchange, so a group can span exchanges.
     ///
     /// ```no_run
     /// # use rithmic_rs::{OrderSide, OrderType, RithmicOcoOrder, RithmicOcoOrderLeg, RithmicOrderPlantHandle};
@@ -1681,8 +1710,10 @@ impl RithmicOrderPlantHandle {
     ///
     /// # Errors
     /// * [`RithmicError::InvalidArgument`] if the group has fewer than two legs —
-    ///   [`RithmicOcoOrder::build`] does not check the count, this does.
+    ///   [`RithmicOcoOrder::build`] does not check the count, this does. Also if
+    ///   a leg's price type cannot be sent in an OCO request.
     /// * [`RithmicError::NoTradeRoute`] if no route covers a leg's exchange.
+    ///   Nothing is sent for any leg.
     /// * [`RithmicError::ConnectionClosed`] if the plant has shut down.
     pub async fn place_oco_order(
         &self,
@@ -1710,10 +1741,8 @@ impl RithmicOrderPlantHandle {
         await_all_responses(rx).await
     }
 
-    /// Show all active bracket orders
-    ///
-    /// # Returns
-    /// A vector of responses containing bracket order information or an error message
+    /// List this account's active brackets, one response per bracket, with
+    /// their target quantities and ticks.
     pub async fn show_brackets(&self) -> Result<Vec<RithmicResponse>, RithmicError> {
         let (tx, rx) = oneshot::channel::<Result<Vec<RithmicResponse>, RithmicError>>();
 
@@ -1727,10 +1756,8 @@ impl RithmicOrderPlantHandle {
         await_all_responses(rx).await
     }
 
-    /// Show all active bracket stop orders
-    ///
-    /// # Returns
-    /// A vector of responses containing bracket stop information or an error message
+    /// List the stop legs of this account's active brackets, one response per
+    /// stop.
     pub async fn show_bracket_stops(&self) -> Result<Vec<RithmicResponse>, RithmicError> {
         let (tx, rx) = oneshot::channel::<Result<Vec<RithmicResponse>, RithmicError>>();
 
@@ -1784,13 +1811,12 @@ impl RithmicOrderPlantHandle {
         await_all_responses(rx).await
     }
 
-    /// Link multiple orders together
+    /// Link working orders on this account by basket id (template 344).
+    ///
+    /// The response only acknowledges the request.
     ///
     /// # Arguments
     /// * `command` - The basket IDs to link together
-    ///
-    /// # Returns
-    /// The link orders response or an error message
     pub async fn link_orders(
         &self,
         command: RithmicLinkOrders,
@@ -1808,13 +1834,13 @@ impl RithmicOrderPlantHandle {
         await_first_response(rx).await
     }
 
-    /// Get the easy-to-borrow list for short selling
+    /// Get the easy-to-borrow list for short selling, one response per symbol.
+    ///
+    /// With [`EasyToBorrowRequest::Subscribe`], later changes arrive on the
+    /// subscription receiver as `UpdateEasyToBorrowList`.
     ///
     /// # Arguments
-    /// * `request_type` - Subscribe or Unsubscribe from updates
-    ///
-    /// # Returns
-    /// A vector of responses containing easy-to-borrow securities or an error message
+    /// * `request_type` - Subscribe to the list, or unsubscribe from updates
     pub async fn get_easy_to_borrow_list(
         &self,
         request_type: EasyToBorrowRequest,
@@ -1831,13 +1857,10 @@ impl RithmicOrderPlantHandle {
         await_all_responses(rx).await
     }
 
-    /// Modify order reference data (user tag)
+    /// Change the user tag on a working order.
     ///
     /// # Arguments
     /// * `command` - The basket to retag and the new tag
-    ///
-    /// # Returns
-    /// The modification response or an error message
     pub async fn modify_order_reference_data(
         &self,
         command: RithmicModifyOrderReferenceData,
@@ -1855,13 +1878,14 @@ impl RithmicOrderPlantHandle {
         await_first_response(rx).await
     }
 
-    /// Get or set order session configuration
+    /// Set the order session config (template 3502).
+    ///
+    /// Despite the name, nothing is read back: the response carries only a
+    /// response code.
     ///
     /// # Arguments
-    /// * `should_defer_request` - If true, defers requests until server loads reference data
-    ///
-    /// # Returns
-    /// The session config response or an error message
+    /// * `should_defer_request` - If true, the server defers requests while it
+    ///   loads reference data it does not have. `None` leaves the field off.
     pub async fn get_order_session_config(
         &self,
         should_defer_request: Option<bool>,
@@ -1878,14 +1902,15 @@ impl RithmicOrderPlantHandle {
         await_first_response(rx).await
     }
 
-    /// Replay historical executions
+    /// Ask the server to replay this account's executions in a time window.
+    ///
+    /// The response only acknowledges the request and has no execution
+    /// fields. Watch [`subscription_receiver`](Self::subscription_receiver)
+    /// for what the server sends back.
     ///
     /// # Arguments
     /// * `start_index_sec` - Start time in unix seconds
     /// * `finish_index_sec` - End time in unix seconds
-    ///
-    /// # Returns
-    /// A vector of execution responses or an error message
     pub async fn replay_executions(
         &self,
         start_index_sec: i32,
@@ -1910,9 +1935,6 @@ impl RithmicOrderPlantHandle {
     ///
     /// # Arguments
     /// * `user` - The user to look up. `None` asks about the logged-in user.
-    ///
-    /// # Returns
-    /// The user info responses or an error message
     pub async fn get_user_info(
         &self,
         user: Option<&str>,
@@ -1939,10 +1961,7 @@ impl RithmicOrderPlantHandle {
     ///
     /// # Errors
     /// [`RithmicError::InvalidArgument`] when `max_record_count` is outside
-    /// 0..=10,000 — Rithmic rejects a cap above 10,000.
-    ///
-    /// # Returns
-    /// The fill responses or an error message
+    /// 0..=10,000 — Rithmic rejects a cap above 10,000. Nothing is sent.
     pub async fn show_fill_history(
         &self,
         range: FillHistoryRange,
@@ -1968,7 +1987,10 @@ impl RithmicOrderPlantHandle {
         await_all_responses(rx).await
     }
 
-    /// Subscribe to account RMS updates
+    /// Subscribe to, or unsubscribe from, RMS updates for this account.
+    ///
+    /// Updates arrive on the subscription receiver as
+    /// [`RithmicMessage::AccountRmsUpdates`].
     ///
     /// # Arguments
     /// * `subscribe` - true to subscribe, false to unsubscribe
@@ -1976,9 +1998,6 @@ impl RithmicOrderPlantHandle {
     ///   `vec![RmsUpdateBits::AutoLiqThresholdCurrentValue]` streams
     ///   `auto_liq_threshold_current_value`; an empty `Vec` leaves the field
     ///   off the request.
-    ///
-    /// # Returns
-    /// The subscription response or an error message
     pub async fn subscribe_account_rms_updates(
         &self,
         subscribe: bool,
@@ -1998,14 +2017,12 @@ impl RithmicOrderPlantHandle {
         await_first_response(rx).await
     }
 
-    /// Get login information for the current session
+    /// Get the login info for this session: the user, their name, FCM and IB
+    /// ids, and user type.
     ///
-    /// [`Self::login`] already loads this once, and the first success is what
-    /// scopes later requests. Calling it again returns the response, and scopes
-    /// the plant only if no login info has yet.
-    ///
-    /// # Returns
-    /// The login info response or an error message
+    /// [`Self::login`] already loads this, and the first successful load
+    /// scopes later requests. A call here returns the response, and only
+    /// scopes the plant if nothing has scoped it yet.
     pub async fn get_login_info(&self) -> Result<RithmicResponse, RithmicError> {
         let (tx, rx) = oneshot::channel::<Result<Vec<RithmicResponse>, RithmicError>>();
 
@@ -2018,12 +2035,8 @@ impl RithmicOrderPlantHandle {
         await_first_response(rx).await
     }
 
-    /// List unaccepted agreements
-    ///
-    /// Returns a list of market data agreements that have not yet been accepted.
-    ///
-    /// # Returns
-    /// A vector of unaccepted agreement responses or an error message
+    /// List the agreements this user has not accepted yet, one response per
+    /// agreement.
     pub async fn list_unaccepted_agreements(&self) -> Result<Vec<RithmicResponse>, RithmicError> {
         let (tx, rx) = oneshot::channel::<Result<Vec<RithmicResponse>, RithmicError>>();
 
@@ -2036,12 +2049,7 @@ impl RithmicOrderPlantHandle {
         await_all_responses(rx).await
     }
 
-    /// List accepted agreements
-    ///
-    /// Returns a list of market data agreements that have been accepted.
-    ///
-    /// # Returns
-    /// A vector of accepted agreement responses or an error message
+    /// List the agreements this user has accepted, one response per agreement.
     pub async fn list_accepted_agreements(&self) -> Result<Vec<RithmicResponse>, RithmicError> {
         let (tx, rx) = oneshot::channel::<Result<Vec<RithmicResponse>, RithmicError>>();
 
@@ -2059,9 +2067,6 @@ impl RithmicOrderPlantHandle {
     /// # Arguments
     /// * `agreement_id` - The ID of the agreement to accept
     /// * `market_data_usage_capacity` - Optional capacity indicator (e.g., "Professional", "Non-Professional")
-    ///
-    /// # Returns
-    /// The acceptance response or an error message
     pub async fn accept_agreement(
         &self,
         agreement_id: &str,
@@ -2080,13 +2085,10 @@ impl RithmicOrderPlantHandle {
         await_first_response(rx).await
     }
 
-    /// Show details of an agreement
+    /// Get the text and details of one agreement.
     ///
     /// # Arguments
     /// * `agreement_id` - The ID of the agreement to display
-    ///
-    /// # Returns
-    /// A vector of agreement details responses or an error message
     pub async fn show_agreement(
         &self,
         agreement_id: &str,
@@ -2108,9 +2110,6 @@ impl RithmicOrderPlantHandle {
     /// # Arguments
     /// * `agreement_id` - The ID of the agreement
     /// * `market_data_usage_capacity` - The usage capacity (e.g., "Professional", "Non-Professional")
-    ///
-    /// # Returns
-    /// The response or an error message
     pub async fn set_rithmic_mrkt_data_self_cert_status(
         &self,
         agreement_id: &str,
@@ -2136,9 +2135,6 @@ impl RithmicOrderPlantHandle {
     ///
     /// # Arguments
     /// * `user` - The username to query exchange permissions for
-    ///
-    /// # Returns
-    /// A vector of responses containing exchange permission information or an error message
     pub async fn list_exchange_permissions(
         &self,
         user: &str,
@@ -2156,6 +2152,8 @@ impl RithmicOrderPlantHandle {
     }
 }
 
+/// The clone shares the connection and account. Its subscription receiver
+/// starts at the current stream position, not where the original is.
 impl Clone for RithmicOrderPlantHandle {
     fn clone(&self) -> Self {
         RithmicOrderPlantHandle {

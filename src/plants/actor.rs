@@ -1,3 +1,7 @@
+//! The loop that owns a plant's WebSocket and carries out what its
+//! [`PlantCore`] asks for. The [`core`](crate::plants::core) module docs walk
+//! a request from a handle call to the wire and back.
+
 use std::{collections::VecDeque, time::Duration};
 use tracing::{debug, error, info, warn};
 
@@ -57,9 +61,8 @@ pub(crate) enum SelectResult<C> {
 /// back, feeding how each write went back to the core. Transport details stay
 /// here: pongs to the server's pings, and send timeouts.
 ///
-/// The type parameter `S` is the WebSocket sink type. It defaults to [`WsSink`]
-/// (the concrete split-sink from a real TLS connection) but can be replaced
-/// with a mock sink in tests.
+/// `S` is the WebSocket sink. It defaults to [`WsSink`], the write half of a
+/// real connection, and tests swap in a mock.
 #[derive(Debug)]
 pub(crate) struct Plant<K: PlantKind, S = WsSink> {
     pub(crate) core: PlantCore<K>,
@@ -397,9 +400,8 @@ where
             },
             Ok(Message::Ping(data)) => {
                 // Answer with a Pong carrying the same payload. With a split
-                // sink/stream the tungstenite internal write buffer is only
-                // flushed when the sink side is polled, so we send the Pong
-                // explicitly to guarantee delivery.
+                // stream, tungstenite only flushes its own pong when the sink
+                // is polled, so send it here.
                 match send_with_timeout(
                     &mut self.rithmic_sender,
                     Message::Pong(data),
@@ -409,13 +411,9 @@ where
                 {
                     Ok(()) => false,
                     Err(e) => {
-                        // Surfaced as ConnectionError (not HeartbeatTimeout): a
-                        // pong is a reply to a server-initiated ping, not part
-                        // of our own heartbeat lifecycle. ping/heartbeat send
-                        // failures use HeartbeatTimeout because they share a
-                        // timeout semantics with a true heartbeat timeout.
-                        // Both satisfy is_connection_issue() so reconnect
-                        // callers see the same signal either way.
+                        // A ConnectionError, not HeartbeatTimeout: a pong answers
+                        // the server's ping, not ours. Both pass
+                        // is_connection_issue(), so reconnect logic sees either.
                         warn!(
                             "{}: failed to send pong: {:?}",
                             self.rithmic_receiver_api.source, e

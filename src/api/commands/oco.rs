@@ -35,28 +35,34 @@ pub struct RithmicOcoOrderLeg {
     pub symbol: String,
     /// Exchange code (e.g., "CME")
     pub exchange: String,
-    /// Number of contracts
+    /// Number of contracts. Must be at least 1.
     pub quantity: i32,
     /// Leg price. A market leg does not need one.
+    ///
+    /// The request holds one price slot per leg, so once any leg has a price,
+    /// legs without one are sent as `0.0`. The same goes for `trigger_price`.
     pub price: Option<f64>,
     /// Trigger price. Only a stop leg needs one.
     pub trigger_price: Option<f64>,
-    /// Buy or Sell
+    /// Buy or sell. Defaults to `Buy`.
     pub transaction_type: OrderSide,
-    /// Order duration
+    /// How long the leg stays working. Defaults to `Day`.
     pub duration: TimeInForce,
-    /// Order type. Template 328 declares no if-touched price type, so
-    /// [`OrderType::MarketIfTouched`] and [`OrderType::LimitIfTouched`] are
-    /// rejected on an OCO leg.
+    /// Order type. Defaults to `Limit`. Template 328 declares no if-touched
+    /// price type, so [`OrderType::MarketIfTouched`] and
+    /// [`OrderType::LimitIfTouched`] are rejected on an OCO leg.
     pub price_type: OrderType,
-    /// Your identifier for this order
+    /// Your identifier for this leg. Sent as `""` for this leg when another
+    /// leg has a tag, and left off the request when no leg has one.
     pub user_tag: String,
-    /// Optional trailing stop configuration for this leg
+    /// Trailing stop for this leg. Unset on every leg sends no trailing fields.
     pub trailing_stop: Option<TrailingStop>,
     /// Route to send on. `None` uses the route the server published for this
-    /// leg's exchange.
+    /// leg's exchange; if any leg has no route, placing the group fails with
+    /// [`RithmicError::NoTradeRoute`] and nothing is sent.
     pub trade_route: Option<String>,
-    /// Whether the leg was placed by a human or automatically.
+    /// Whether the leg was placed by a human or automatically. Defaults to
+    /// `Auto`.
     pub manual_or_auto: ManualOrAutoEntry,
     /// Originating window name reported to Rithmic. `window_name` is repeated
     /// on `RequestOcoOrder`, so it is per-leg like the other leg fields.
@@ -130,6 +136,8 @@ impl RithmicOcoOrderLeg {
     }
 
     /// Trail by `trail_by_ticks` against Rithmic's `trail_by_price_id`.
+    ///
+    /// Skips [`TrailingStop::build`], so zero or negative values are not caught.
     pub fn trailing_stop_by(self, trail_by_ticks: i32, trail_by_price_id: i32) -> Self {
         self.trailing_stop(
             TrailingStop::new()
@@ -183,6 +191,9 @@ impl RithmicOcoOrderLeg {
 }
 
 /// A group of OCO legs: when one fills, the others are cancelled.
+///
+/// Each leg is routed by its own exchange or `trade_route`. The
+/// handle refuses a group with fewer than two legs.
 ///
 /// # Example
 ///
@@ -266,7 +277,7 @@ impl RithmicOcoOrder {
         self
     }
 
-    /// Check every leg validates.
+    /// Check every leg validates. The number of legs is not checked.
     pub fn validate(&self) -> Result<(), RithmicError> {
         for leg in &self.legs {
             leg.validate()?;

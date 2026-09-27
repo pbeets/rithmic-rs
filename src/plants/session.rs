@@ -7,8 +7,8 @@ use crate::{
     request_handler::{RequestResult, Responder},
 };
 
-/// Where a plant's login stands. The actor owns it, so what a session does
-/// never depends on whether a `login()` caller is still waiting.
+/// Where a plant's login stands. The plant's core owns it, so what a session
+/// does never depends on whether a `login()` caller is still waiting.
 #[derive(Debug)]
 pub(crate) enum Session {
     /// Connected and not logged in.
@@ -31,7 +31,7 @@ pub(crate) enum Session {
     },
     /// A logout was requested. Only the logout and the close frame go out.
     Closing,
-    /// The connection is closed, or its close frame has been sent.
+    /// A close was requested, or the connection ended.
     Closed,
 }
 

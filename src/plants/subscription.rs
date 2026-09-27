@@ -4,14 +4,17 @@ use tokio::sync::broadcast;
 
 /// Filters a shared plant subscription stream down to a single account.
 ///
-/// Yields only updates tagged with this handle's account. Connection-health
-/// events and untagged messages reach every handle.
+/// The order and PnL plants share one connection, and one update stream,
+/// between all their accounts. This yields only the updates that carry this
+/// handle's account id. Updates that carry no account id, such as trade
+/// routes and connection events, reach every handle.
 pub struct SubscriptionFilter {
     account: Arc<RithmicAccount>,
     receiver: broadcast::Receiver<RithmicResponse>,
 }
 
 impl SubscriptionFilter {
+    /// A filter passing `account`'s updates from `receiver`.
     pub(crate) fn new(
         account: Arc<RithmicAccount>,
         receiver: broadcast::Receiver<RithmicResponse>,
@@ -21,8 +24,11 @@ impl SubscriptionFilter {
 
     /// Wait for the next subscription update for this account.
     ///
+    /// Skips other accounts' updates without returning.
+    ///
     /// When `RecvError::Lagged(n)` is returned, `n` counts all skipped messages
     /// on the shared broadcast stream, including messages for other accounts.
+    /// `RecvError::Closed` means the plant is gone and nothing more will come.
     pub async fn recv(&mut self) -> Result<RithmicResponse, broadcast::error::RecvError> {
         loop {
             let response = self.receiver.recv().await?;
@@ -32,7 +38,10 @@ impl SubscriptionFilter {
         }
     }
 
-    /// Create a second receiver starting at the current stream position.
+    /// Create a second receiver for the same account.
+    ///
+    /// It sees only updates sent after this call, not ones still queued for
+    /// `self`.
     #[must_use]
     pub fn resubscribe(&self) -> Self {
         Self {
@@ -41,6 +50,7 @@ impl SubscriptionFilter {
         }
     }
 
+    /// Whether `response` is for this account, or for no account in particular.
     fn should_forward(&self, response: &RithmicResponse) -> bool {
         match response_account_id(response) {
             Some(account_id) => account_id == self.account.account_id,
@@ -57,6 +67,7 @@ impl std::fmt::Debug for SubscriptionFilter {
     }
 }
 
+/// The account id an update carries, for the message types that have one.
 fn response_account_id(response: &RithmicResponse) -> Option<&str> {
     match &response.message {
         RithmicMessage::UserAccountUpdate(update) => update.account_id.as_deref(),

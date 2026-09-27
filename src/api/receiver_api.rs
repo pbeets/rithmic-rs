@@ -38,6 +38,8 @@ use crate::{
     util::unknown_message::UnknownTemplateMessage,
 };
 
+/// Decodes one plant's inbound frames into [`RithmicResponse`]s tagged with
+/// `source`.
 #[derive(Debug)]
 pub(crate) struct RithmicReceiverApi {
     pub(crate) source: String,
@@ -46,6 +48,8 @@ pub(crate) struct RithmicReceiverApi {
 impl RithmicReceiverApi {
     // Large Result size (~1296 bytes) due to RithmicMessage enum, but acceptable since
     // the Result is immediately matched and not passed through deep call stacks.
+    /// Decode one length-prefixed frame. `Err` is still a routable response:
+    /// `error` holds the `ProtocolError`, and `request_id` is recovered if it can be.
     #[allow(clippy::result_large_err)]
     pub(crate) fn buf_to_message(&self, data: Bytes) -> Result<RithmicResponse, RithmicResponse> {
         if data.len() < 4 {
@@ -228,7 +232,7 @@ impl RithmicReceiverApi {
                 RithmicResponse {
                     request_id: resp.user_msg.first().cloned().unwrap_or_default(),
                     message: RithmicMessage::ResponseHeartbeat(resp),
-                    is_update: true, // Heartbeats are connection health events - route to subscription channel
+                    is_update: true, // `forward_response` special-cases heartbeats before this flag
                     has_more: false,
                     multi_response: false,
                     error,
@@ -257,11 +261,9 @@ impl RithmicReceiverApi {
                 let request_id = resp.user_msg.first().cloned().unwrap_or_default();
 
                 if request_id.is_empty() {
-                    // A request-correlated reject reaches its caller as
-                    // `resp.error`. This one has no caller to reach and is
-                    // dropped in `forward_response`, so the log is the only
-                    // record of it. `Reject` carries nothing but `template_id`,
-                    // `user_msg` and `rp_code`, and `user_msg` is empty here.
+                    // No caller to reach: `forward_response` drops it, so this
+                    // log is its only record. `rp_code` is all a `Reject` holds
+                    // besides the empty `user_msg`.
                     warn!(
                         "{}: unsolicited reject, rp_code {:?}",
                         self.source, resp.rp_code
@@ -1560,9 +1562,8 @@ impl RithmicReceiverApi {
                     unknown.payload.len()
                 );
 
-                // No request_id can be extracted without a schema, so route as
-                // an update rather than letting the request handler log
-                // "no responder found".
+                // No request_id can be read without a schema. As a reply it
+                // would match no request and be dropped, so route it as an update.
                 RithmicResponse {
                     request_id: "".to_string(),
                     message: RithmicMessage::UnknownTemplate(unknown),
@@ -1579,12 +1580,9 @@ impl RithmicReceiverApi {
     }
 }
 
-// The *presence* of `rq_handler_rp_code` is the multipart signal, not the value
-// inside it: keying on `[0] == "0"` truncates multipart responses whose
-// intermediate frames carry a non-"0" status.
-//
-// A `repeated string` has no "absent" vs "empty" distinction on the wire, so
-// "presence" is equivalent to "non-empty".
+// A non-empty `rq_handler_rp_code` marks a frame with more to follow, whatever
+// it holds: keying on `[0] == "0"` would cut replies short whose middle frames carry
+// another status. An empty repeated field is the same as an absent one.
 fn has_multiple(rq_handler_rp_code: &[String]) -> bool {
     !rq_handler_rp_code.is_empty()
 }
@@ -1604,23 +1602,18 @@ fn decode_error(source: &str, e: prost::DecodeError, is_update: bool) -> Rithmic
     }
 }
 
-/// Reads the echoed `user_msg` back off a body that failed to decode.
-///
-/// prost skips tags a type doesn't declare, so this one-field struct decodes
-/// where the real message type won't. Tag 132760 is `user_msg` everywhere in
-/// [`crate::rti`] and nothing else uses it — recheck if `rti.rs` is regenerated.
+/// Reads `user_msg` off a body that failed to decode; prost skips the other
+/// tags. Tag 132760 is `user_msg` in every [`crate::rti`] type and nothing
+/// else, so recheck if `rti.rs` is regenerated.
 #[derive(Clone, PartialEq, ::prost::Message)]
 struct UserMsgProbe {
     #[prost(string, repeated, tag = "132760")]
     user_msg: Vec<String>,
 }
 
-/// Settle `request_id` and `is_update` on a decode failure.
-///
-/// A response already marked an update routes correctly. One built for a
-/// request carries an empty `request_id`, matches no responder, and would be
-/// dropped along with its `ProtocolError` — so recover the echoed id where
-/// there is one, and route it as an update where there is not.
+/// A failed reply has no `request_id` and would be dropped with its
+/// `ProtocolError`. Recover the echoed id so it reaches its caller, or route
+/// it as an update when there is none.
 fn route_decode_failure(payload: &[u8], mut response: RithmicResponse) -> RithmicResponse {
     if response.is_update || !response.request_id.is_empty() {
         return response;

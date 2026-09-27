@@ -30,9 +30,10 @@ use crate::{
 #[non_exhaustive]
 #[must_use = "a trailing stop does nothing until attached to an order"]
 pub struct TrailingStop {
-    /// Number of ticks to trail behind the market price
+    /// Number of ticks to trail behind the market price. `build()` requires
+    /// at least 1.
     pub trail_by_ticks: i32,
-    /// Rithmic price-id to trail against. `build()` requires a non-zero id.
+    /// Rithmic price-id to trail against. `build()` requires at least 1.
     pub trail_by_price_id: i32,
 }
 
@@ -58,7 +59,8 @@ impl TrailingStop {
         self
     }
 
-    /// Requires both fields.
+    /// Requires both fields to be at least 1. An order's own `build()` does
+    /// not run this check, so call it before attaching the stop.
     pub fn build(self) -> Result<Self, RithmicError> {
         if self.trail_by_ticks < 1 {
             return Err(RithmicError::InvalidArgument(
@@ -78,6 +80,8 @@ impl TrailingStop {
 ///
 /// Maps to the `if_touched_*` fields on `RequestNewOrder`,
 /// `RequestBracketOrder` and `RequestModifyOrder`, which are field-identical.
+/// An order's own `build()` does not check the trigger, so call
+/// [`build`](Self::build) on it before attaching it.
 ///
 /// # Example
 ///
@@ -103,11 +107,12 @@ pub struct RithmicIfTouchedTrigger {
     pub symbol: String,
     /// Exchange for the monitored symbol.
     pub exchange: String,
-    /// Comparison operator for the trigger.
+    /// Comparison operator for the trigger. Defaults to `GreaterThanEqualTo`.
     pub condition: OrderCondition,
-    /// Price field to evaluate.
+    /// Price field to evaluate. Defaults to `TradePrice`.
     pub price_field: OrderPriceField,
-    /// Threshold price for the condition. Left off the wire when unset.
+    /// Threshold price for the condition. Left off the wire when unset;
+    /// [`build`](Self::build) requires it.
     pub price: Option<f64>,
 }
 

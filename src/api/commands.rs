@@ -3,6 +3,7 @@
 //! Every command is built the same way: `T::new()` starts from the command's
 //! defaults, a chained setter covers each field, and `build()` hands the command
 //! back. Where the command type has a `validate()`, `build()` runs it first.
+//! The order plant handle does not re-validate, so `build()` is the only check.
 //!
 //! ```
 //! use rithmic_rs::{OrderSide, OrderType, RithmicOrder};
@@ -38,6 +39,8 @@ pub use oco::{RithmicOcoOrder, RithmicOcoOrderLeg};
 pub use order::RithmicOrder;
 pub use triggers::{RithmicIfTouchedTrigger, TrailingStop};
 
+/// The checks every order-placing command shares: a symbol, an exchange, and a
+/// quantity of at least 1.
 pub(crate) fn validate_instrument(
     symbol: &str,
     exchange: &str,

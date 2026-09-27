@@ -14,6 +14,8 @@
 //!
 //! // Or build manually if needed
 //! let config = RithmicConfig::builder(RithmicEnv::Demo)
+//!     .url("wss://<demo url from Rithmic>")
+//!     .beta_url("wss://<demo alt url from Rithmic>")
 //!     .user("my_user")
 //!     .password("my_password")
 //!     .app_name("my_app")
@@ -28,9 +30,15 @@
 use crate::request_handler::DEFAULT_REQUEST_TIMEOUT;
 use std::{env, fmt, str::FromStr, time::Duration};
 
-/// Trading environment selector.
+/// Which Rithmic environment a config is for.
 ///
-/// Determines which Rithmic environment to connect to.
+/// It picks the environment variables [`RithmicConfig::from_env`] and
+/// [`RithmicAccount::from_env`] read (`RITHMIC_DEMO_*`, `RITHMIC_LIVE_*`,
+/// `RITHMIC_TEST_*`) and the default system name. It does not pick the server:
+/// that is the URL you supply.
+///
+/// Parses from `"demo"` or `"development"`, `"live"` or `"production"`, and
+/// `"test"` (lowercase only), and displays as `demo`, `live` or `test`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "lowercase"))]
@@ -95,13 +103,14 @@ impl FromStr for RithmicEnv {
     }
 }
 
-/// Configuration error types.
+/// Why a config could not be built.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ConfigError {
-    /// The environment string could not be parsed.
+    /// Parsing a [`RithmicEnv`] from a string failed. Holds the string.
     InvalidEnvironment(String),
-    /// A configuration value was present but invalid.
+    /// A configuration value was present but invalid. Today only
+    /// `RITHMIC_REQUEST_TIMEOUT_SECS` is checked this way.
     #[non_exhaustive]
     InvalidValue {
         /// The variable or field name.
@@ -109,9 +118,11 @@ pub enum ConfigError {
         /// Why the value was rejected.
         reason: String,
     },
-    /// A required environment variable was not set.
+    /// A required environment variable was not set, or was not valid
+    /// Unicode. Holds the variable name.
     MissingEnvVar(String),
-    /// A required builder field was not provided.
+    /// [`RithmicConfigBuilder::build`] was called without a required field.
+    /// Holds the field name, e.g. `"beta_url"`.
     MissingField(String),
 }
 
@@ -161,7 +172,8 @@ pub struct RithmicAccount {
 }
 
 impl RithmicAccount {
-    /// Create a typed account identity directly.
+    /// Create an account identity. Note the argument order: FCM, IB, then
+    /// account.
     pub fn new(
         fcm_id: impl Into<String>,
         ib_id: impl Into<String>,
@@ -174,8 +186,10 @@ impl RithmicAccount {
         }
     }
 
-    /// Create an account identity by loading values from environment variables.
+    /// Load the account identity from `RITHMIC_{DEMO,LIVE,TEST}_ACCOUNT_ID`,
+    /// `_FCM_ID` and `_IB_ID`, using the prefix for `env`.
     ///
+    /// Returns [`ConfigError::MissingEnvVar`] naming the first one not set.
     /// See [`examples/.env.blank`](https://github.com/pbeets/rithmic-rs/blob/main/examples/.env.blank)
     /// for a template of all required environment variables.
     pub fn from_env(env: RithmicEnv) -> Result<Self, ConfigError> {
@@ -192,6 +206,10 @@ impl RithmicAccount {
 /// Login overrides. Every field left `None` keeps the default, so `login()` is
 /// the whole story unless you need one of these.
 ///
+/// A plant logs in once per connection. Calling `login_with_config` again with
+/// a different config returns [`RithmicError::LoginConflict`](crate::RithmicError::LoginConflict),
+/// so pick the config before the first login.
+///
 /// # Example
 ///
 /// ```no_run
@@ -202,10 +220,7 @@ impl RithmicAccount {
 /// let plant = RithmicTickerPlant::connect(&config, ConnectStrategy::Retry).await?;
 /// let handle = plant.get_handle();
 ///
-/// // Tick-by-tick quotes (default)
-/// handle.login().await?;
-///
-/// // Aggregated quotes
+/// // Aggregated quotes. For tick-by-tick quotes, call `handle.login()` instead.
 /// let mut login = LoginConfig::default();
 /// login.aggregated_quotes = Some(true);
 /// handle.login_with_config(login).await?;
@@ -215,13 +230,14 @@ impl RithmicAccount {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct LoginConfig {
-    /// Aggregated rather than tick-by-tick quotes. Ticker plant only.
+    /// Aggregated rather than tick-by-tick quotes. Unset means tick-by-tick.
+    /// Ticker plant only; the other plants ignore it.
     pub aggregated_quotes: Option<bool>,
     /// MAC addresses reported to Rithmic. None are sent when unset.
     pub mac_addr: Option<Vec<String>>,
-    /// OS version reported to Rithmic. Sent empty when unset.
+    /// OS version reported to Rithmic. Left out of the login when unset.
     pub os_version: Option<String>,
-    /// OS platform reported to Rithmic. Sent empty when unset.
+    /// OS platform reported to Rithmic. Left out of the login when unset.
     pub os_platform: Option<String>,
 }
 
@@ -240,9 +256,8 @@ fn parse_whole_seconds(value: &str) -> Option<u64> {
     if canonical { value.parse().ok() } else { None }
 }
 
-/// Configuration for Rithmic connections.
-///
-/// This struct contains session-level connection and login details.
+/// Where to connect and how to log in. One config can be shared by every
+/// plant you connect.
 ///
 /// Build one with [`RithmicConfig::from_env`] or [`RithmicConfig::builder`]; to
 /// load from the environment and override a field, use
@@ -259,17 +274,23 @@ fn parse_whole_seconds(value: &str) -> Option<u64> {
 #[derive(Clone)]
 #[non_exhaustive]
 pub struct RithmicConfig {
-    /// Primary WebSocket URL.
+    /// Primary WebSocket URL, e.g. `wss://...:443`. Rithmic supplies it.
     pub url: String,
-    /// Alternative/beta WebSocket URL used by [`ConnectStrategy::AlternateWithRetry`](crate::ConnectStrategy::AlternateWithRetry).
+    /// Second WebSocket URL, used only by
+    /// [`ConnectStrategy::AlternateWithRetry`](crate::ConnectStrategy::AlternateWithRetry).
+    /// Still required by [`RithmicConfigBuilder::build`] under the other
+    /// strategies.
     pub beta_url: String,
     /// Login username.
     pub user: String,
     /// Login password.
     pub password: String,
-    /// Rithmic system name (e.g. "Rithmic Paper Trading").
+    /// Rithmic system to log in to (e.g. "Rithmic Paper Trading"). It must
+    /// match a name the server offers; `get_system_info` on any plant handle
+    /// lists them.
     pub system_name: String,
-    /// Target trading environment.
+    /// The environment this config was built for. Nothing reads it after
+    /// building; `url` and `system_name` decide where you connect.
     pub env: RithmicEnv,
     /// Application name registered with Rithmic.
     pub app_name: String,
@@ -320,7 +341,8 @@ impl fmt::Debug for RithmicConfig {
 impl RithmicConfig {
     /// Create a configuration by loading values from environment variables.
     ///
-    /// See [`examples/.env.blank`](https://github.com/pbeets/rithmic-rs/blob/main/examples/.env.blank)
+    /// Returns [`ConfigError::MissingEnvVar`] naming the first required
+    /// variable not set. See [`examples/.env.blank`](https://github.com/pbeets/rithmic-rs/blob/main/examples/.env.blank)
     /// for a template of all required environment variables.
     ///
     /// # Required environment variables
@@ -420,15 +442,16 @@ impl RithmicConfig {
         })
     }
 
-    /// Create a builder for programmatic configuration.
-    ///
-    /// Use this to set configuration values directly in code.
+    /// Create a builder to set every value in code. Same as
+    /// [`RithmicConfigBuilder::new`].
     ///
     /// # Example
     /// ```no_run
     /// use rithmic_rs::config::{RithmicConfig, RithmicEnv};
     ///
     /// let config = RithmicConfig::builder(RithmicEnv::Demo)
+    ///     .url("wss://<demo url from Rithmic>")
+    ///     .beta_url("wss://<demo alt url from Rithmic>")
     ///     .user("my_user")
     ///     .password("my_password")
     ///     .app_name("my_app")
@@ -441,7 +464,11 @@ impl RithmicConfig {
     }
 }
 
-/// Builder for constructing a RithmicConfig with custom values.
+/// Builder for a [`RithmicConfig`].
+///
+/// Start empty with [`RithmicConfig::builder`], or pre-filled from the
+/// environment with [`RithmicConfigBuilder::from_env`]. Setters can be called
+/// in any order; a later call replaces an earlier one.
 #[must_use = "the builder does nothing until build() is called"]
 pub struct RithmicConfigBuilder {
     env: RithmicEnv,
@@ -489,7 +516,9 @@ impl RithmicConfigBuilder {
         })
     }
 
-    /// Create a new builder for the specified environment.
+    /// Create an empty builder for `env`. Only `system_name` starts filled
+    /// in, with the environment's default ("Rithmic Paper Trading",
+    /// "Rithmic 01" or "Rithmic Test").
     #[allow(deprecated)]
     pub fn new(env: RithmicEnv) -> Self {
         let system_name = env.default_system_name().to_string();
@@ -509,37 +538,41 @@ impl RithmicConfigBuilder {
         }
     }
 
-    /// Set the WebSocket URL.
+    /// Set the primary WebSocket URL. Required.
     pub fn url(mut self, url: impl Into<String>) -> Self {
         self.url = Some(url.into());
         self
     }
 
-    /// Set the beta WebSocket URL.
+    /// Set the second WebSocket URL, the one
+    /// [`ConnectStrategy::AlternateWithRetry`](crate::ConnectStrategy::AlternateWithRetry)
+    /// alternates to. Required even if you never use that strategy.
     pub fn beta_url(mut self, beta_url: impl Into<String>) -> Self {
         self.beta_url = Some(beta_url.into());
         self
     }
 
-    /// Set the username.
+    /// Set the username. Required.
     pub fn user(mut self, user: impl Into<String>) -> Self {
         self.user = Some(user.into());
         self
     }
 
-    /// Set the password.
+    /// Set the password. Required. [`RithmicConfig`]'s `Debug` output hides
+    /// it.
     pub fn password(mut self, password: impl Into<String>) -> Self {
         self.password = Some(password.into());
         self
     }
 
-    /// Set the system name.
+    /// Set the Rithmic system to log in to, overriding the environment's
+    /// default. See [`RithmicConfig::system_name`].
     pub fn system_name(mut self, system_name: impl Into<String>) -> Self {
         self.system_name = Some(system_name.into());
         self
     }
 
-    /// Set the application name registered with Rithmic.
+    /// Set the application name registered with Rithmic. Required.
     pub fn app_name(mut self, app_name: impl Into<String>) -> Self {
         self.app_name = Some(app_name.into());
         self
@@ -598,7 +631,7 @@ impl RithmicConfigBuilder {
         self
     }
 
-    /// Set the application version string registered with Rithmic.
+    /// Set the application version sent at login. Required.
     pub fn app_version(mut self, app_version: impl Into<String>) -> Self {
         self.app_version = Some(app_version.into());
         self
@@ -626,7 +659,8 @@ impl RithmicConfigBuilder {
 
     /// Build the configuration.
     ///
-    /// Returns an error if any required fields are missing.
+    /// Returns [`ConfigError::MissingField`] if `url`, `beta_url`, `user`,
+    /// `password`, `app_name` or `app_version` was never set.
     #[allow(deprecated)]
     pub fn build(self) -> Result<RithmicConfig, ConfigError> {
         Ok(RithmicConfig {

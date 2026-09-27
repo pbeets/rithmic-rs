@@ -19,9 +19,10 @@ use crate::{error::RithmicError, types::ManualOrAutoEntry};
 #[non_exhaustive]
 #[must_use = "a cancellation does nothing until passed to a plant handle"]
 pub struct RithmicCancelOrder {
-    /// The `basket_id` from the order notification
+    /// The `basket_id` from the order notification. Required.
     pub id: String,
     /// Whether the cancellation was made by a human or automatically.
+    /// Defaults to `Auto`.
     pub manual_or_auto: ManualOrAutoEntry,
     /// Originating window name reported to Rithmic.
     pub window_name: Option<String>,

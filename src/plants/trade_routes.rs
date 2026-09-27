@@ -7,9 +7,12 @@ use crate::{
     rti::{TradeRoute, messages::RithmicMessage},
 };
 
+/// One exchange's route, as the server last described it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct CachedTradeRoute {
+    /// The route name orders for the exchange carry.
     pub(crate) trade_route: String,
+    /// Whether the server marked this route the exchange's default.
     pub(crate) is_default: Option<bool>,
 }
 
@@ -44,7 +47,8 @@ impl TradeRouteCache {
         )
     }
 
-    /// Apply a `TradeRoute` (350) update, replacing any route held for its exchange.
+    /// Apply a `TradeRoute` (350) update, replacing any route held for its
+    /// exchange, even one marked default. An update missing either field is dropped.
     pub(crate) fn record_update(&mut self, update: &TradeRoute) {
         let (Some(exchange), Some(trade_route)) =
             (update.exchange.as_deref(), update.trade_route.as_deref())

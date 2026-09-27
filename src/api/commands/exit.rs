@@ -30,7 +30,8 @@ pub struct RithmicExitPosition {
     pub symbol: Option<String>,
     /// Exchange code (e.g., "CME"). Comes as a pair with `symbol`.
     pub exchange: Option<String>,
-    /// Whether the exit was made by a human or automatically.
+    /// Whether the exit was made by a human or automatically. Defaults to
+    /// `Auto`.
     pub manual_or_auto: ManualOrAutoEntry,
     /// Originating window name reported to Rithmic.
     pub window_name: Option<String>,

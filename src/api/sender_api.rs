@@ -48,11 +48,9 @@ use crate::{
     },
 };
 
-/// The protocol template version sent on every login.
-///
-/// It names the `.proto` set in `src/raw-proto/`, which the R | Protocol API
-/// 0.89.0.0 change log labels template 5.42. Bump it whenever those protos are
-/// regenerated against a newer release.
+/// Template version sent on every login. It names the `src/raw-proto/` set,
+/// which the R | Protocol API 0.89.0.0 change log labels 5.42. Bump it when
+/// those protos are regenerated.
 pub(crate) const TEMPLATE_VERSION: &str = "5.42";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -99,11 +97,9 @@ pub(crate) struct LoginScope {
 }
 
 impl LoginScope {
-    /// The only way to build one, so a scope that exists is always one the requests can
-    /// send. `None` for a user type they can't: `Admin`, out of range, or absent.
-    ///
-    /// `Admin` is missing from the account-list and RMS-info protos entirely, so a scope
-    /// only half the requests could use would be worse than none.
+    /// The only constructor, so every scope is one all the requests can send.
+    /// `None` for a user type absent, out of range, or `Admin`, which the
+    /// account-list and RMS-info protos lack.
     pub(crate) fn from_login_info(info: &ResponseLoginInfo) -> Option<Self> {
         let user_type = match info
             .user_type
@@ -129,13 +125,9 @@ fn omit_if_empty(value: String) -> Option<String> {
     (!value.is_empty()).then_some(value)
 }
 
-/// Zero-fill per-leg optional prices into the repeated field that goes on the
-/// wire.
-///
-/// The repeated field is positional — slot `i` prices leg `i` — so once one
-/// leg carries a price every leg needs a slot and the ones without take `0.0`.
-/// When no leg carries one the field is left out entirely rather than sent as
-/// a run of zeroes, which would price every leg at zero.
+/// Slot `i` prices leg `i`, so once any leg has a price the rest get `0.0`.
+/// With no prices at all the field is left empty, since a run of zeroes would
+/// price every leg at zero.
 fn zero_fill_prices(prices: Vec<Option<f64>>) -> Vec<f64> {
     if prices.iter().all(Option::is_none) {
         return vec![];
@@ -147,6 +139,9 @@ fn zero_fill_prices(prices: Vec<Option<f64>>) -> Vec<f64> {
         .collect()
 }
 
+/// Builds the request frames for one plant. Each `request_*` returns the frame
+/// (a 4-byte big-endian length, then the protobuf body) and the request id it
+/// put in `user_msg`, which the server echoes on every reply.
 #[derive(Debug, Clone)]
 pub(crate) struct RithmicSenderApi {
     app_name: String,
@@ -163,6 +158,7 @@ impl RithmicSenderApi {
         }
     }
 
+    /// Ids count up from `"1"` and are unique only within this plant.
     fn get_next_message_id(&mut self) -> String {
         self.message_id_counter += 1;
         self.message_id_counter.to_string()
@@ -243,15 +239,7 @@ impl RithmicSenderApi {
         self.request_to_buf(req, id)
     }
 
-    /// Request Rithmic system gateway information
-    ///
-    /// Returns gateway-specific information for a Rithmic system.
-    ///
-    /// # Arguments
-    /// * `system_name` - Optional system name to get info for
-    ///
-    /// # Returns
-    /// A tuple of (serialized request buffer, request ID)
+    /// Gateway details for `system_name`, or for every system when `None`.
     pub fn request_rithmic_system_gateway_info(
         &mut self,
         system_name: Option<&str>,
@@ -296,17 +284,8 @@ impl RithmicSenderApi {
         self.request_to_buf(req, id)
     }
 
-    /// Request instruments by underlying symbol
-    ///
-    /// Returns all instruments (options, futures) for a given underlying symbol.
-    ///
-    /// # Arguments
-    /// * `underlying_symbol` - The underlying symbol (e.g., "ES" for E-mini S&P 500)
-    /// * `exchange` - The exchange code (e.g., "CME")
-    /// * `expiration_date` - Optional expiration date filter
-    ///
-    /// # Returns
-    /// A tuple of (serialized request buffer, request ID)
+    /// Instruments listed on an underlying (e.g. `"ES"`), optionally narrowed
+    /// to one expiration date.
     pub fn request_get_instrument_by_underlying(
         &mut self,
         underlying_symbol: &str,
@@ -326,20 +305,9 @@ impl RithmicSenderApi {
         self.request_to_buf(req, id)
     }
 
-    /// Subscribe to or unsubscribe from market data updates by underlying
-    ///
-    /// Similar to request_market_data_update but subscribes to all instruments
-    /// for a given underlying symbol.
-    ///
-    /// # Arguments
-    /// * `underlying_symbol` - The underlying symbol (e.g., "ES")
-    /// * `exchange` - The exchange code (e.g., "CME")
-    /// * `expiration_date` - Optional expiration date filter
-    /// * `fields` - The market data fields to subscribe to
-    /// * `request_type` - Subscribe or Unsubscribe
-    ///
-    /// # Returns
-    /// A tuple of (serialized request buffer, request ID)
+    /// Like [`request_market_data_update`](Self::request_market_data_update),
+    /// but for every instrument on an underlying. `fields` are OR-ed into one
+    /// bitmask.
     pub fn request_market_data_update_by_underlying(
         &mut self,
         underlying_symbol: &str,
@@ -368,15 +336,6 @@ impl RithmicSenderApi {
         self.request_to_buf(req, id)
     }
 
-    /// Request tick size type table
-    ///
-    /// Returns the tick size table for a given tick size type.
-    ///
-    /// # Arguments
-    /// * `tick_size_type` - The tick size type identifier
-    ///
-    /// # Returns
-    /// A tuple of (serialized request buffer, request ID)
     pub fn request_give_tick_size_type_table(&mut self, tick_size_type: &str) -> (Vec<u8>, String) {
         let id = self.get_next_message_id();
 
@@ -389,16 +348,8 @@ impl RithmicSenderApi {
         self.request_to_buf(req, id)
     }
 
-    /// Request product codes
-    ///
-    /// Returns available product codes for an exchange.
-    ///
-    /// # Arguments
-    /// * `exchange` - Optional exchange filter (e.g., "CME")
-    /// * `give_toi_products_only` - If true, only return Time of Interest products
-    ///
-    /// # Returns
-    /// A tuple of (serialized request buffer, request ID)
+    /// Product codes, optionally for one exchange. `None` fields are left off
+    /// the wire.
     pub fn request_product_codes(
         &mut self,
         exchange: Option<&str>,
@@ -416,16 +367,7 @@ impl RithmicSenderApi {
         self.request_to_buf(req, id)
     }
 
-    /// Request volume at price data
-    ///
-    /// Returns the volume profile (volume at each price level) for a symbol.
-    ///
-    /// # Arguments
-    /// * `symbol` - The trading symbol (e.g., "ESH6")
-    /// * `exchange` - The exchange code (e.g., "CME")
-    ///
-    /// # Returns
-    /// A tuple of (serialized request buffer, request ID)
+    /// Volume traded at each price for a symbol.
     pub fn request_get_volume_at_price(
         &mut self,
         symbol: &str,
@@ -443,16 +385,6 @@ impl RithmicSenderApi {
         self.request_to_buf(req, id)
     }
 
-    /// Request auxiliary reference data
-    ///
-    /// Returns additional reference data for a symbol.
-    ///
-    /// # Arguments
-    /// * `symbol` - The trading symbol (e.g., "ESH6")
-    /// * `exchange` - The exchange code (e.g., "CME")
-    ///
-    /// # Returns
-    /// A tuple of (serialized request buffer, request ID)
     pub fn request_auxilliary_reference_data(
         &mut self,
         symbol: &str,
@@ -470,12 +402,7 @@ impl RithmicSenderApi {
         self.request_to_buf(req, id)
     }
 
-    /// Request login information for the current session
-    ///
-    /// Returns information about the current login session on the Order Plant.
-    ///
-    /// # Returns
-    /// A tuple of (serialized request buffer, request ID)
+    /// The reply's user type and ids feed [`LoginScope::from_login_info`].
     pub fn request_login_info(&mut self) -> (Vec<u8>, String) {
         let id = self.get_next_message_id();
 
@@ -487,13 +414,8 @@ impl RithmicSenderApi {
         self.request_to_buf(req, id)
     }
 
-    /// Request the accounts visible to the logged-in user
-    ///
-    /// # Arguments
-    /// * `scope` - Narrows the query to the login. `None` sends no ids and `Trader`.
-    ///
-    /// # Returns
-    /// A tuple of (serialized request buffer, request ID)
+    /// The accounts the login can see. With no `scope` it sends no FCM or IB
+    /// id and user type `Trader`.
     pub fn request_account_list(&mut self, scope: Option<&LoginScope>) -> (Vec<u8>, String) {
         let id = self.get_next_message_id();
 
@@ -547,19 +469,8 @@ impl RithmicSenderApi {
         self.request_to_buf(req, id)
     }
 
-    /// Build a new order request from a [`RithmicOrder`], including advanced
-    /// features like trigger prices and trailing stops.
-    ///
-    /// The route sent is the `trade_route` argument; `order.trade_route` is one
-    /// of the inputs the caller resolved it from and is not read here.
-    ///
-    /// # Arguments
-    /// * `order` - The order parameters
-    /// * `account` - The account to place the order for
-    /// * `trade_route` - The route to send the order on
-    ///
-    /// # Returns
-    /// A tuple of (serialized request buffer, request ID)
+    /// A new order from a [`RithmicOrder`]. Sends the `trade_route` argument;
+    /// `order.trade_route` is not read here, the caller already resolved it.
     pub fn request_order(
         &mut self,
         order: &RithmicOrder,
@@ -620,19 +531,8 @@ impl RithmicSenderApi {
         self.request_to_buf(req, id)
     }
 
-    /// Build a bracket order request from a [`RithmicBracketOrder`].
-    ///
-    /// The route sent is the `trade_route` argument; `bracket_order.trade_route`
-    /// is one of the inputs the caller resolved it from and is not read here.
-    ///
-    /// # Arguments
-    /// * `bracket_order` - The bracket order parameters
-    /// * `account` - The account to place the order for
-    /// * `scope` - Supplies the user type the login granted
-    /// * `trade_route` - The route to send the order on
-    ///
-    /// # Returns
-    /// A tuple of (serialized request buffer, request ID)
+    /// A bracket order. Sends the `trade_route` argument, not
+    /// `bracket_order.trade_route`. The user type comes from `scope`, else `Trader`.
     pub fn request_bracket_order(
         &mut self,
         bracket_order: RithmicBracketOrder,
@@ -725,16 +625,8 @@ impl RithmicSenderApi {
         self.request_to_buf(req, id)
     }
 
-    /// Build a request to modify a working order.
-    ///
-    /// A stop order with no explicit `trigger_price` triggers at its own price.
-    ///
-    /// # Arguments
-    /// * `order` - The modification to apply
-    /// * `account` - The account the order belongs to
-    ///
-    /// # Returns
-    /// A tuple of (serialized request buffer, request ID)
+    /// Modify a working order. A stop or if-touched order with no
+    /// `trigger_price` sends its `price` as the trigger.
     pub fn request_modify_order(
         &mut self,
         order: &RithmicModifyOrder,
@@ -797,14 +689,6 @@ impl RithmicSenderApi {
         self.request_to_buf(req, id)
     }
 
-    /// Build a request to cancel a working order.
-    ///
-    /// # Arguments
-    /// * `order` - The order to cancel
-    /// * `account` - The account the order belongs to
-    ///
-    /// # Returns
-    /// A tuple of (serialized request buffer, request ID)
     pub fn request_cancel_order(
         &mut self,
         order: &RithmicCancelOrder,
@@ -828,17 +712,8 @@ impl RithmicSenderApi {
         self.request_to_buf(req, id)
     }
 
-    /// Request to exit an entire position for a given symbol
-    ///
-    /// This will close all open positions for the specified symbol/exchange combination
-    /// by placing a market order in the opposite direction.
-    ///
-    /// # Arguments
-    /// * `command` - The position to exit and how the exit is attributed
-    /// * `account` - The account holding the position
-    ///
-    /// # Returns
-    /// A tuple of (serialized request buffer, request ID)
+    /// Flatten the position in `command.symbol`, or every position on the
+    /// account when symbol and exchange are both unset.
     pub fn request_exit_position(
         &mut self,
         command: &RithmicExitPosition,
@@ -864,16 +739,8 @@ impl RithmicSenderApi {
         self.request_to_buf(req, id)
     }
 
-    /// Update the profit target level of a bracket
-    ///
-    /// # Arguments
-    /// * `adjustment` - The basket, the new profit target distance in ticks, and
-    ///   which leg to adjust. The level is sent verbatim; the crate defines no
-    ///   numbering, and `None` omits the field.
-    /// * `account` - The account the bracket belongs to
-    ///
-    /// # Returns
-    /// A tuple of (serialized request buffer, request ID)
+    /// Move a bracket's profit target to `adjustment.ticks`. `level` is sent
+    /// as given (the crate defines no numbering); `None` leaves it off.
     pub fn request_update_target_bracket_level(
         &mut self,
         adjustment: &RithmicBracketLevelAdjustment,
@@ -895,16 +762,8 @@ impl RithmicSenderApi {
         self.request_to_buf(req, id)
     }
 
-    /// Update the stop loss level of a bracket
-    ///
-    /// # Arguments
-    /// * `adjustment` - The basket, the new stop loss distance in ticks, and
-    ///   which leg to adjust. The level is sent verbatim; the crate defines no
-    ///   numbering, and `None` omits the field.
-    /// * `account` - The account the bracket belongs to
-    ///
-    /// # Returns
-    /// A tuple of (serialized request buffer, request ID)
+    /// Move a bracket's stop to `adjustment.ticks`. `level` is sent as given
+    /// (the crate defines no numbering); `None` leaves it off.
     pub fn request_update_stop_bracket_level(
         &mut self,
         adjustment: &RithmicBracketLevelAdjustment,
@@ -926,13 +785,6 @@ impl RithmicSenderApi {
         self.request_to_buf(req, id)
     }
 
-    /// Request a list of all active bracket orders
-    ///
-    /// Returns information about all currently active bracket orders for the account,
-    /// including entry orders with their associated profit targets and stop losses.
-    ///
-    /// # Returns
-    /// A tuple of (serialized request buffer, request ID)
     pub fn request_show_brackets(&mut self, account: &RithmicAccount) -> (Vec<u8>, String) {
         let id = self.get_next_message_id();
 
@@ -947,13 +799,6 @@ impl RithmicSenderApi {
         self.request_to_buf(req, id)
     }
 
-    /// Request a list of all active bracket stop orders
-    ///
-    /// Returns information specifically about the stop loss orders associated with
-    /// bracket orders. This is useful for monitoring risk management on active positions.
-    ///
-    /// # Returns
-    /// A tuple of (serialized request buffer, request ID)
     pub fn request_show_bracket_stops(&mut self, account: &RithmicAccount) -> (Vec<u8>, String) {
         let id = self.get_next_message_id();
 
@@ -1018,16 +863,8 @@ impl RithmicSenderApi {
         self.request_to_buf(req, id)
     }
 
-    /// Build a tick bar replay request.
-    ///
-    /// # Arguments
-    ///
-    /// * `request` - The window and bar length to replay. Build it with
-    ///   [`TickBarReplayRequest::new`](crate::TickBarReplayRequest::new).
-    ///
-    /// # Returns
-    ///
-    /// A tuple containing the request buffer and the message id.
+    /// Always asks for regular tick bars, oldest first (`Direction::First`,
+    /// `TimeOrder::Forwards`).
     pub fn request_tick_bar_replay(&mut self, request: &TickBarReplayRequest) -> (Vec<u8>, String) {
         let id = self.get_next_message_id();
 
@@ -1051,20 +888,9 @@ impl RithmicSenderApi {
         self.request_to_buf(req, id)
     }
 
-    /// Build a time bar replay request.
-    ///
-    /// Copies `start_time_sec` and `end_time_sec` unchanged into the wire
-    /// `start_index` and `finish_index`. Second/minute bars use Unix seconds;
-    /// daily/weekly bars use `YYYYMMDD` date indices. No date conversion occurs.
-    ///
-    /// # Arguments
-    ///
-    /// * `request` - The window and bar size to replay. Build it with
-    ///   [`TimeBarReplayRequest::new`](crate::TimeBarReplayRequest::new).
-    ///
-    /// # Returns
-    ///
-    /// A tuple containing the request buffer and the message id.
+    /// Copies `start_time_sec` and `end_time_sec` into `start_index` and
+    /// `finish_index` as is: Unix seconds for second/minute bars, `YYYYMMDD`
+    /// for daily/weekly bars. Bars come oldest first.
     pub fn request_time_bar_replay(&mut self, request: &TimeBarReplayRequest) -> (Vec<u8>, String) {
         let id = self.get_next_message_id();
 
@@ -1087,18 +913,6 @@ impl RithmicSenderApi {
         self.request_to_buf(req, id)
     }
 
-    /// Build a volume profile minute bars request.
-    ///
-    /// Returns minute bar data with volume profile information.
-    ///
-    /// # Arguments
-    ///
-    /// * `request` - The window and bar period to replay. Build it with
-    ///   [`VolumeProfileMinuteBarsRequest::new`](crate::VolumeProfileMinuteBarsRequest::new).
-    ///
-    /// # Returns
-    ///
-    /// A tuple of (serialized request buffer, request ID)
     pub fn request_volume_profile_minute_bars(
         &mut self,
         request: &VolumeProfileMinuteBarsRequest,
@@ -1120,16 +934,8 @@ impl RithmicSenderApi {
         self.request_to_buf(req, id)
     }
 
-    /// Request to resume a previously truncated bars request
-    ///
-    /// Use this when a bars request was truncated due to data limits.
-    /// Pass the request_key from the previous response.
-    ///
-    /// # Arguments
-    /// * `request_key` - The request key from the previous truncated response
-    ///
-    /// # Returns
-    /// A tuple of (serialized request buffer, request ID)
+    /// Continue a bar replay the server cut short. `request_key` comes from
+    /// its truncation notice.
     pub fn request_resume_bars(&mut self, request_key: &str) -> (Vec<u8>, String) {
         let id = self.get_next_message_id();
 
@@ -1180,17 +986,8 @@ impl RithmicSenderApi {
         self.request_to_buf(req, id)
     }
 
-    /// Request to cancel all orders for the account
-    ///
-    /// This will cancel all active orders across all symbols and exchanges for the account.
-    ///
-    /// # Arguments
-    /// * `command` - The cancellation and how it is attributed to its originator
-    /// * `account` - The account whose orders are cancelled
-    /// * `scope` - Supplies the user type the login granted
-    ///
-    /// # Returns
-    /// A tuple of (serialized request buffer, request ID)
+    /// Cancel every working order on the account. The user type comes from
+    /// `scope`, else `Trader`.
     pub fn request_cancel_all_orders(
         &mut self,
         command: &RithmicCancelAllOrders,
@@ -1219,17 +1016,8 @@ impl RithmicSenderApi {
         self.request_to_buf(req, id)
     }
 
-    /// Request account RMS (Risk Management System) information
-    ///
-    /// Template 304 has no `account_id` field, so this covers every account the login
-    /// reaches rather than one account.
-    ///
-    /// # Arguments
-    /// * `account` - Supplies the ids only when there is no scope.
-    /// * `scope` - Narrows the query to the login.
-    ///
-    /// # Returns
-    /// A tuple of (serialized request buffer, request ID)
+    /// Risk limits for every account the login reaches: template 304 has no
+    /// `account_id`. FCM and IB ids come from `scope`, or from `account` without one.
     pub fn request_account_rms_info(
         &mut self,
         account: &RithmicAccount,
@@ -1259,12 +1047,7 @@ impl RithmicSenderApi {
         self.request_to_buf(req, id)
     }
 
-    /// Request product RMS (Risk Management System) information
-    ///
-    /// Returns risk management limits for specific products/symbols.
-    ///
-    /// # Returns
-    /// A tuple of (serialized request buffer, request ID)
+    /// Per-product risk limits for one account.
     pub fn request_product_rms_info(&mut self, account: &RithmicAccount) -> (Vec<u8>, String) {
         let id = self.get_next_message_id();
 
@@ -1279,15 +1062,8 @@ impl RithmicSenderApi {
         self.request_to_buf(req, id)
     }
 
-    /// Request list of available trade routes
-    ///
-    /// Returns the trade routes configured for the user's account.
-    ///
-    /// # Arguments
-    /// * `subscribe_for_updates` - Whether to receive updates when routes change
-    ///
-    /// # Returns
-    /// A tuple of (serialized request buffer, request ID)
+    /// The login's trade routes. With `subscribe_for_updates`, later changes
+    /// arrive as `TradeRoute` updates.
     pub fn request_trade_routes(&mut self, subscribe_for_updates: bool) -> (Vec<u8>, String) {
         let id = self.get_next_message_id();
 
@@ -1300,17 +1076,7 @@ impl RithmicSenderApi {
         self.request_to_buf(req, id)
     }
 
-    /// Request to search for symbols matching a pattern
-    ///
-    /// # Arguments
-    /// * `search_text` - Search query string
-    /// * `exchange` - Optional exchange filter (e.g., "CME", "COMEX")
-    /// * `product_code` - Optional product code filter (e.g., "ES", "SI")
-    /// * `instrument_type` - Optional instrument type filter
-    /// * `pattern` - Search pattern type (EQUALS or CONTAINS)
-    ///
-    /// # Returns
-    /// A tuple of (serialized request buffer, request ID)
+    /// Symbols matching `search_text`. `None` filters are left off the wire.
     pub fn request_search_symbols(
         &mut self,
         search_text: &str,
@@ -1334,15 +1100,7 @@ impl RithmicSenderApi {
         self.request_to_buf(req, id)
     }
 
-    /// Request list of exchanges available to the user
-    ///
-    /// Returns the exchanges the user has permission to trade on.
-    ///
-    /// # Arguments
-    /// * `user` - Username for authentication
-    ///
-    /// # Returns
-    /// A tuple of (serialized request buffer, request ID)
+    /// Exchange permissions of `user`, the user being looked up.
     pub fn request_list_exchange_permissions(&mut self, user: &str) -> (Vec<u8>, String) {
         let id = self.get_next_message_id();
 
@@ -1355,12 +1113,6 @@ impl RithmicSenderApi {
         self.request_to_buf(req, id)
     }
 
-    /// Request order history dates
-    ///
-    /// Returns the dates for which order history is available.
-    ///
-    /// # Returns
-    /// A tuple of (serialized request buffer, request ID)
     pub fn request_show_order_history_dates(&mut self) -> (Vec<u8>, String) {
         let id = self.get_next_message_id();
 
@@ -1372,14 +1124,7 @@ impl RithmicSenderApi {
         self.request_to_buf(req, id)
     }
 
-    /// Request order history summary for a specific date
-    ///
-    /// # Arguments
-    /// * `date` - Date in YYYYMMDD format (e.g., "20250122")
-    /// * `account` - The account to query
-    ///
-    /// # Returns
-    /// A tuple of (serialized request buffer, request ID)
+    /// `date` is `YYYYMMDD`, e.g. `"20250122"`.
     pub fn request_show_order_history_summary(
         &mut self,
         date: &str,
@@ -1399,15 +1144,7 @@ impl RithmicSenderApi {
         self.request_to_buf(req, id)
     }
 
-    /// Request detailed order history for a specific order
-    ///
-    /// # Arguments
-    /// * `basket_id` - Order/basket identifier
-    /// * `date` - Date in YYYYMMDD format
-    /// * `account` - The account to query
-    ///
-    /// # Returns
-    /// A tuple of (serialized request buffer, request ID)
+    /// History of one order on one day. `date` is `YYYYMMDD`.
     pub fn request_show_order_history_detail(
         &mut self,
         basket_id: &str,
@@ -1429,14 +1166,7 @@ impl RithmicSenderApi {
         self.request_to_buf(req, id)
     }
 
-    /// Request general order history
-    ///
-    /// # Arguments
-    /// * `basket_id` - Optional order/basket identifier filter
-    /// * `account` - The account to query
-    ///
-    /// # Returns
-    /// A tuple of (serialized request buffer, request ID)
+    /// Order history for the account, or for one order when `basket_id` is set.
     pub fn request_show_order_history(
         &mut self,
         basket_id: Option<&str>,
@@ -1456,17 +1186,6 @@ impl RithmicSenderApi {
         self.request_to_buf(req, id)
     }
 
-    /// Request reference data for a symbol
-    ///
-    /// Returns detailed information about a trading instrument including
-    /// tick size, point value, trading hours, and other symbol specifications.
-    ///
-    /// # Arguments
-    /// * `symbol` - The trading symbol (e.g., "ESH6")
-    /// * `exchange` - The exchange code (e.g., "CME")
-    ///
-    /// # Returns
-    /// A tuple of (serialized request buffer, request ID)
     pub fn request_reference_data(&mut self, symbol: &str, exchange: &str) -> (Vec<u8>, String) {
         let id = self.get_next_message_id();
 
@@ -1480,18 +1199,8 @@ impl RithmicSenderApi {
         self.request_to_buf(req, id)
     }
 
-    /// Request front month contract information
-    ///
-    /// Returns the current front month contract for a given product.
-    /// Optionally subscribe to updates when the front month rolls.
-    ///
-    /// # Arguments
-    /// * `symbol` - The product symbol (e.g., "ES" for E-mini S&P 500)
-    /// * `exchange` - The exchange code (e.g., "CME")
-    /// * `need_updates` - Whether to receive updates when front month changes
-    ///
-    /// # Returns
-    /// A tuple of (serialized request buffer, request ID)
+    /// The front month for a product code (e.g. `"ES"`). With `need_updates`,
+    /// a roll arrives as a `FrontMonthContractUpdate`.
     pub fn request_front_month_contract(
         &mut self,
         symbol: &str,
@@ -1511,19 +1220,8 @@ impl RithmicSenderApi {
         self.request_to_buf(req, id)
     }
 
-    /// Subscribe to or unsubscribe from live time bar updates
-    ///
-    /// Receive real-time time bar (OHLCV) updates for a symbol.
-    ///
-    /// # Arguments
-    /// * `symbol` - The trading symbol (e.g., "ESH6")
-    /// * `exchange` - The exchange code (e.g., "CME")
-    /// * `bar_type` - The type of time bar (SecondBar, MinuteBar, DailyBar, WeeklyBar)
-    /// * `bar_type_period` - The period for the bar type (e.g., 1 for 1-minute bars)
-    /// * `request` - Subscribe or Unsubscribe
-    ///
-    /// # Returns
-    /// A tuple of (serialized request buffer, request ID)
+    /// Live time bars. `bar_type_period` counts `bar_type` units, e.g. `5`
+    /// with `MinuteBar` for 5-minute bars.
     pub fn request_time_bar_update(
         &mut self,
         symbol: &str,
@@ -1547,20 +1245,8 @@ impl RithmicSenderApi {
         self.request_to_buf(req, id)
     }
 
-    /// Subscribe to or unsubscribe from live tick bar updates
-    ///
-    /// Receive real-time tick bar updates for a symbol.
-    ///
-    /// # Arguments
-    /// * `symbol` - The trading symbol (e.g., "ESH6")
-    /// * `exchange` - The exchange code (e.g., "CME")
-    /// * `bar_type` - The type of tick bar
-    /// * `bar_sub_type` - Sub-type of the bar
-    /// * `bar_type_specifier` - Specifier for the bar (e.g., "1" for 1-tick bars)
-    /// * `request` - Subscribe or Unsubscribe
-    ///
-    /// # Returns
-    /// A tuple of (serialized request buffer, request ID)
+    /// Live tick bars. `bar_type_specifier` is the bar size as a string, e.g.
+    /// `"1"` for 1-tick bars.
     pub fn request_tick_bar_update(
         &mut self,
         symbol: &str,
@@ -1587,18 +1273,8 @@ impl RithmicSenderApi {
         self.request_to_buf(req, id)
     }
 
-    /// Subscribe to account RMS (Risk Management System) updates
-    ///
-    /// Receive real-time updates when account RMS limits change.
-    ///
-    /// # Arguments
-    /// * `subscribe` - true to subscribe, false to unsubscribe
-    /// * `update_bits` - which RMS fields to stream, folded into the `update_bits`
-    ///   bitmask. An empty `Vec` leaves the field off the request.
-    /// * `account` - The account to subscribe for
-    ///
-    /// # Returns
-    /// A tuple of (serialized request buffer, request ID)
+    /// Subscribe to account risk-limit updates, or unsubscribe when `subscribe`
+    /// is false. `update_bits` are OR-ed into one mask; an empty `Vec` omits it.
     pub fn request_account_rms_updates(
         &mut self,
         subscribe: bool,
@@ -1637,26 +1313,10 @@ impl RithmicSenderApi {
         self.request_to_buf(req, id)
     }
 
-    /// Request an OCO (One Cancels Other) order with an arbitrary number of legs
-    ///
-    /// Builds a single `RequestOcoOrder` (template 328) with every repeated field
-    /// populated in a single pass over `legs`. When one leg is filled, the others
-    /// are automatically cancelled.
-    ///
-    /// # Arguments
-    /// * `legs` - The order legs, each paired with the resolved trade route for
-    ///   that leg's exchange, which keeps the repeated route field index-aligned
-    /// * `account` - The account to place the order for
-    ///
-    /// `price` and `trigger_price` are sent for every leg once any leg carries
-    /// one, and omitted entirely when none does.
-    ///
-    /// # Errors
-    /// [`RithmicError::InvalidArgument`] when a leg names a price type template
-    /// 328 cannot express.
-    ///
-    /// # Returns
-    /// A tuple of (serialized request buffer, request ID)
+    /// One OCO order; each leg comes with its resolved trade route. Every
+    /// repeated field holds one slot per leg, or is left off when no leg sets it.
+    /// Fails with [`RithmicError::InvalidArgument`] on a price type template
+    /// 328 can't express.
     pub fn request_oco_order(
         &mut self,
         legs: Vec<(RithmicOcoOrderLeg, String)>,
@@ -1758,16 +1418,8 @@ impl RithmicSenderApi {
         Ok(self.request_to_buf(req, id))
     }
 
-    /// Request to link multiple orders together
-    ///
-    /// Links orders together by basket id.
-    ///
-    /// # Arguments
-    /// * `command` - The basket IDs to link together
-    /// * `account` - The account the baskets belong to
-    ///
-    /// # Returns
-    /// A tuple of (serialized request buffer, request ID)
+    /// Link baskets. The account ids are repeated so each basket id has its
+    /// own slot in every repeated field.
     pub fn request_link_orders(
         &mut self,
         command: RithmicLinkOrders,
@@ -1789,13 +1441,6 @@ impl RithmicSenderApi {
         self.request_to_buf(req, id)
     }
 
-    /// Request the easy-to-borrow list for short selling
-    ///
-    /// # Arguments
-    /// * `request_type` - Subscribe or Unsubscribe from updates
-    ///
-    /// # Returns
-    /// A tuple of (serialized request buffer, request ID)
     pub fn request_easy_to_borrow_list(
         &mut self,
         request_type: EasyToBorrowRequest,
@@ -1811,16 +1456,7 @@ impl RithmicSenderApi {
         self.request_to_buf(req, id)
     }
 
-    /// Modify order reference data (user tag)
-    ///
-    /// Updates the user-defined reference data on an existing order.
-    ///
-    /// # Arguments
-    /// * `command` - The basket to retag and the new tag
-    /// * `account` - The account the basket belongs to
-    ///
-    /// # Returns
-    /// A tuple of (serialized request buffer, request ID)
+    /// Replace the `user_tag` on an existing order.
     pub fn request_modify_order_reference_data(
         &mut self,
         command: &RithmicModifyOrderReferenceData,
@@ -1841,15 +1477,8 @@ impl RithmicSenderApi {
         self.request_to_buf(req, id)
     }
 
-    /// Request order session configuration
-    ///
-    /// Gets or sets order session configuration options.
-    ///
-    /// # Arguments
-    /// * `should_defer_request` - If true, defers requests until server loads reference data
-    ///
-    /// # Returns
-    /// A tuple of (serialized request buffer, request ID)
+    /// `should_defer_request` only matters when the server must fetch
+    /// reference data from the system; `true` defers requests until it has.
     pub fn request_order_session_config(
         &mut self,
         should_defer_request: Option<bool>,
@@ -1865,17 +1494,7 @@ impl RithmicSenderApi {
         self.request_to_buf(req, id)
     }
 
-    /// Request replay of executions
-    ///
-    /// Replays historical execution data for the account within a time range.
-    ///
-    /// # Arguments
-    /// * `start_index_sec` - Start time in unix seconds
-    /// * `finish_index_sec` - End time in unix seconds
-    /// * `account` - The account to query
-    ///
-    /// # Returns
-    /// A tuple of (serialized request buffer, request ID)
+    /// Executions on the account between two Unix-second timestamps.
     pub fn request_replay_executions(
         &mut self,
         start_index_sec: i32,
@@ -1897,14 +1516,8 @@ impl RithmicSenderApi {
         self.request_to_buf(req, id)
     }
 
-    /// Request the profile of a user (template 3510).
-    ///
-    /// # Arguments
-    /// * `user` - The user to look up. `None` asks about the logged-in user.
-    /// * `account` - Supplies the FCM and IB ids on the request
-    ///
-    /// # Returns
-    /// A tuple of (serialized request buffer, request ID)
+    /// A user's profile; `None` asks about the logged-in user. Only the FCM
+    /// and IB ids are read from `account`.
     pub fn request_get_user_info(
         &mut self,
         user: Option<&str>,
@@ -1923,16 +1536,8 @@ impl RithmicSenderApi {
         self.request_to_buf(req, id)
     }
 
-    /// Request the fill history of an account (template 3512).
-    ///
-    /// # Arguments
-    /// * `range` - The window to report on
-    /// * `max_record_count` - Cap on the number of fills returned. Rithmic
-    ///   rejects values above 10,000. `None` leaves the cap to the server.
-    /// * `account` - The account to report on
-    ///
-    /// # Returns
-    /// A tuple of (serialized request buffer, request ID)
+    /// Fills in `range`. Rithmic rejects a `max_record_count` above 10,000;
+    /// `None` leaves the cap to the server.
     pub fn request_show_fill_history(
         &mut self,
         range: FillHistoryRange,
@@ -1956,13 +1561,6 @@ impl RithmicSenderApi {
         self.request_to_buf(req, id)
     }
 
-    /// Request list of unaccepted agreements
-    ///
-    /// Returns agreements that the user has not yet accepted.
-    /// These may include market data agreements, exchange agreements, etc.
-    ///
-    /// # Returns
-    /// A tuple of (serialized request buffer, request ID)
     pub fn request_list_unaccepted_agreements(&mut self) -> (Vec<u8>, String) {
         let id = self.get_next_message_id();
 
@@ -1974,12 +1572,6 @@ impl RithmicSenderApi {
         self.request_to_buf(req, id)
     }
 
-    /// Request list of accepted agreements
-    ///
-    /// Returns agreements that the user has already accepted.
-    ///
-    /// # Returns
-    /// A tuple of (serialized request buffer, request ID)
     pub fn request_list_accepted_agreements(&mut self) -> (Vec<u8>, String) {
         let id = self.get_next_message_id();
 
@@ -1991,16 +1583,7 @@ impl RithmicSenderApi {
         self.request_to_buf(req, id)
     }
 
-    /// Accept an agreement
-    ///
-    /// Accepts a specific agreement identified by agreement_id.
-    ///
-    /// # Arguments
-    /// * `agreement_id` - The agreement identifier
-    /// * `market_data_usage_capacity` - "Professional" or "Non-Professional"
-    ///
-    /// # Returns
-    /// A tuple of (serialized request buffer, request ID)
+    /// `market_data_usage_capacity` is `"Professional"` or `"Non-Professional"`.
     pub fn request_accept_agreement(
         &mut self,
         agreement_id: &str,
@@ -2018,15 +1601,6 @@ impl RithmicSenderApi {
         self.request_to_buf(req, id)
     }
 
-    /// Request to show agreement details
-    ///
-    /// Returns the full text and details of a specific agreement.
-    ///
-    /// # Arguments
-    /// * `agreement_id` - The agreement identifier
-    ///
-    /// # Returns
-    /// A tuple of (serialized request buffer, request ID)
     pub fn request_show_agreement(&mut self, agreement_id: &str) -> (Vec<u8>, String) {
         let id = self.get_next_message_id();
 
@@ -2039,17 +1613,7 @@ impl RithmicSenderApi {
         self.request_to_buf(req, id)
     }
 
-    /// Set Rithmic market data self-certification status
-    ///
-    /// Sets the user's self-certification status for market data usage
-    /// (Professional vs Non-Professional).
-    ///
-    /// # Arguments
-    /// * `agreement_id` - The agreement identifier
-    /// * `market_data_usage_capacity` - "Professional" or "Non-Professional"
-    ///
-    /// # Returns
-    /// A tuple of (serialized request buffer, request ID)
+    /// `market_data_usage_capacity` is `"Professional"` or `"Non-Professional"`.
     pub fn request_set_rithmic_mrkt_data_self_cert_status(
         &mut self,
         agreement_id: &str,

@@ -8,10 +8,16 @@ use crate::rti::ResponseReferenceData;
 /// [`Default`] and assign the fields you need.
 ///
 /// # Example
-/// ```ignore
-/// if let RithmicMessage::ResponseReferenceData(data) = &response.message {
-///     let info = InstrumentInfo::try_from(data)?;
-///     println!("{} on {} - tick size {:?}", info.symbol, info.exchange, info.tick_size);
+/// ```
+/// use rithmic_rs::{InstrumentInfo, InstrumentInfoError, RithmicResponse};
+/// use rithmic_rs::rti::messages::RithmicMessage;
+///
+/// fn print_instrument(response: &RithmicResponse) -> Result<(), InstrumentInfoError> {
+///     if let RithmicMessage::ResponseReferenceData(data) = &response.message {
+///         let info = InstrumentInfo::try_from(data)?;
+///         println!("{} on {} - tick size {:?}", info.symbol, info.exchange, info.tick_size);
+///     }
+///     Ok(())
 /// }
 /// ```
 #[derive(Debug, Clone, Default)]
@@ -35,18 +41,20 @@ pub struct InstrumentInfo {
     pub currency: Option<String>,
     /// Expiration date string (format varies by exchange)
     pub expiration_date: Option<String>,
-    /// Minimum price increment
+    /// Minimum price increment, from Rithmic's `min_qprice_change`.
     pub tick_size: Option<f64>,
-    /// Dollar value of one point move
+    /// Value of a one-point move in [`Self::currency`], from Rithmic's
+    /// `single_point_value`.
     pub point_value: Option<f64>,
-    /// Whether the instrument can be traded
+    /// Whether the instrument can be traded. `true` only when Rithmic sent
+    /// `"true"` (any case) or `"1"`; a missing value counts as `false`.
     pub is_tradable: bool,
 }
 
 impl InstrumentInfo {
-    /// Calculate decimal places for price display based on tick size.
+    /// Decimal places needed to show a price, worked out from the tick size.
     ///
-    /// Returns 2 as default if tick_size is not available.
+    /// Returns 2 when `tick_size` is unset, zero or negative. Never more than 10.
     ///
     /// # Example
     /// ```

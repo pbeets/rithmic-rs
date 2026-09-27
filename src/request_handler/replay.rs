@@ -18,7 +18,8 @@ pub(crate) struct PendingReplay {
     /// the same key again after new data.
     used_keys: HashSet<String>,
     /// Whether the request reached the socket, so the server may still be
-    /// sending frames for it after it is released.
+    /// sending frames for it after it is released. An abandoned replay is only
+    /// released once this is set.
     sent: bool,
 }
 

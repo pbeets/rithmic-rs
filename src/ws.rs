@@ -34,7 +34,11 @@ const BACKOFF_MS_BASE: u64 = 500;
 /// Maximum backoff duration in seconds (rate limit for connection attempts).
 const MAX_BACKOFF_SECS: u64 = 60;
 
-/// Connection strategy for connecting to Rithmic servers.
+/// How a plant's `connect` tries to reach the server.
+///
+/// Each attempt times out after 2 seconds. The retrying strategies wait
+/// between attempts: 500 ms more per failed attempt, capped at 60 s, then
+/// jittered by ±50% so plants that dropped together do not retry in step.
 ///
 /// The retrying strategies try indefinitely unless
 /// [`RithmicConfigBuilder::retry_timeout`](crate::RithmicConfigBuilder::retry_timeout)
@@ -43,11 +47,18 @@ const MAX_BACKOFF_SECS: u64 = 60;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ConnectStrategy {
-    /// Single connection attempt. Fast-fail, no retries.
+    /// One attempt on [`RithmicConfig::url`](crate::RithmicConfig::url). On
+    /// failure `connect` returns
+    /// [`RithmicError::ConnectionFailed`](crate::RithmicError::ConnectionFailed)
+    /// at once.
     Simple,
-    /// Retry same URL indefinitely with linear backoff (500 ms more per attempt, capped at 60s, jittered ±50%). Recommended for most users.
+    /// Retry [`RithmicConfig::url`](crate::RithmicConfig::url) with backoff.
+    /// The recommended default.
     Retry,
-    /// Alternates between primary and beta URLs indefinitely. Useful when main server has issues.
+    /// Like `Retry`, but alternate between
+    /// [`RithmicConfig::url`](crate::RithmicConfig::url) and
+    /// [`RithmicConfig::beta_url`](crate::RithmicConfig::beta_url), starting
+    /// with `url`. Useful when the main server has issues.
     AlternateWithRetry,
 }
 
@@ -60,18 +71,11 @@ pub(crate) enum WebSocketSendError {
     Timeout,
 }
 
-/// Sends a WebSocket message with a hard timeout.
+/// Send a WebSocket message, giving up after `timeout_duration` so a
+/// half-open connection cannot hang the actor loop.
 ///
-/// This prevents actor loop branches from hanging indefinitely on half-open
-/// connections where the TCP write side no longer makes progress.
-///
-/// # Cancellation safety
-///
-/// This function is not cancel-safe with respect to the underlying sink. If the
-/// timeout fires while the sink is flushing, the message may already be buffered
-/// inside the WebSocket stream even though the future returned `Timeout`.
-/// Callers must treat the sink as poisoned after any non-`Ok` return and avoid
-/// reusing it.
+/// On `Timeout` the message may still sit in the sink's buffer, so treat the
+/// sink as poisoned and do not write to it again.
 pub(crate) async fn send_with_timeout<S>(
     sink: &mut S,
     msg: Message,
@@ -102,9 +106,8 @@ pub(crate) fn get_heartbeat_interval(override_secs: Option<u64>) -> Interval {
     interval_at(start_offset, heartbeat_interval)
 }
 
-/// Creates an interval for sending WebSocket pings.
-///
-/// Returns an interval starting after the first ping period elapses.
+/// Interval for WebSocket pings, every [`PING_INTERVAL_SECS`]. The first tick
+/// is one period from now.
 pub(crate) fn get_ping_interval() -> Interval {
     let ping_interval = Duration::from_secs(PING_INTERVAL_SECS);
     let start_offset = Instant::now() + ping_interval;
@@ -112,16 +115,8 @@ pub(crate) fn get_ping_interval() -> Interval {
     interval_at(start_offset, ping_interval)
 }
 
-/// Connect to a single URL without retry.
-///
-/// Bounded by [`CONNECT_TIMEOUT_SECS`] so `Simple` fast-fails instead of
-/// hanging for the OS TCP timeout.
-///
-/// # Arguments
-/// * `url` - WebSocket URL to connect to
-///
-/// # Returns
-/// WebSocketStream on success, error on failure or timeout.
+/// One connection attempt, bounded by [`CONNECT_TIMEOUT_SECS`] so `Simple`
+/// fails fast instead of waiting out the OS TCP timeout.
 async fn connect(url: &str) -> Result<WebSocketStream<MaybeTlsStream<TcpStream>>, Error> {
     info!("Connecting to {}", url);
 
@@ -183,21 +178,12 @@ impl std::fmt::Display for RetryDeadlineExceeded {
 
 impl std::error::Error for RetryDeadlineExceeded {}
 
-/// Connect with retry and linear backoff — 500 ms more per attempt, capped
-/// at [`MAX_BACKOFF_SECS`] and then jittered by ±50%, so the spread
-/// survives a long outage (delays range 30–90 s at the cap).
+/// Retry until connected, cycling through `urls`, with the jittered linear
+/// backoff described on [`ConnectStrategy`] (30-90 s once capped).
 ///
-/// The jitter keeps plants that lost the same connection from retrying in
-/// lockstep against a recovering server.
-///
-/// `urls` is cycled by attempt number: pass one URL to retry it, or
-/// primary + beta to alternate between them.
-///
-/// With no `deadline`, never returns until a connection succeeds. With one,
-/// each attempt's timeout is capped at the time remaining, and once the
-/// next backoff would run past the deadline this returns an
-/// `ErrorKind::TimedOut` I/O error naming the attempt count instead of
-/// sleeping.
+/// With a `deadline`, each attempt is cut to the time left, and it returns a
+/// `TimedOut` I/O error holding a [`RetryDeadlineExceeded`] instead of
+/// sleeping past it.
 async fn connect_with_retry(
     urls: &[&str],
     deadline: Option<Instant>,
@@ -255,19 +241,9 @@ async fn connect_with_retry(
     }
 }
 
-/// Connect using the specified strategy.
-///
-/// # Arguments
-/// * `primary_url` - Primary WebSocket URL
-/// * `beta_url` - Beta WebSocket URL (only used for AlternateWithRetry)
-/// * `strategy` - Connection strategy to use
-/// * `deadline` - How long the retrying strategies keep trying; `None` for
-///   no limit. `Simple` makes its one attempt and ignores it.
-///
-/// # Returns
-/// WebSocketStream on success. `Simple` errors when its one attempt fails;
-/// `Retry` and `AlternateWithRetry` error only once a `deadline` passes, and
-/// without one keep trying until they connect.
+/// Connect using `strategy`. `deadline` bounds the retrying strategies
+/// (`None` means no limit), which only return an error once it passes;
+/// `Simple` ignores it and errors when its one attempt fails.
 pub(crate) async fn connect_with_strategy(
     primary_url: &str,
     beta_url: &str,

@@ -15,6 +15,9 @@ use crate::{
 /// For orders with automatic profit targets and stop losses, use
 /// [`RithmicBracketOrder`](crate::RithmicBracketOrder) instead.
 ///
+/// [`build`](Self::build) checks the order. The plant handle sends what it is
+/// given without checking again.
+///
 /// # Example: limit order
 ///
 /// ```
@@ -82,25 +85,30 @@ pub struct RithmicOrder {
     pub symbol: String,
     /// Exchange code (e.g., "CME")
     pub exchange: String,
-    /// Number of contracts
+    /// Number of contracts. Must be at least 1.
     pub quantity: i32,
     /// Order price. A market order does not need one.
     pub price: Option<f64>,
-    /// Buy or Sell
+    /// Buy or sell. Defaults to `Buy`.
     pub transaction_type: OrderSide,
-    /// Order type (Limit, Market, StopLimit, StopMarket, etc.)
+    /// Order type. Defaults to `Limit`. Decides which of `price` and
+    /// `trigger_price` are required.
     pub price_type: OrderType,
-    /// Your identifier for tracking this order
+    /// Your identifier for this order, echoed back on its notifications.
+    /// Left off the request when empty.
     pub user_tag: String,
-    /// Order duration
+    /// How long the order stays working. Defaults to `Day`.
     pub duration: TimeInForce,
     /// Trigger price. Only a stop or if-touched order needs one.
     pub trigger_price: Option<f64>,
-    /// Trailing stop configuration
+    /// Trailing stop. Unset sends no trailing fields.
     pub trailing_stop: Option<TrailingStop>,
-    /// Route to send on. `None` uses the route the server published for `exchange`.
+    /// Route to send on. `None` uses the route the server published for
+    /// `exchange`; if there is none, placing the order fails with
+    /// [`RithmicError::NoTradeRoute`] and nothing is sent.
     pub trade_route: Option<String>,
-    /// Whether the order was placed by a human or automatically.
+    /// Whether the order was placed by a human or automatically. Defaults to
+    /// `Auto`.
     pub manual_or_auto: ManualOrAutoEntry,
     /// Originating window name reported to Rithmic.
     pub window_name: Option<String>,
@@ -185,6 +193,8 @@ impl RithmicOrder {
     }
 
     /// Trail by `trail_by_ticks` against Rithmic's `trail_by_price_id`.
+    ///
+    /// Skips [`TrailingStop::build`], so zero or negative values are not caught.
     pub fn trailing_stop_by(self, trail_by_ticks: i32, trail_by_price_id: i32) -> Self {
         self.trailing_stop(
             TrailingStop::new()

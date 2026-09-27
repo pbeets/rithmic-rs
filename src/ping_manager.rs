@@ -2,21 +2,9 @@ use std::time::Duration;
 use tokio::time::{Instant, sleep_until};
 use tracing::warn;
 
-/// Manages WebSocket ping/pong timeout detection for plant actors.
-///
-/// Tracks pending ping frames and detects when pong responses don't arrive within
-/// the configured timeout. Provides a secondary layer of connection health monitoring
-/// alongside application-level heartbeats.
-///
-/// # Behavior
-///
-/// - Tracks one pending ping at a time
-/// - New ping sent before pong received: replaces pending ping, logs warning
-/// - Any pong clears pending state (WebSocket protocol guarantees correlation)
-/// - Timeout indicates dead connection
-///
-/// The timeout is supplied by the caller; see [`crate::ws::PING_INTERVAL_SECS`]
-/// and [`crate::ws::PING_TIMEOUT_SECS`] for the values the plants use.
+/// Tracks the one outstanding WebSocket ping and reports when its pong is
+/// late, which the plant treats as a dead connection. The plants use
+/// [`crate::ws::PING_INTERVAL_SECS`] and [`crate::ws::PING_TIMEOUT_SECS`].
 #[derive(Debug)]
 pub(crate) struct PingManager {
     /// Pending ping waiting for pong response
@@ -34,19 +22,16 @@ impl PingManager {
         }
     }
 
-    /// Registers that a WebSocket ping was sent.
-    ///
-    /// If a ping is already pending, replaces it and logs a warning.
+    /// Record a ping sent now. One already pending is replaced, which
+    /// restarts the timeout, and a warning is logged.
     pub(crate) fn sent(&mut self) {
         if self.pending.replace(Instant::now()).is_some() {
             warn!("Sent new ping before receiving pong for previous ping");
         }
     }
 
-    /// Registers that a pong response was received.
-    ///
-    /// Clears pending state. WebSocket protocol guarantees pongs echo pings,
-    /// so any pong corresponds to our most recent ping.
+    /// Record a pong. Any pong clears the pending ping; with one ping in
+    /// flight at a time there is nothing to match it against.
     pub(crate) fn received(&mut self) {
         self.pending = None;
     }

@@ -13,7 +13,8 @@ pub struct RithmicRequestError {
     /// The response code exactly as received, before it is split into
     /// [`Self::code`] and [`Self::message`].
     pub rp_code: Vec<String>,
-    /// Numeric code, when present.
+    /// The code, the first element of `rp_code`. Usually numeric, such as
+    /// `"1039"`. `None` when the server sent no `rp_code`.
     pub code: Option<String>,
     /// Human-readable message, when present.
     ///
@@ -22,10 +23,8 @@ pub struct RithmicRequestError {
     pub message: Option<String>,
 }
 
-/// Filter ASCII/Unicode control characters from server-supplied strings before
-/// they reach a log sink or terminal. Protects against log injection (newlines,
-/// `\r`) and ANSI-escape attacks when the Rithmic wire payload is rendered via
-/// `Display`.
+/// Strip control characters from server-supplied text before `Display` shows
+/// it, so a payload cannot inject newlines or ANSI escapes into logs.
 fn sanitize_for_display(s: &str) -> String {
     s.chars().filter(|c| !c.is_control()).collect()
 }
@@ -101,19 +100,26 @@ impl std::error::Error for RithmicRequestError {}
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum RithmicError {
-    /// WebSocket connection could not be established.
-    ConnectionFailed(String),
-    /// The plant's WebSocket connection is gone; pending requests will never complete.
-    ConnectionClosed,
-    /// WebSocket send failed or timed out after the request was registered.
+    /// The connection could not be made or broke with a transport error.
     ///
-    /// Treat as a connection-health failure. This error alone does not prove the
-    /// actor has shut down; keep-alive failure detection can still emit
-    /// [`crate::rti::messages::RithmicMessage::HeartbeatTimeout`] or
-    /// [`crate::rti::messages::RithmicMessage::ConnectionError`] if the
-    /// connection is actually dead.
+    /// `connect` returns it when its attempts fail. It also rides on a
+    /// `ConnectionError` update on the subscription channel when a live
+    /// connection hits a WebSocket or I/O error, or a write times out.
+    ConnectionFailed(String),
+    /// The plant stopped, or stopped before it answered this call. Every call
+    /// still pending when the connection ends gets this, whatever the cause.
+    /// Calling again will not help; reconnect.
+    ConnectionClosed,
+    /// Writing this request to the WebSocket returned an error.
+    ///
+    /// Only this call fails and the plant keeps running, but the connection
+    /// is usually on its way out, so expect a `ConnectionError` or
+    /// `HeartbeatTimeout` update to follow. A write that times out is handled
+    /// as a dead connection instead: every pending call, this one included,
+    /// fails with [`ConnectionClosed`](Self::ConnectionClosed).
     SendFailed,
-    /// Server returned an empty response where at least one was expected.
+    /// The plant answered with no response at all where one was expected. A
+    /// defensive case; you should not see it.
     EmptyResponse,
     /// No longer produced. The library does not time out requests; a caller
     /// that wants a deadline wraps the call in [`tokio::time::timeout`], which
@@ -125,11 +131,14 @@ pub enum RithmicError {
     )]
     RequestTimeout,
     /// The server turned the request down, with the code and message it gave.
-    /// Request-level only — not a reason to reconnect.
+    /// Request-level only, not a reason to reconnect.
+    ///
+    /// An `rp_code` of `["7", "no data"]` is not a rejection: it means an
+    /// empty result and comes back with no error.
     RequestRejected(RithmicRequestError),
-    /// A response arrived but could not be turned into a result — a decode
-    /// failure, or a failure the server reported without a code. Not a reason
-    /// to reconnect.
+    /// A frame arrived but would not decode. Usually Rithmic's schema has moved
+    /// ahead of this crate, so retrying will not help. Not a reason to
+    /// reconnect.
     ///
     /// An unrecognized `template_id` does not produce this error; it arrives as
     /// [`RithmicMessage::UnknownTemplate`](crate::rti::messages::RithmicMessage::UnknownTemplate).
@@ -145,9 +154,13 @@ pub enum RithmicError {
         /// The exchanges that do have a route.
         cached: Vec<String>,
     },
-    /// Keep-alive detected the connection is dead.
+    /// The keep-alive found the connection dead: a WebSocket ping went
+    /// unanswered, or a ping or heartbeat could not be written. Arrives on the
+    /// subscription channel with a `HeartbeatTimeout` update, never from a call.
     HeartbeatTimeout,
-    /// Server terminated the session with a reason string.
+    /// The server sent a forced logout and the plant is stopping. Arrives on
+    /// the subscription channel with the `ForcedLogout` update. The server's
+    /// frame carries no reason, so the string is a fixed one from this crate.
     ForcedLogout(String),
     /// A login with a different [`LoginConfig`](crate::LoginConfig) is already
     /// in progress or complete on this plant. Nothing was sent. Disconnect and
@@ -156,8 +169,10 @@ pub enum RithmicError {
 }
 
 impl RithmicError {
-    /// Returns true when this error reflects a transport/connection-health failure
-    /// rather than a protocol-level rejection.
+    /// True when the connection is dead or dying and you should reconnect:
+    /// `ConnectionFailed`, `ConnectionClosed`, `SendFailed`, `HeartbeatTimeout`
+    /// and `ForcedLogout`. False for everything else, which is about the
+    /// request or the data rather than the connection.
     pub fn is_connection_issue(&self) -> bool {
         matches!(
             self,
@@ -169,9 +184,9 @@ impl RithmicError {
         )
     }
 
-    /// Maps this error to the synthetic subscription [`RithmicMessage`] that a
-    /// connection-health broadcast should carry. `HeartbeatTimeout` preserves
-    /// the keep-alive signal; every other variant surfaces as `ConnectionError`.
+    /// The [`RithmicMessage`] a plant broadcasts when this error ends its
+    /// connection: `HeartbeatTimeout` for [`Self::HeartbeatTimeout`] and
+    /// `ConnectionError` for every other variant.
     ///
     /// [`RithmicMessage`]: crate::rti::messages::RithmicMessage
     pub fn as_connection_message(&self) -> crate::rti::messages::RithmicMessage {

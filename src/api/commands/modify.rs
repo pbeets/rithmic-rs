@@ -9,6 +9,14 @@ use crate::{
 
 /// Modify an existing order's price, quantity, or type.
 ///
+/// A modify restates the order rather than patching it. Set every field that
+/// describes the order after the change, including the ones that stay the
+/// same. [`price_type`](Self::price_type) defaults to `Limit`, so modifying a
+/// stop order without setting it sends `LIMIT` as the type.
+///
+/// [`build`](Self::build) checks the command. The plant handle sends what it
+/// is given without checking again.
+///
 /// # Example
 ///
 /// ```
@@ -31,24 +39,25 @@ use crate::{
 #[non_exhaustive]
 #[must_use = "a modification does nothing until passed to a plant handle"]
 pub struct RithmicModifyOrder {
-    /// The `basket_id` from the order notification
+    /// The `basket_id` from the order notification. Required.
     pub id: String,
-    /// Exchange code
+    /// Exchange code (e.g., "CME"). Required.
     pub exchange: String,
-    /// Trading symbol
+    /// Trading symbol (e.g., "ESH6"). Required.
     pub symbol: String,
-    /// New quantity
+    /// The order's quantity after the change. Must be at least 1.
     pub quantity: i32,
     /// New price, omitted from the request when unset. A modify restates the
     /// order, so set this to the order's current price when only the quantity
     /// is changing.
     pub price: Option<f64>,
-    /// Order type
+    /// The order's type after the change. Defaults to `Limit`.
     pub price_type: OrderType,
     /// Trigger price. Left unset, the four triggering price types — the stop and
     /// if-touched pairs — send `price` in its place.
     pub trigger_price: Option<f64>,
-    /// Whether the modification was made by a human or automatically.
+    /// Whether the modification was made by a human or automatically. Defaults
+    /// to `Auto`.
     pub manual_or_auto: ManualOrAutoEntry,
     /// Originating window name reported to Rithmic.
     pub window_name: Option<String>,
@@ -62,10 +71,8 @@ pub struct RithmicModifyOrder {
 }
 
 impl RithmicModifyOrder {
-    /// Start from the defaults.
-    ///
-    /// A modify restates the order rather than patching it, so every field that
-    /// describes the resulting order has to be set.
+    /// Start from the defaults. See the type docs: every field describing the
+    /// resulting order has to be set.
     pub fn new() -> Self {
         Self::default()
     }
@@ -137,8 +144,9 @@ impl RithmicModifyOrder {
         self
     }
 
-    /// Check the modification carries the prices its [`Self::price_type`]
-    /// requires: `Limit`, `StopLimit` and `LimitIfTouched` need [`Self::price`];
+    /// Check the modification names the order (`id`), the instrument (symbol,
+    /// exchange, a quantity of at least 1), and carries the prices its
+    /// [`Self::price_type`] requires: `Limit`, `StopLimit` and `LimitIfTouched` need [`Self::price`];
     /// `StopMarket`, `StopLimit`, `MarketIfTouched` and `LimitIfTouched` need a
     /// trigger, which is [`Self::trigger_price`] or the [`Self::price`] that
     /// stands in for it. `Market` needs neither.
@@ -179,6 +187,8 @@ impl RithmicModifyOrder {
 }
 
 /// Change the `user_tag` reported on an order's subsequent notifications.
+///
+/// Unlike the order commands, the tag here is sent even when empty.
 ///
 /// # Example
 ///

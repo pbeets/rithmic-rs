@@ -1,66 +1,96 @@
 use crate::{error::RithmicError, rti::messages::RithmicMessage};
 
-/// Response from a Rithmic plant, either from a request or a subscription update.
+/// One message from a Rithmic plant: a reply to a request, or an update on a
+/// plant's subscription channel.
 ///
-/// This structure wraps all messages received from Rithmic plants, including both
-/// request-response messages and subscription updates (like market data, order updates, etc.).
+/// # Telling frames apart
 ///
-/// ## Error Handling
+/// - **Error**: `error` is `Some`. [`RithmicError::is_connection_issue`] is
+///   true for a transport failure, which means reconnect. It is false for a
+///   rejected request or a frame that would not decode.
+/// - **Update**: `is_update` is true. Everything on the subscription channel
+///   is an update, including the connection events `ConnectionError`,
+///   `HeartbeatTimeout` and `ForcedLogout`.
+/// - **Reply**: `is_update` is false and `request_id` names the request. A
+///   list or replay request can answer in several frames (`multi_response`);
+///   every frame but the last has `has_more` set.
 ///
-/// The `error` field is `Option<RithmicError>`. Use
-/// [`RithmicError::is_connection_issue`] to distinguish transport/connection
-/// failures (reconnect signal) from protocol-level request rejections.
+/// Most handle methods return `Ok` even when the server rejects the request,
+/// so check `error` on the reply too. See [`RithmicError`] for which calls
+/// return a rejection as `Err` instead.
 ///
-/// ## Example: Handling Errors
+/// # Examples
+///
+/// Reading a subscription channel:
 ///
 /// ```no_run
 /// # use rithmic_rs::RithmicResponse;
-/// # fn handle_response(response: RithmicResponse) {
-/// if let Some(err) = &response.error {
-///     if err.is_connection_issue() {
-///         // reconnect
-///         return;
+/// # use tokio::sync::broadcast;
+/// # async fn run(mut updates: broadcast::Receiver<RithmicResponse>) {
+/// while let Ok(resp) = updates.recv().await {
+///     if let Some(err) = &resp.error {
+///         if err.is_connection_issue() {
+///             break; // reconnect
+///         }
+///         eprintln!("{}: {err}", resp.source);
+///         continue;
 ///     }
-///     eprintln!("Request error from {}: {}", response.source, err);
+///
+///     if resp.is_market_data() {
+///         // quotes, trades, depth
+///     } else if resp.is_order_update() {
+///         // order status
+///     }
 /// }
 /// # }
 /// ```
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub struct RithmicResponse {
-    /// Unique identifier for matching responses to requests. Empty for updates.
+    /// Id of the request this frame answers, echoed back by the server. Empty
+    /// on updates the server pushes. A connection event may carry the id of
+    /// the request whose failure raised it.
     pub request_id: String,
-    /// The actual Rithmic message data (see [`RithmicMessage`]).
+    /// The decoded message. Match on it to get the payload.
     pub message: RithmicMessage,
-    /// `true` if this is a subscription update, `false` if it's a request response.
+    /// `true` for frames sent to the subscription channel: streaming data,
+    /// server notices and connection events. `false` for replies to a request.
     pub is_update: bool,
-    /// `true` if more responses are coming for this request.
+    /// `true` on every frame of a multi-frame reply except the last.
     pub has_more: bool,
-    /// `true` if this request type can return multiple responses.
+    /// `true` if this frame belongs to a reply that can span several frames,
+    /// such as a symbol search or a bar replay.
     pub multi_response: bool,
 
-    /// Typed error when the operation failed or a connection-level event
-    /// occurred. Use [`RithmicError::is_connection_issue`] to distinguish
-    /// transport failures (reconnect signal) from protocol-level request
-    /// rejections.
+    /// Why the request or connection failed, if it did.
+    ///
+    /// Holds [`RequestRejected`](RithmicError::RequestRejected) when the
+    /// server said no, [`ProtocolError`](RithmicError::ProtocolError) when the
+    /// frame would not decode, and a connection error on connection events.
+    /// An `rp_code` of `["7", "no data"]` counts as an empty result, not an
+    /// error.
     pub error: Option<RithmicError>,
-    /// Name of the plant that sent this response (e.g., "ticker_plant").
+    /// Plant that produced the frame: `"ticker_plant"`, `"order_plant"`,
+    /// `"history_plant"` or `"pnl_plant"`.
     pub source: String,
 }
 
 impl RithmicResponse {
-    /// Full raw rp_code payload as received. `None` for message variants that
-    /// don't carry rp_code (updates, ConnectionError, HeartbeatTimeout, etc.).
+    /// The `rp_code` exactly as the server sent it.
+    ///
+    /// `None` for messages with no `rp_code` field, such as streaming updates
+    /// and connection events. Data frames of a multi-frame reply normally give
+    /// an empty slice, with the code on the last frame.
     pub fn rp_code(&self) -> Option<&[String]> {
         super::rp_code::response_rp_code_slice(&self.message)
     }
 
-    /// Numeric portion of rp_code, if present.
+    /// First element of `rp_code`: `"0"` on success, else the error code.
     pub fn rp_code_num(&self) -> Option<&str> {
         self.rp_code().and_then(|c| c.first().map(String::as_str))
     }
 
-    /// Second element of rp_code (the human message), if present.
+    /// Second element of `rp_code`: the server's text, if it sent any.
     pub fn rp_code_text(&self) -> Option<&str> {
         self.rp_code().and_then(|c| c.get(1).map(String::as_str))
     }
@@ -91,21 +121,11 @@ impl RithmicResponse {
             && self.resume_key().is_some()
     }
 
-    /// Returns true if this response contains market data.
+    /// `true` for `BestBidOffer`, `LastTrade`, `DepthByOrder`,
+    /// `DepthByOrderEndEvent` and `OrderBook`.
     ///
-    /// Market data messages include:
-    /// - `BestBidOffer`: Top-of-book quotes
-    /// - `LastTrade`: Trade executions
-    /// - `DepthByOrder`: Order book depth updates
-    /// - `DepthByOrderEndEvent`: End of depth snapshot marker
-    /// - `OrderBook`: Aggregated order book
-    ///
-    /// # Example
-    /// ```ignore
-    /// if response.is_market_data() {
-    ///     // Process market data update
-    /// }
-    /// ```
+    /// Other ticker plant updates, such as `TradeStatistics` or `MarketMode`,
+    /// give `false`.
     pub fn is_market_data(&self) -> bool {
         matches!(
             self.message,
@@ -117,19 +137,8 @@ impl RithmicResponse {
         )
     }
 
-    /// Returns true if this response is an order update notification.
-    ///
-    /// Order update messages include:
-    /// - `RithmicOrderNotification`: Order status updates from Rithmic
-    /// - `ExchangeOrderNotification`: Order status updates from exchange
-    /// - `BracketUpdates`: Bracket order updates
-    ///
-    /// # Example
-    /// ```ignore
-    /// if response.is_order_update() {
-    ///     // Process order status change
-    /// }
-    /// ```
+    /// `true` for `RithmicOrderNotification`, `ExchangeOrderNotification` and
+    /// `BracketUpdates`.
     pub fn is_order_update(&self) -> bool {
         matches!(
             self.message,
@@ -139,18 +148,7 @@ impl RithmicResponse {
         )
     }
 
-    /// Returns true if this response is a P&L or position update.
-    ///
-    /// P&L update messages include:
-    /// - `AccountPnLPositionUpdate`: Account-level P&L updates
-    /// - `InstrumentPnLPositionUpdate`: Per-instrument P&L updates
-    ///
-    /// # Example
-    /// ```ignore
-    /// if response.is_pnl_update() {
-    ///     // Update position tracking
-    /// }
-    /// ```
+    /// `true` for `AccountPnLPositionUpdate` and `InstrumentPnLPositionUpdate`.
     pub fn is_pnl_update(&self) -> bool {
         matches!(
             self.message,

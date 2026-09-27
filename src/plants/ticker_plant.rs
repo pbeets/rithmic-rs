@@ -25,6 +25,7 @@ use crate::{
 /// Default subscription channel capacity.
 const DEFAULT_SUBSCRIPTION_CAPACITY: usize = 10_000;
 
+/// What a [`RithmicTickerPlantHandle`] asks the plant's task to do.
 pub(crate) enum TickerPlantCommand {
     Close,
     Abort,
@@ -118,25 +119,35 @@ pub(crate) enum TickerPlantCommand {
     },
 }
 
-/// The RithmicTickerPlant provides access to real-time market data.
+/// Real-time market data and instrument reference data from Rithmic.
 ///
-/// Market data updates include last trades, best bid and offer (BBO), order
-/// book depth, market mode, session prices, quote statistics, indicator
-/// prices, open interest, end-of-day prices, price limits, and margin rates —
-/// see the `subscribe_*` methods on [`RithmicTickerPlantHandle`].
+/// The feeds cover last trades, best bid and offer (BBO), order book depth,
+/// market mode, session prices, quote statistics, indicator prices, open
+/// interest, end-of-day prices, price limits and margin rates. See the
+/// `subscribe_*` methods on [`RithmicTickerPlantHandle`].
 ///
-/// # Connection Health Monitoring
+/// The plant runs on its own background task. [`connect`](Self::connect)
+/// only opens the connection; log in through a handle before anything else.
 ///
-/// The subscription receiver also provides connection health events:
-/// - **WebSocket ping/pong timeouts**: primary dead-connection signal (auto-detected)
-/// - **Heartbeat errors**: forwarded as `HeartbeatTimeout`
-/// - **Forced logout events**: session terminated by the server
+/// # Connection health
 ///
-/// **Note:** Heartbeat requests are sent automatically for protocol compliance,
-/// but successful responses are dropped. Only heartbeat errors are forwarded as
-/// `HeartbeatTimeout` messages.
+/// The subscription receiver also carries connection events, each with
+/// [`error`](RithmicResponse::error) set:
+/// - [`RithmicMessage::HeartbeatTimeout`] when a WebSocket ping or heartbeat
+///   times out or cannot be sent. The plant has stopped.
+/// - [`RithmicMessage::ConnectionError`] when the connection drops or a
+///   write times out, or after [`abort`](RithmicTickerPlantHandle::abort).
+/// - [`RithmicMessage::ForcedLogout`] when the server ends the session. A
+///   `ConnectionError` follows it and the plant stops.
 ///
-/// # Example: Basic Usage
+/// For all of these, [`RithmicError::is_connection_issue`] returns true. The
+/// plant does not reconnect: connect a new one and subscribe again.
+///
+/// The plant heartbeats on its own and drops the replies. A heartbeat the
+/// server refuses also arrives as `HeartbeatTimeout`, but its error is the
+/// refusal, and `is_connection_issue` returns false for it.
+///
+/// # Example
 ///
 /// ```no_run
 /// use rithmic_rs::{
@@ -180,10 +191,6 @@ pub(crate) enum TickerPlantCommand {
 ///                     RithmicMessage::BestBidOffer(bbo) => {
 ///                         println!("BBO: {:?}", bbo);
 ///                     }
-///                     RithmicMessage::ForcedLogout(logout) => {
-///                         eprintln!("Forced logout: {:?}", logout);
-///                         break; // Must reconnect
-///                     }
 ///                     _ => {}
 ///                 }
 ///             }
@@ -199,7 +206,6 @@ pub(crate) enum TickerPlantCommand {
 ///     Ok(())
 /// }
 /// ```
-///
 #[derive(Debug)]
 pub struct RithmicTickerPlant {
     pub(crate) connection_handle: tokio::task::JoinHandle<()>,
@@ -215,7 +221,8 @@ impl RithmicTickerPlant {
     /// * `strategy` - Connection strategy; see [`ConnectStrategy`]
     ///
     /// # Returns
-    /// A `Result` containing the connected `RithmicTickerPlant` instance, or an error if the connection fails.
+    /// The connected plant, not yet logged in. Log in through
+    /// [`get_handle`](Self::get_handle) before making requests.
     ///
     /// # Errors
     /// [`RithmicError::ConnectionFailed`] under [`ConnectStrategy::Simple`] when
@@ -262,15 +269,19 @@ impl RithmicTickerPlant {
 }
 
 impl RithmicTickerPlant {
-    /// Wait for the plant's background connection task to finish.
+    /// Wait for the plant's background task to finish.
+    ///
+    /// It finishes after a disconnect or abort, or once the connection is
+    /// lost. Until then this waits.
     pub async fn await_shutdown(self) -> Result<(), tokio::task::JoinError> {
         self.connection_handle.await
     }
 
-    /// Get a handle to interact with the ticker plant.
+    /// Get a handle to log in, subscribe and make requests.
     ///
-    /// The handle provides methods to subscribe to market data and receive updates.
-    /// Multiple handles can be created from the same plant.
+    /// Every handle talks to the same connection. Each gets its own
+    /// [`subscription_receiver`](RithmicTickerPlantHandle::subscription_receiver),
+    /// which sees every update sent after the handle was made.
     pub fn get_handle(&self) -> RithmicTickerPlantHandle {
         RithmicTickerPlantHandle {
             sender: self.sender.clone(),
@@ -475,12 +486,36 @@ impl PlantKind for TickerPlant {
 ///
 /// Obtained from [`RithmicTickerPlant::get_handle`]. Use the methods on this handle to
 /// log in, subscribe to symbols, and request reference data. Real-time updates arrive
-/// on [`subscription_receiver`](Self::subscription_receiver).
+/// on [`subscription_receiver`](Self::subscription_receiver). Cloning a handle gives
+/// the clone a fresh receiver.
+///
+/// # Replies and refusals
+///
+/// Each method waits for the server's reply. A refusal comes back as `Ok`
+/// with [`RithmicResponse::error`] set, usually to
+/// [`RithmicError::RequestRejected`], so check it. Only
+/// [`login`](Self::login) turns a refusal into `Err`.
+///
+/// `Err` means no reply came: [`RithmicError::ConnectionClosed`] once the
+/// plant has stopped or is disconnecting, or [`RithmicError::SendFailed`]
+/// if the request could not be written.
+///
+/// # Updates
+///
+/// A `subscribe_*` call returns only the acknowledgement. The data arrives
+/// on `subscription_receiver`, mixed with the connection events described on
+/// [`RithmicTickerPlant`]. Subscriptions end with the connection; after a
+/// reconnect, subscribe again.
 pub struct RithmicTickerPlantHandle {
     sender: mpsc::Sender<TickerPlantCommand>,
     subscription_sender: broadcast::Sender<RithmicResponse>,
 
-    /// Receiver for real-time subscription updates (market data, depth, etc.).
+    /// Market data updates and connection events.
+    ///
+    /// A [`broadcast`] receiver: if you fall more than the
+    /// [`subscription_capacity`](crate::RithmicConfigBuilder::subscription_capacity)
+    /// behind (10,000 by default), `recv` returns `RecvError::Lagged` and the
+    /// skipped updates are gone.
     pub subscription_receiver: broadcast::Receiver<RithmicResponse>,
 }
 
@@ -494,10 +529,10 @@ impl std::fmt::Debug for RithmicTickerPlantHandle {
 }
 
 impl RithmicTickerPlantHandle {
-    /// List available Rithmic system infrastructure information.
+    /// Ask the server which Rithmic systems it offers.
     ///
-    /// Returns information about the connected Rithmic system, including
-    /// system name, gateway info, and available services.
+    /// The reply is a [`RithmicMessage::ResponseRithmicSystemInfo`] listing
+    /// the system names and whether each supports aggregated quotes.
     pub async fn get_system_info(&self) -> Result<RithmicResponse, RithmicError> {
         let (tx, rx) = oneshot::channel::<Result<Vec<RithmicResponse>, RithmicError>>();
 
@@ -594,10 +629,16 @@ impl RithmicTickerPlantHandle {
         Ok(response)
     }
 
-    /// Disconnect from the Rithmic ticker plant
+    /// Log out and close the connection.
+    ///
+    /// Waits for the logout reply, then closes the WebSocket whether or not
+    /// the logout succeeded. Requests still waiting, and anything sent later
+    /// from any handle, fail with [`RithmicError::ConnectionClosed`]. Use
+    /// [`RithmicTickerPlant::await_shutdown`] to wait for the plant to stop.
     ///
     /// # Returns
-    /// The logout response or an error message
+    /// The logout reply, or [`RithmicError::ConnectionClosed`] if the plant
+    /// had already stopped.
     pub async fn disconnect(&self) -> Result<RithmicResponse, RithmicError> {
         let (tx, rx) = oneshot::channel::<Result<Vec<RithmicResponse>, RithmicError>>();
 
@@ -619,22 +660,29 @@ impl RithmicTickerPlantHandle {
 
     /// Immediately shut down the ticker plant actor without a graceful logout.
     ///
-    /// Use when the connection is known to be dead and a graceful `disconnect()`
-    /// would not get through.
-    /// All pending request callers will receive an error. The subscription channel
-    /// receives a `ConnectionError` notification. Safe to call if the actor is already dead.
+    /// Use when the connection is known to be dead and a graceful
+    /// [`disconnect`](Self::disconnect) would not get through. Waiting
+    /// requests fail with [`RithmicError::ConnectionClosed`], and the
+    /// subscription channel gets a [`RithmicMessage::ConnectionError`].
+    ///
+    /// Does not wait. Safe to call if the plant has already stopped. If the
+    /// plant's command queue is full, the abort is dropped.
     pub fn abort(&self) {
         let _ = self.sender.try_send(TickerPlantCommand::Abort);
     }
 
-    /// Subscribe to market data for a specific symbol
+    /// Subscribe to last trades and best bid/offer for a symbol.
+    ///
+    /// Updates arrive on `subscription_receiver` as
+    /// [`RithmicMessage::LastTrade`] and [`RithmicMessage::BestBidOffer`].
     ///
     /// # Arguments
     /// * `symbol` - The trading symbol (e.g., "ESH6")
     /// * `exchange` - The exchange code (e.g., "CME")
     ///
     /// # Returns
-    /// The subscription response or an error message
+    /// The server's acknowledgement. A refusal is `Ok` with
+    /// [`error`](RithmicResponse::error) set.
     pub async fn subscribe(
         &self,
         symbol: &str,
@@ -651,12 +699,17 @@ impl RithmicTickerPlantHandle {
 
     /// Subscribe to order book depth-by-order updates for a specific symbol
     ///
+    /// Updates arrive on `subscription_receiver` as [`RithmicMessage::DepthByOrder`]
+    /// and [`RithmicMessage::DepthByOrderEndEvent`]. For the current book, call
+    /// [`get_depth_by_order_snapshot`](Self::get_depth_by_order_snapshot).
+    ///
     /// # Arguments
     /// * `symbol` - The trading symbol (e.g., "ESH6")
     /// * `exchange` - The exchange code (e.g., "CME")
     ///
     /// # Returns
-    /// The subscription response or an error message
+    /// The server's acknowledgement. A refusal is `Ok` with
+    /// [`error`](RithmicResponse::error) set.
     pub async fn subscribe_depth_by_order_update(
         &self,
         symbol: &str,
@@ -676,14 +729,16 @@ impl RithmicTickerPlantHandle {
         await_first_response(rx).await
     }
 
-    /// Unsubscribe from market data for a specific symbol
+    /// Unsubscribe from the last trades and best bid/offer that
+    /// [`subscribe`](Self::subscribe) asked for.
     ///
     /// # Arguments
     /// * `symbol` - The trading symbol (e.g., "ESH6")
     /// * `exchange` - The exchange code (e.g., "CME")
     ///
     /// # Returns
-    /// The unsubscription response or an error message
+    /// The server's acknowledgement. A refusal is `Ok` with
+    /// [`error`](RithmicResponse::error) set.
     pub async fn unsubscribe(
         &self,
         symbol: &str,
@@ -705,7 +760,8 @@ impl RithmicTickerPlantHandle {
     /// * `exchange` - The exchange code (e.g., "CME")
     ///
     /// # Returns
-    /// The unsubscription response or an error message
+    /// The server's acknowledgement. A refusal is `Ok` with
+    /// [`error`](RithmicResponse::error) set.
     pub async fn unsubscribe_depth_by_order_update(
         &self,
         symbol: &str,
@@ -725,6 +781,7 @@ impl RithmicTickerPlantHandle {
         await_first_response(rx).await
     }
 
+    /// Send a market data (template 100) request for the given update bits.
     async fn request_market_data_update(
         &self,
         symbol: &str,
@@ -754,7 +811,8 @@ impl RithmicTickerPlantHandle {
     /// * `exchange` - The exchange code (e.g., "CME")
     ///
     /// # Returns
-    /// The subscription response or an error message
+    /// The server's acknowledgement. A refusal is `Ok` with
+    /// [`error`](RithmicResponse::error) set.
     ///
     /// # Updates
     /// After subscribing, market mode changes arrive as [`RithmicMessage::MarketMode`]
@@ -780,7 +838,8 @@ impl RithmicTickerPlantHandle {
     /// * `exchange` - The exchange code (e.g., "CME")
     ///
     /// # Returns
-    /// The unsubscription response or an error message
+    /// The server's acknowledgement. A refusal is `Ok` with
+    /// [`error`](RithmicResponse::error) set.
     pub async fn unsubscribe_instrument_status(
         &self,
         symbol: &str,
@@ -807,7 +866,8 @@ impl RithmicTickerPlantHandle {
     /// * `exchange` - The exchange code (e.g., "CME")
     ///
     /// # Returns
-    /// The subscription response or an error message
+    /// The server's acknowledgement. A refusal is `Ok` with
+    /// [`error`](RithmicResponse::error) set.
     ///
     /// # Updates
     /// After subscribing, aggregated bid/ask updates arrive as [`RithmicMessage::OrderBook`]
@@ -837,7 +897,8 @@ impl RithmicTickerPlantHandle {
     /// * `exchange` - The exchange code (e.g., "CME")
     ///
     /// # Returns
-    /// The unsubscription response or an error message
+    /// The server's acknowledgement. A refusal is `Ok` with
+    /// [`error`](RithmicResponse::error) set.
     pub async fn unsubscribe_order_book_summary(
         &self,
         symbol: &str,
@@ -859,7 +920,8 @@ impl RithmicTickerPlantHandle {
     /// * `exchange` - The exchange code (e.g., "CME")
     ///
     /// # Returns
-    /// The subscription response or an error message
+    /// The server's acknowledgement. A refusal is `Ok` with
+    /// [`error`](RithmicResponse::error) set.
     ///
     /// # Updates
     /// After subscribing, intraday high, low, and open price updates arrive as
@@ -885,7 +947,8 @@ impl RithmicTickerPlantHandle {
     /// * `exchange` - The exchange code (e.g., "CME")
     ///
     /// # Returns
-    /// The unsubscription response or an error message
+    /// The server's acknowledgement. A refusal is `Ok` with
+    /// [`error`](RithmicResponse::error) set.
     pub async fn unsubscribe_session_prices(
         &self,
         symbol: &str,
@@ -907,7 +970,8 @@ impl RithmicTickerPlantHandle {
     /// * `exchange` - The exchange code (e.g., "CME")
     ///
     /// # Returns
-    /// The subscription response or an error message
+    /// The server's acknowledgement. A refusal is `Ok` with
+    /// [`error`](RithmicResponse::error) set.
     ///
     /// # Updates
     /// After subscribing, high bid / low ask updates arrive as
@@ -933,7 +997,8 @@ impl RithmicTickerPlantHandle {
     /// * `exchange` - The exchange code (e.g., "CME")
     ///
     /// # Returns
-    /// The unsubscription response or an error message
+    /// The server's acknowledgement. A refusal is `Ok` with
+    /// [`error`](RithmicResponse::error) set.
     pub async fn unsubscribe_quote_statistics(
         &self,
         symbol: &str,
@@ -955,7 +1020,8 @@ impl RithmicTickerPlantHandle {
     /// * `exchange` - The exchange code (e.g., "CME")
     ///
     /// # Returns
-    /// The subscription response or an error message
+    /// The server's acknowledgement. A refusal is `Ok` with
+    /// [`error`](RithmicResponse::error) set.
     ///
     /// # Updates
     /// After subscribing, opening and closing indicator prices arrive as
@@ -981,7 +1047,8 @@ impl RithmicTickerPlantHandle {
     /// * `exchange` - The exchange code (e.g., "CME")
     ///
     /// # Returns
-    /// The unsubscription response or an error message
+    /// The server's acknowledgement. A refusal is `Ok` with
+    /// [`error`](RithmicResponse::error) set.
     pub async fn unsubscribe_indicator_prices(
         &self,
         symbol: &str,
@@ -1003,7 +1070,8 @@ impl RithmicTickerPlantHandle {
     /// * `exchange` - The exchange code (e.g., "CME")
     ///
     /// # Returns
-    /// The subscription response or an error message
+    /// The server's acknowledgement. A refusal is `Ok` with
+    /// [`error`](RithmicResponse::error) set.
     ///
     /// # Updates
     /// After subscribing, open interest updates arrive as [`RithmicMessage::OpenInterest`]
@@ -1029,7 +1097,8 @@ impl RithmicTickerPlantHandle {
     /// * `exchange` - The exchange code (e.g., "CME")
     ///
     /// # Returns
-    /// The unsubscription response or an error message
+    /// The server's acknowledgement. A refusal is `Ok` with
+    /// [`error`](RithmicResponse::error) set.
     pub async fn unsubscribe_open_interest(
         &self,
         symbol: &str,
@@ -1054,7 +1123,8 @@ impl RithmicTickerPlantHandle {
     /// * `exchange` - The exchange code (e.g., "CME")
     ///
     /// # Returns
-    /// The subscription response or an error message
+    /// The server's acknowledgement. A refusal is `Ok` with
+    /// [`error`](RithmicResponse::error) set.
     ///
     /// # Updates
     /// Updates arrive as [`RithmicMessage::EndOfDayPrices`] on
@@ -1087,7 +1157,8 @@ impl RithmicTickerPlantHandle {
     /// * `exchange` - The exchange code (e.g., "CME")
     ///
     /// # Returns
-    /// The unsubscription response or an error message
+    /// The server's acknowledgement. A refusal is `Ok` with
+    /// [`error`](RithmicResponse::error) set.
     pub async fn unsubscribe_end_of_day_prices(
         &self,
         symbol: &str,
@@ -1114,7 +1185,8 @@ impl RithmicTickerPlantHandle {
     /// * `exchange` - The exchange code (e.g., "CME")
     ///
     /// # Returns
-    /// The subscription response or an error message
+    /// The server's acknowledgement. A refusal is `Ok` with
+    /// [`error`](RithmicResponse::error) set.
     ///
     /// # Updates
     /// After subscribing, high and low price limit updates arrive as
@@ -1140,7 +1212,8 @@ impl RithmicTickerPlantHandle {
     /// * `exchange` - The exchange code (e.g., "CME")
     ///
     /// # Returns
-    /// The unsubscription response or an error message
+    /// The server's acknowledgement. A refusal is `Ok` with
+    /// [`error`](RithmicResponse::error) set.
     pub async fn unsubscribe_order_price_limits(
         &self,
         symbol: &str,
@@ -1162,7 +1235,8 @@ impl RithmicTickerPlantHandle {
     /// * `exchange` - The exchange code (e.g., "CME")
     ///
     /// # Returns
-    /// The subscription response or an error message
+    /// The server's acknowledgement. A refusal is `Ok` with
+    /// [`error`](RithmicResponse::error) set.
     ///
     /// # Updates
     /// After subscribing, margin rate updates arrive as [`RithmicMessage::SymbolMarginRate`]
@@ -1188,7 +1262,8 @@ impl RithmicTickerPlantHandle {
     /// * `exchange` - The exchange code (e.g., "CME")
     ///
     /// # Returns
-    /// The unsubscription response or an error message
+    /// The server's acknowledgement. A refusal is `Ok` with
+    /// [`error`](RithmicResponse::error) set.
     pub async fn unsubscribe_symbol_margin_rate(
         &self,
         symbol: &str,
@@ -1203,14 +1278,19 @@ impl RithmicTickerPlantHandle {
         .await
     }
 
-    /// Request a snapshot of the order book depth-by-order for a specific symbol
+    /// Get the current depth-by-order book for a symbol.
+    ///
+    /// Rithmic sends the book as several frames, one price level each, and
+    /// this waits for all of them.
     ///
     /// # Arguments
     /// * `symbol` - The trading symbol (e.g., "ESH6")
     /// * `exchange` - The exchange code (e.g., "CME")
     ///
     /// # Returns
-    /// A vector of responses containing the order book snapshot data or an error message
+    /// Every frame of the reply, each a
+    /// [`RithmicMessage::ResponseDepthByOrderSnapshot`]. A refusal is a single
+    /// frame with [`error`](RithmicResponse::error) set.
     pub async fn get_depth_by_order_snapshot(
         &self,
         symbol: &str,
@@ -1229,17 +1309,17 @@ impl RithmicTickerPlantHandle {
         await_all_responses(rx).await
     }
 
-    /// Search for symbols based on search criteria
+    /// Search for instruments by text.
     ///
     /// # Arguments
-    /// * `search_text` - The text to search for in symbols
-    /// * `exchange` - Optional exchange filter
-    /// * `product_code` - Optional product code filter
-    /// * `instrument_type` - Optional instrument type filter
-    /// * `pattern` - Optional search pattern mode
+    /// * `search_text` - The text to search for
+    /// * `exchange` - Only search this exchange
+    /// * `product_code` - Only search this product, e.g. `"ES"`
+    /// * `instrument_type` - Only return this type, e.g. `Future`
+    /// * `pattern` - `Equals` or `Contains`, or `None` to send none
     ///
     /// # Returns
-    /// A vector of responses containing matching symbols or an error message
+    /// Every frame of the reply, each a [`RithmicMessage::ResponseSearchSymbols`].
     pub async fn search_symbols(
         &self,
         search_text: &str,
@@ -1264,13 +1344,17 @@ impl RithmicTickerPlantHandle {
         await_all_responses(rx).await
     }
 
-    /// List exchange permissions for the specified user
+    /// List the exchanges a user may get market data for.
+    ///
+    /// Each frame names one exchange and the user's level 1 (top of book) and
+    /// level 2 (order book) market data permissions there.
     ///
     /// # Arguments
-    /// * `user` - The username to query exchange permissions for
+    /// * `user` - The Rithmic user name to look up
     ///
     /// # Returns
-    /// A vector of responses containing exchange information or an error message
+    /// Every frame of the reply, each a
+    /// [`RithmicMessage::ResponseListExchangePermissions`].
     pub async fn list_exchange_permissions(
         &self,
         user: &str,
@@ -1287,15 +1371,15 @@ impl RithmicTickerPlantHandle {
         await_all_responses(rx).await
     }
 
-    /// Get instruments by underlying symbol
+    /// List the instruments that have the given underlying.
     ///
     /// # Arguments
     /// * `underlying_symbol` - The underlying symbol (e.g., "ES" for E-mini S&P 500)
     /// * `exchange` - The exchange code (e.g., "CME")
-    /// * `expiration_date` - Optional expiration date filter
+    /// * `expiration_date` - Only return instruments with this expiration
     ///
     /// # Returns
-    /// A vector of responses containing instrument information or an error message
+    /// Every frame of the reply.
     pub async fn get_instrument_by_underlying(
         &self,
         underlying_symbol: &str,
@@ -1316,17 +1400,22 @@ impl RithmicTickerPlantHandle {
         await_all_responses(rx).await
     }
 
-    /// Subscribe to market data for all instruments of an underlying
+    /// Subscribe to, or unsubscribe from, market data for every instrument of
+    /// an underlying.
+    ///
+    /// Updates arrive on `subscription_receiver`, as for the per-symbol
+    /// `subscribe_*` methods.
     ///
     /// # Arguments
     /// * `underlying_symbol` - The underlying symbol (e.g., "ES")
     /// * `exchange` - The exchange code (e.g., "CME")
-    /// * `expiration_date` - Optional expiration date filter
-    /// * `fields` - Market data fields to subscribe to
-    /// * `request_type` - Subscribe or Unsubscribe
+    /// * `expiration_date` - Only instruments with this expiration
+    /// * `fields` - The update kinds to turn on or off; they are sent as one bit mask
+    /// * `request_type` - `Subscribe` or `Unsubscribe`
     ///
     /// # Returns
-    /// The subscription response or an error message
+    /// The server's acknowledgement. A refusal is `Ok` with
+    /// [`error`](RithmicResponse::error) set.
     pub async fn subscribe_by_underlying(
         &self,
         underlying_symbol: &str,
@@ -1351,13 +1440,15 @@ impl RithmicTickerPlantHandle {
         await_first_response(rx).await
     }
 
-    /// Get tick size type table
+    /// Get the tick size table for a tick size type.
     ///
     /// # Arguments
-    /// * `tick_size_type` - The tick size type identifier
+    /// * `tick_size_type` - The tick size type, as named in the instrument's
+    ///   reference data
     ///
     /// # Returns
-    /// The tick size table response or an error message
+    /// Every frame of the reply, each a
+    /// [`RithmicMessage::ResponseGiveTickSizeTypeTable`].
     pub async fn get_tick_size_type_table(
         &self,
         tick_size_type: &str,
@@ -1374,14 +1465,14 @@ impl RithmicTickerPlantHandle {
         await_all_responses(rx).await
     }
 
-    /// Get product codes
+    /// List product codes, such as `"ES"` or `"NQ"`.
     ///
     /// # Arguments
-    /// * `exchange` - Optional exchange filter
-    /// * `give_toi_products_only` - If true, only return Time of Interest products
+    /// * `exchange` - Only list this exchange's products
+    /// * `give_toi_products_only` - Sets Rithmic's `give_toi_products_only` flag
     ///
     /// # Returns
-    /// A vector of responses containing product codes or an error message
+    /// Every frame of the reply, each a [`RithmicMessage::ResponseProductCodes`].
     pub async fn get_product_codes(
         &self,
         exchange: Option<&str>,
@@ -1400,14 +1491,15 @@ impl RithmicTickerPlantHandle {
         await_all_responses(rx).await
     }
 
-    /// Get volume at price data
+    /// Get how much has traded at each price for a symbol.
     ///
     /// # Arguments
     /// * `symbol` - The trading symbol (e.g., "ESH6")
     /// * `exchange` - The exchange code (e.g., "CME")
     ///
     /// # Returns
-    /// The volume at price response or an error message
+    /// Every frame of the reply, each a [`RithmicMessage::ResponseGetVolumeAtPrice`]
+    /// holding a list of prices and the volume at each.
     pub async fn get_volume_at_price(
         &self,
         symbol: &str,
@@ -1426,14 +1518,17 @@ impl RithmicTickerPlantHandle {
         await_all_responses(rx).await
     }
 
-    /// Get auxiliary reference data for a symbol
+    /// Get a contract's calendar and settlement details.
+    ///
+    /// The reply holds dates such as first and last trading, notice and
+    /// delivery, plus the settlement method and unit of measure.
     ///
     /// # Arguments
     /// * `symbol` - The trading symbol (e.g., "ESH6")
     /// * `exchange` - The exchange code (e.g., "CME")
     ///
     /// # Returns
-    /// The auxiliary reference data response or an error message
+    /// A [`RithmicMessage::ResponseAuxilliaryReferenceData`].
     pub async fn get_auxilliary_reference_data(
         &self,
         symbol: &str,
@@ -1462,7 +1557,7 @@ impl RithmicTickerPlantHandle {
     /// * `exchange` - The exchange code (e.g., "CME")
     ///
     /// # Returns
-    /// The reference data response or an error message
+    /// A [`RithmicMessage::ResponseReferenceData`].
     pub async fn get_reference_data(
         &self,
         symbol: &str,
@@ -1481,17 +1576,18 @@ impl RithmicTickerPlantHandle {
         await_first_response(rx).await
     }
 
-    /// Get front month contract
+    /// Get the current front month contract for a product.
     ///
-    /// Returns the current front month contract for a given product.
+    /// The contract's symbol is in the reply's `trading_symbol`.
     ///
     /// # Arguments
     /// * `symbol` - The product symbol (e.g., "ES" for E-mini S&P 500)
     /// * `exchange` - The exchange code (e.g., "CME")
-    /// * `need_updates` - Whether to receive updates when front month changes
+    /// * `need_updates` - If true, [`RithmicMessage::FrontMonthContractUpdate`]
+    ///   messages arrive on `subscription_receiver` when the front month changes
     ///
     /// # Returns
-    /// The front month contract response or an error message
+    /// A [`RithmicMessage::ResponseFrontMonthContract`].
     pub async fn get_front_month_contract(
         &self,
         symbol: &str,
@@ -1512,13 +1608,14 @@ impl RithmicTickerPlantHandle {
         await_first_response(rx).await
     }
 
-    /// Get Rithmic system gateway info
+    /// List the gateways of a Rithmic system.
     ///
     /// # Arguments
-    /// * `system_name` - Optional system name to get info for
+    /// * `system_name` - The system to ask about, or `None` to send none
     ///
     /// # Returns
-    /// The gateway info response or an error message
+    /// A [`RithmicMessage::ResponseRithmicSystemGatewayInfo`] with the
+    /// gateway names and URIs.
     pub async fn get_system_gateway_info(
         &self,
         system_name: Option<&str>,
