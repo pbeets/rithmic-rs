@@ -8,8 +8,8 @@ use crate::{
     config::{LoginConfig, RithmicConfig},
     error::RithmicError,
     plants::{
+        actor::Plant,
         await_all_responses, await_first_response,
-        core::Plant,
         kind::{Cx, PlantCommand, PlantKind},
     },
     request_handler::Reply,

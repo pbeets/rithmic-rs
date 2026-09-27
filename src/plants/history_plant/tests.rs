@@ -3,6 +3,7 @@ use tokio::net::TcpStream;
 
 use super::*;
 use crate::{
+    plants::core::Event,
     plants::session::Session,
     plants::test_support::{
         self, Responder, assert_close_still_sent, assert_rejected_after_close,
@@ -44,7 +45,7 @@ fn abandoned_load() -> HistoryPlantCommand {
 #[tokio::test]
 async fn load_ticks_after_close_requested_is_not_sent() {
     let (mut plant, _command_sender, mut client) = plant_with_wire().await;
-    plant.session = Session::Closing;
+    plant.core.session = Session::Closing;
 
     assert_rejected_after_close(&mut plant, &mut client, load_ticks).await;
 }
@@ -52,7 +53,7 @@ async fn load_ticks_after_close_requested_is_not_sent() {
 #[tokio::test]
 async fn close_still_reaches_the_wire_after_close_requested() {
     let (mut plant, _command_sender, mut client) = plant_with_wire().await;
-    plant.session = Session::Closing;
+    plant.core.session = Session::Closing;
 
     assert_close_still_sent(&mut plant, HistoryPlantCommand::Close, &mut client).await;
 }
@@ -61,7 +62,7 @@ async fn close_still_reaches_the_wire_after_close_requested() {
 #[tokio::test]
 async fn load_ticks_through_the_handle_after_close_requested_reports_connection_closed() {
     let (mut plant, command_sender, mut client) = plant_with_wire().await;
-    plant.session = Session::Closing;
+    plant.core.session = Session::Closing;
 
     let subscription_sender = plant.subscription_sender.clone();
     let handle = RithmicHistoryPlantHandle {
@@ -540,7 +541,7 @@ async fn a_load_dropped_before_the_plant_sends_it_is_never_sent() {
     drop(load);
 
     let command = plant.request_receiver.recv().await.unwrap();
-    plant.handle_command(command).await;
+    plant.handle(Event::Command(command)).await;
 
     assert_wire_silent(&mut client).await;
 }
@@ -698,11 +699,11 @@ async fn a_load_dropped_mid_replay_is_released_without_another_frame() {
     assert!(load.as_mut().now_or_never().is_none());
 
     let command = plant.request_receiver.recv().await.unwrap();
-    plant.handle_command(command).await;
+    plant.handle(Event::Command(command)).await;
     let (_, id) = read_tick_replay(&mut client).await;
 
     // Give the replay a collected part, then fill the command queue.
-    plant.request_handler.handle_response(RithmicResponse {
+    plant.core.request_handler.handle_response(RithmicResponse {
         request_id: id.clone(),
         message: RithmicMessage::ResponseTickBarReplay(tick_at("", 100, 1)),
         is_update: false,
@@ -724,7 +725,7 @@ async fn a_load_dropped_mid_replay_is_released_without_another_frame() {
     }
 
     assert!(
-        plant.request_handler.expects_late_frames(&id),
+        plant.core.request_handler.expects_late_frames(&id),
         "the replay was released and its late frames are counted"
     );
     assert_wire_silent(&mut client).await;
@@ -747,7 +748,7 @@ async fn a_load_dropped_while_waiting_for_room_in_the_queue_is_never_sent() {
 
     for _ in 0..4 {
         let command = plant.request_receiver.recv().await.unwrap();
-        plant.handle_command(command).await;
+        plant.handle(Event::Command(command)).await;
     }
 
     assert!(plant.request_receiver.try_recv().is_err());

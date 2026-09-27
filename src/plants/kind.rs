@@ -10,6 +10,7 @@ use crate::{
 };
 
 /// The commands every plant takes, and handles the same way.
+#[derive(Debug)]
 pub(crate) enum PlantCommand {
     Close,
     Abort,
@@ -25,9 +26,9 @@ pub(crate) enum PlantCommand {
     },
 }
 
-/// What makes one plant differ from another. The actor every plant runs on,
-/// [`Plant`](crate::plants::core::Plant), owns the connection, the session,
-/// heartbeats and the close guard, and hands the rest to its kind.
+/// What makes one plant differ from another. The core every plant runs on,
+/// [`PlantCore`](crate::plants::core::PlantCore), owns the session, heartbeats
+/// and the close guard, and hands the rest to its kind.
 pub(crate) trait PlantKind {
     /// The commands the plant's handles send it.
     type Command;
@@ -62,7 +63,7 @@ pub(crate) trait PlantKind {
     fn on_reply(&mut self, tag: Self::Tag, reply: Reply);
 }
 
-/// A request a plant queued through [`Cx`], for the actor to send.
+/// A request a plant queued through [`Cx`], for the core to send.
 pub(crate) enum Outgoing<T> {
     /// Register `tag` under `id`, then send `buf`.
     Request {
@@ -83,8 +84,8 @@ pub(crate) enum Outgoing<T> {
 }
 
 /// What a plant's own code may touch: it builds requests through the sender
-/// API and queues them. The actor registers and sends them, in order, once the
-/// plant returns.
+/// API and queues them. The core registers them and has them sent, in order,
+/// once the plant returns.
 pub(crate) struct Cx<'a, T> {
     api: &'a mut RithmicSenderApi,
     closing: bool,

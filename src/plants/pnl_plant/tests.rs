@@ -30,7 +30,7 @@ fn position_snapshots(response_sender: Responder) -> PnlPlantCommand {
 #[tokio::test]
 async fn subscribe_after_close_requested_is_not_sent() {
     let (mut plant, _command_sender, mut client) = plant_with_wire().await;
-    plant.session = Session::Closing;
+    plant.core.session = Session::Closing;
 
     assert_rejected_after_close(&mut plant, &mut client, subscribe_pnl_updates).await;
 }
@@ -38,7 +38,7 @@ async fn subscribe_after_close_requested_is_not_sent() {
 #[tokio::test]
 async fn position_snapshots_after_close_requested_is_not_sent() {
     let (mut plant, _command_sender, mut client) = plant_with_wire().await;
-    plant.session = Session::Closing;
+    plant.core.session = Session::Closing;
 
     assert_rejected_after_close(&mut plant, &mut client, position_snapshots).await;
 }
@@ -46,7 +46,7 @@ async fn position_snapshots_after_close_requested_is_not_sent() {
 #[tokio::test]
 async fn close_still_reaches_the_wire_after_close_requested() {
     let (mut plant, _command_sender, mut client) = plant_with_wire().await;
-    plant.session = Session::Closing;
+    plant.core.session = Session::Closing;
 
     assert_close_still_sent(&mut plant, PnlPlantCommand::Close, &mut client).await;
 }
@@ -55,7 +55,7 @@ async fn close_still_reaches_the_wire_after_close_requested() {
 #[tokio::test]
 async fn subscribe_through_the_handle_after_close_requested_reports_connection_closed() {
     let (mut plant, command_sender, mut client) = plant_with_wire().await;
-    plant.session = Session::Closing;
+    plant.core.session = Session::Closing;
 
     let account = test_account();
     let handle = RithmicPnlPlantHandle {

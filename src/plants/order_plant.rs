@@ -20,8 +20,8 @@ use crate::{
     config::{LoginConfig, RithmicAccount, RithmicConfig},
     error::RithmicError,
     plants::{
+        actor::Plant,
         await_all_responses, await_first_response,
-        core::Plant,
         kind::{Cx, PlantCommand, PlantKind},
         subscription::SubscriptionFilter,
         tag::answer_caller,
@@ -1061,7 +1061,7 @@ impl RithmicOrderPlantHandle {
 
         let _ = self.sender.send(command).await;
         // Held rather than propagated here so that `Close` is queued either way:
-        // `handle_logout` has already closed the session, so an actor that
+        // the logout has already closed the session, so an actor that
         // never receives `Close` stops sending heartbeats, drops every later
         // command, and never drains its pending requests.
         let outcome = rx.await.map_err(|_| RithmicError::ConnectionClosed);

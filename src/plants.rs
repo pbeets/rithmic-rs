@@ -14,6 +14,7 @@ use tokio::sync::oneshot;
 
 use crate::{api::receiver_api::RithmicResponse, error::RithmicError};
 
+pub(crate) mod actor;
 pub(crate) mod core;
 /// Access to historical market data
 pub mod history_plant;

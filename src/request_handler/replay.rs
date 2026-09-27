@@ -97,7 +97,7 @@ impl<T: RequestTag> RithmicRequestHandler<T> {
     }
 
     /// Drop every replay whose caller stopped waiting, and count whatever the
-    /// server still sends for it. Called on every loop turn.
+    /// server still sends for it. Called as each event reaches the plant.
     pub(crate) fn release_abandoned_replays(&mut self) {
         let abandoned: Vec<_> = self
             .replay_map

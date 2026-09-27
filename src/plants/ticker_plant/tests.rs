@@ -31,7 +31,7 @@ fn subscribe(response_sender: Responder) -> TickerPlantCommand {
 #[tokio::test]
 async fn subscribe_after_close_requested_is_not_sent() {
     let (mut plant, _command_sender, mut client) = plant_with_wire().await;
-    plant.session = Session::Closing;
+    plant.core.session = Session::Closing;
 
     assert_rejected_after_close(&mut plant, &mut client, subscribe).await;
 }
@@ -39,7 +39,7 @@ async fn subscribe_after_close_requested_is_not_sent() {
 #[tokio::test]
 async fn close_still_reaches_the_wire_after_close_requested() {
     let (mut plant, _command_sender, mut client) = plant_with_wire().await;
-    plant.session = Session::Closing;
+    plant.core.session = Session::Closing;
 
     assert_close_still_sent(&mut plant, TickerPlantCommand::Close, &mut client).await;
 }
@@ -48,7 +48,7 @@ async fn close_still_reaches_the_wire_after_close_requested() {
 #[tokio::test]
 async fn subscribe_through_the_handle_after_close_requested_reports_connection_closed() {
     let (mut plant, command_sender, mut client) = plant_with_wire().await;
-    plant.session = Session::Closing;
+    plant.core.session = Session::Closing;
 
     let subscription_sender = plant.subscription_sender.clone();
     let handle = RithmicTickerPlantHandle {
@@ -124,7 +124,7 @@ async fn a_login_whose_caller_stops_waiting_still_heartbeats() {
     use prost::Message as _;
 
     let (mut plant, command_sender, mut client) = plant_with_wire().await;
-    plant.session = Session::Connected;
+    plant.core.session = Session::Connected;
 
     let subscription_sender = plant.subscription_sender.clone();
     let handle = RithmicTickerPlantHandle {

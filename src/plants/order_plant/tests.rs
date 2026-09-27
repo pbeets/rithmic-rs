@@ -5,11 +5,12 @@ use super::*;
 use crate::{
     api::commands::{RithmicBracketOrder, RithmicOcoOrderLeg},
     plants::{
+        core::{Effect, Event, PlantCore},
         session::Session,
         test_support::{
-            self, Responder, assert_close_still_sent, assert_rejected_after_close,
-            assert_sent_while_open, assert_wire_silent, awaited_caller_outcome, read_wire_request,
-            test_account, write_wire_response,
+            self, Responder, answer, assert_close_still_sent, assert_rejected_after_close,
+            assert_sent_while_open, assert_wire_silent, awaited_caller_outcome, frame,
+            read_wire_request, test_account, write_wire_response,
         },
     },
     types::{ManualOrAutoEntry, OrderSide, OrderType, TimeInForce},
@@ -207,7 +208,7 @@ async fn adjust_target_and_stop_forward_the_bracket_level() {
 #[tokio::test]
 async fn place_order_after_close_requested_is_not_sent() {
     let (mut plant, _command_sender, mut client) = plant_with_wire().await;
-    plant.session = Session::Closing;
+    plant.core.session = Session::Closing;
 
     assert_rejected_after_close(&mut plant, &mut client, place_order).await;
 }
@@ -215,7 +216,7 @@ async fn place_order_after_close_requested_is_not_sent() {
 #[tokio::test]
 async fn cancel_order_after_close_requested_is_not_sent() {
     let (mut plant, _command_sender, mut client) = plant_with_wire().await;
-    plant.session = Session::Closing;
+    plant.core.session = Session::Closing;
 
     assert_rejected_after_close(&mut plant, &mut client, cancel_order).await;
 }
@@ -223,7 +224,7 @@ async fn cancel_order_after_close_requested_is_not_sent() {
 #[tokio::test]
 async fn close_still_reaches_the_wire_after_close_requested() {
     let (mut plant, _command_sender, mut client) = plant_with_wire().await;
-    plant.session = Session::Closing;
+    plant.core.session = Session::Closing;
 
     assert_close_still_sent(&mut plant, OrderPlantCommand::Close, &mut client).await;
 }
@@ -233,7 +234,7 @@ async fn close_still_reaches_the_wire_after_close_requested() {
 #[tokio::test]
 async fn place_order_through_the_handle_after_close_requested_reports_connection_closed() {
     let (mut plant, command_sender, mut client) = plant_with_wire().await;
-    plant.session = Session::Closing;
+    plant.core.session = Session::Closing;
 
     let account = test_account();
     let handle = RithmicOrderPlantHandle {
@@ -329,7 +330,7 @@ fn trade_route_response(exchange: &str, trade_route: &str) -> RithmicResponse {
 /// returned with the client half of the socket.
 async fn running_plant() -> (RithmicOrderPlant, TcpStream) {
     let (mut plant, sender, client) = plant_with_wire().await;
-    plant.session = Session::Connected;
+    plant.core.session = Session::Connected;
 
     let subscription_sender = plant.subscription_sender.clone();
     let connection_handle = tokio::spawn(async move { plant.run().await });
@@ -853,7 +854,7 @@ async fn a_login_in_flight_fails_when_the_connection_ends() {
 #[tokio::test]
 async fn login_after_close_requested_is_not_sent() {
     let (mut plant, _command_sender, mut client) = plant_with_wire().await;
-    plant.session = Session::Closing;
+    plant.core.session = Session::Closing;
 
     assert_rejected_after_close(&mut plant, &mut client, |response_sender| {
         OrderPlantCommand::Login {
@@ -901,10 +902,203 @@ async fn get_login_info_scopes_only_a_plant_without_a_scope() {
     }
 }
 
+/// The order plant's core, with no socket, as `connect` leaves it.
+fn order_core() -> PlantCore<OrderPlant> {
+    test_support::plant_core()
+}
+
+/// The ids of the requests `effects` puts on the wire.
+fn sent_ids(effects: &[Effect]) -> Vec<String> {
+    effects
+        .iter()
+        .filter_map(|effect| match effect {
+            Effect::Send { id, .. } => Some(id.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Logs `core` in and has the server accept it. Returns the login's waiter and
+/// the ids of the login info and trade routes requests that followed.
+fn accepted_login(
+    core: &mut PlantCore<OrderPlant>,
+) -> (
+    oneshot::Receiver<Result<Vec<RithmicResponse>, RithmicError>>,
+    String,
+    String,
+) {
+    let (response_sender, rx) = oneshot::channel();
+    let effects = core.on_event(Event::Command(OrderPlantCommand::Login {
+        config: LoginConfig::default(),
+        response_sender,
+    }));
+    let login_id = sent_ids(&effects).remove(0);
+
+    let effects = core.on_event(Event::Frame(frame(&login_reply(vec![login_id], &["0"]))));
+    let ids = sent_ids(&effects);
+    assert_eq!(
+        ids.len(),
+        2,
+        "an accepted login loads the login info and the trade routes"
+    );
+
+    (rx, ids[0].clone(), ids[1].clone())
+}
+
+/// The login info reply to request `id`, with `fcm_id`.
+fn login_info_frame(id: &str, fcm_id: &str) -> RithmicResponse {
+    frame(&crate::rti::ResponseLoginInfo {
+        user_msg: vec![id.to_string()],
+        rp_code: vec!["0".to_string()],
+        fcm_id: Some(fcm_id.to_string()),
+        ..login_info()
+    })
+}
+
+/// The trade routes reply to request `id`: one route for `exchange`, then the
+/// frame that ends the list.
+fn trade_route_frames(id: &str, exchange: &str, trade_route: &str) -> [RithmicResponse; 2] {
+    [
+        frame(&crate::rti::ResponseTradeRoutes {
+            template_id: 311,
+            user_msg: vec![id.to_string()],
+            rq_handler_rp_code: vec!["0".to_string()],
+            exchange: Some(exchange.to_string()),
+            trade_route: Some(trade_route.to_string()),
+            is_default: Some(true),
+            ..Default::default()
+        }),
+        frame(&crate::rti::ResponseTradeRoutes {
+            template_id: 311,
+            user_msg: vec![id.to_string()],
+            rp_code: vec!["0".to_string()],
+            ..Default::default()
+        }),
+    ]
+}
+
+/// The login a caller waits on is answered by the event that settles the last
+/// of the login info and the trade routes, and not before.
+#[test]
+fn the_core_answers_a_login_once_the_login_info_and_trade_routes_are_answered() {
+    let mut core = order_core();
+    let (mut rx, login_info_id, trade_routes_id) = accepted_login(&mut core);
+    assert_eq!(answer(&mut rx), None, "nothing is loaded yet");
+
+    core.on_event(Event::Frame(login_info_frame(&login_info_id, "FCM_LOGIN")));
+    assert_eq!(answer(&mut rx), None, "the trade routes are outstanding");
+
+    let [route, end] = trade_route_frames(&trade_routes_id, "CME", "globex");
+    core.on_event(Event::Frame(route));
+    assert_eq!(answer(&mut rx), None, "the route list has not ended");
+
+    core.on_event(Event::Frame(end));
+    assert!(matches!(answer(&mut rx), Some(Ok(_))));
+    assert!(matches!(core.session, Session::Ready { .. }));
+}
+
+/// A load that fails is settled too: the login still succeeds, unscoped and
+/// with no routes.
+#[test]
+fn the_core_answers_a_login_whose_login_info_and_trade_routes_failed() {
+    let mut core = order_core();
+    let (mut rx, login_info_id, trade_routes_id) = accepted_login(&mut core);
+
+    core.on_event(Event::SendFailed(login_info_id));
+    assert_eq!(answer(&mut rx), None, "the trade routes are outstanding");
+
+    core.on_event(Event::Frame(frame(&crate::rti::Reject {
+        template_id: 75,
+        user_msg: vec![trade_routes_id],
+        rp_code: rejected(),
+    })));
+
+    let login = answer(&mut rx).expect("both loads are settled");
+    assert!(matches!(login, Ok(frames) if frames[0].error.is_none()));
+    assert!(core.kind.login_scope.is_none());
+    assert!(core.kind.trade_routes.resolve(None, "CME").is_err());
+}
+
+/// A caller that stops waiting once the login reply is in changes nothing:
+/// the plant still loads its scope and routes and finishes the login.
+#[test]
+fn the_core_loads_the_scope_and_routes_for_a_login_nobody_waits_for() {
+    let mut core = order_core();
+    let (rx, login_info_id, trade_routes_id) = accepted_login(&mut core);
+    drop(rx);
+
+    core.on_event(Event::Frame(login_info_frame(&login_info_id, "FCM_LOGIN")));
+    for part in trade_route_frames(&trade_routes_id, "CME", "globex") {
+        core.on_event(Event::Frame(part));
+    }
+
+    let scope = core.kind.login_scope.as_ref().expect("the login scoped it");
+    assert_eq!(scope.fcm_id.as_deref(), Some("FCM_LOGIN"));
+    assert_eq!(
+        core.kind.trade_routes.resolve(None, "CME").unwrap(),
+        "globex"
+    );
+    assert!(matches!(core.session, Session::Ready { .. }));
+}
+
+/// The scope and routes are the plant's own. A login loads them and
+/// `record_trade_route` updates a route; a caller's own `get_login_info` or
+/// `get_trade_routes` reads them without replacing either.
+#[test]
+fn only_the_plant_writes_its_scope_and_routes() {
+    let mut core = order_core();
+    let (_rx, login_info_id, trade_routes_id) = accepted_login(&mut core);
+    core.on_event(Event::Frame(login_info_frame(&login_info_id, "FCM_LOGIN")));
+    for part in trade_route_frames(&trade_routes_id, "CME", "globex") {
+        core.on_event(Event::Frame(part));
+    }
+
+    let (response_sender, mut info) = oneshot::channel();
+    let effects = core.on_event(Event::Command(OrderPlantCommand::GetLoginInfo {
+        response_sender,
+    }));
+    let id = sent_ids(&effects).remove(0);
+    core.on_event(Event::Frame(login_info_frame(&id, "FCM_LATER")));
+    assert!(matches!(answer(&mut info), Some(Ok(_))));
+
+    let (response_sender, mut routes) = oneshot::channel();
+    let effects = core.on_event(Event::Command(OrderPlantCommand::GetTradeRoutes {
+        subscribe_for_updates: false,
+        response_sender,
+    }));
+    let id = sent_ids(&effects).remove(0);
+    for part in trade_route_frames(&id, "CME", "other") {
+        core.on_event(Event::Frame(part));
+    }
+    assert!(matches!(answer(&mut routes), Some(Ok(_))));
+
+    let scope = core.kind.login_scope.as_ref().unwrap();
+    assert_eq!(scope.fcm_id.as_deref(), Some("FCM_LOGIN"));
+    assert_eq!(
+        core.kind.trade_routes.resolve(None, "CME").unwrap(),
+        "globex"
+    );
+
+    core.on_event(Event::Command(OrderPlantCommand::RecordTradeRouteUpdate(
+        Box::new(crate::rti::TradeRoute {
+            template_id: 350,
+            exchange: Some("CME".to_string()),
+            trade_route: Some("globex-2".to_string()),
+            is_default: Some(true),
+            ..Default::default()
+        }),
+    )));
+    assert_eq!(
+        core.kind.trade_routes.resolve(None, "CME").unwrap(),
+        "globex-2"
+    );
+}
+
 /// Record the route the server would have published for `exchange`, as a login on
 /// this connection would have left it.
 fn cache_route(plant: &mut Plant<OrderPlant>, exchange: &str, trade_route: &str) {
     plant
+        .core
         .kind
         .trade_routes
         .record(Some(exchange), Some(trade_route), None);
@@ -920,7 +1114,7 @@ async fn scoped_plant_with_wire() -> (
 
     cache_route(&mut plant, "CME", "globex");
 
-    plant.kind.login_scope =
+    plant.core.kind.login_scope =
         Some(LoginScope::from_login_info(&login_info()).expect("an IB login is expressible"));
 
     (plant, sender, client)
@@ -933,7 +1127,7 @@ async fn sent_request<M: prost::Message + Default>(
     build: impl FnOnce(Responder) -> OrderPlantCommand,
 ) -> M {
     let (response_sender, _rx) = oneshot::channel();
-    plant.handle_command(build(response_sender)).await;
+    plant.handle(Event::Command(build(response_sender))).await;
 
     M::decode(&*read_wire_request(client).await).expect("the actor serialized this request")
 }
@@ -1255,7 +1449,7 @@ async fn an_unroutable_order_is_refused_before_the_wire() {
         let (mut plant, _sender, mut client) = plant_with_wire().await;
 
         let (response_sender, rx) = oneshot::channel();
-        plant.handle_command(build(response_sender)).await;
+        plant.handle(Event::Command(build(response_sender))).await;
 
         assert!(matches!(
             awaited_caller_outcome(rx).await,
@@ -1276,10 +1470,10 @@ async fn trade_route_for_reports_the_route_an_order_would_take() {
     let (response_sender, rx) = oneshot::channel();
 
     plant
-        .handle_command(OrderPlantCommand::TradeRouteFor {
+        .handle(Event::Command(OrderPlantCommand::TradeRouteFor {
             exchange: "CME".to_string(),
             response_sender,
-        })
+        }))
         .await;
 
     assert_eq!(
@@ -1300,24 +1494,24 @@ async fn a_route_update_handed_back_moves_where_orders_go() {
     cache_route(&mut plant, "CME", "globex");
 
     plant
-        .handle_command(OrderPlantCommand::RecordTradeRouteUpdate(Box::new(
-            crate::rti::TradeRoute {
+        .handle(Event::Command(OrderPlantCommand::RecordTradeRouteUpdate(
+            Box::new(crate::rti::TradeRoute {
                 template_id: 350,
                 exchange: Some("CME".to_string()),
                 trade_route: Some("globex-2".to_string()),
                 is_default: Some(true),
                 ..Default::default()
-            },
+            }),
         )))
         .await;
 
     let (response_sender, rx) = oneshot::channel();
 
     plant
-        .handle_command(OrderPlantCommand::TradeRouteFor {
+        .handle(Event::Command(OrderPlantCommand::TradeRouteFor {
             exchange: "CME".to_string(),
             response_sender,
-        })
+        }))
         .await;
 
     assert_eq!(
@@ -1340,10 +1534,10 @@ async fn trade_route_for_fails_where_an_order_would() {
     let (response_sender, rx) = oneshot::channel();
 
     plant
-        .handle_command(OrderPlantCommand::TradeRouteFor {
+        .handle(Event::Command(OrderPlantCommand::TradeRouteFor {
             exchange: "CBOT".to_string(),
             response_sender,
-        })
+        }))
         .await;
 
     assert!(matches!(
@@ -1359,11 +1553,12 @@ async fn record_trade_routes_populates_the_cache() {
     let (mut plant, _sender, _client) = plant_with_wire().await;
 
     plant
+        .core
         .kind
         .record_trade_routes(&[trade_route_response("CME", "globex")]);
 
     assert_eq!(
-        plant.kind.trade_routes.resolve(None, "CME").unwrap(),
+        plant.core.kind.trade_routes.resolve(None, "CME").unwrap(),
         "globex"
     );
 }
@@ -1415,14 +1610,14 @@ async fn get_trade_routes_does_not_touch_the_cache() {
     let (response_sender, _rx) = oneshot::channel();
 
     plant
-        .handle_command(OrderPlantCommand::GetTradeRoutes {
+        .handle(Event::Command(OrderPlantCommand::GetTradeRoutes {
             subscribe_for_updates: true,
             response_sender,
-        })
+        }))
         .await;
 
     assert_eq!(
-        plant.kind.trade_routes.resolve(None, "CME").unwrap(),
+        plant.core.kind.trade_routes.resolve(None, "CME").unwrap(),
         "globex"
     );
 }
