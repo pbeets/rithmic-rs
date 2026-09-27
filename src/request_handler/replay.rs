@@ -98,11 +98,14 @@ impl<T: RequestTag> RithmicRequestHandler<T> {
 
     /// Drop every replay whose caller stopped waiting, and count whatever the
     /// server still sends for it. Called as each event reaches the plant.
+    ///
+    /// A replay whose write has not been reported yet is left alone: how that
+    /// write went decides what happens to it.
     pub(crate) fn release_abandoned_replays(&mut self) {
         let abandoned: Vec<_> = self
             .replay_map
             .iter()
-            .filter(|(_, replay)| replay.abandoned())
+            .filter(|(_, replay)| replay.sent && replay.abandoned())
             .map(|(id, _)| id.clone())
             .collect();
 
@@ -119,10 +122,7 @@ impl<T: RequestTag> RithmicRequestHandler<T> {
             );
 
             self.forget_resumes_of(&id);
-
-            if replay.sent {
-                self.expect_late_frames(id);
-            }
+            self.expect_late_frames(id);
         }
     }
 
@@ -465,6 +465,26 @@ mod tests {
             Some(&0),
             "a request the server saw can still be streaming"
         );
+    }
+
+    /// A replay whose caller leaves before its write is reported is kept until
+    /// the write is, so a replay the server did see still expects its late
+    /// frames.
+    #[test]
+    fn an_abandoned_replay_waits_for_its_write_to_be_reported() {
+        let mut handler = RithmicRequestHandler::<Tag>::new();
+        drop(handler.register_test_replay("replay"));
+
+        handler.release_abandoned_replays();
+        assert!(
+            handler.replay_map.contains_key("replay"),
+            "its write is not reported yet"
+        );
+
+        handler.mark_sent("replay");
+        handler.release_abandoned_replays();
+        assert!(handler.replay_map.is_empty());
+        assert_eq!(handler.late_continuations.get("replay"), Some(&0));
     }
 
     #[test]

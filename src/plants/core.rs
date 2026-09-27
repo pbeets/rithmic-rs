@@ -48,16 +48,6 @@ pub(crate) enum Event<C> {
     },
 }
 
-impl<C> Event<C> {
-    /// Whether the event reports how a write the core asked for went.
-    fn reports_a_write(&self) -> bool {
-        matches!(
-            self,
-            Event::Sent(_) | Event::SendFailed(_) | Event::SendTimedOut(_)
-        )
-    }
-}
-
 /// Something the I/O loop does for the plant, in the order the core gives.
 #[derive(Debug)]
 pub(crate) enum Effect {
@@ -112,11 +102,8 @@ impl<K: PlantKind> PlantCore<K> {
     /// React to `event`, and return what the I/O loop must do about it.
     pub(crate) fn on_event(&mut self, event: Event<K::Command>) -> Vec<Effect> {
         // Let go of any replay whose caller stopped waiting since the last
-        // event, so its late frames are counted rather than kept. A write the
-        // core just asked for is still part of the event that asked.
-        if !event.reports_a_write() {
-            self.request_handler.release_abandoned_replays();
-        }
+        // event, so its late frames are counted rather than kept.
+        self.request_handler.release_abandoned_replays();
 
         match event {
             Event::Command(command) => self.on_command(command),
