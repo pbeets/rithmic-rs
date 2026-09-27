@@ -62,6 +62,9 @@ from the repo root. Variables already set in your shell take precedence.
 The three marked **places orders** send limit orders to your Demo account, priced to rest
 below the market, and cancel them before they exit.
 
+[`generate_protos.rs`](generate_protos.rs) is a maintainer tool, not an example. It
+regenerates `src/rti.rs` from the `.proto` files and never connects.
+
 ## Options
 
 Every example except `connect` and `pnl` picks its contract from these. Set them in

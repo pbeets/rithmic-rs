@@ -4,7 +4,7 @@
 //! `.env` and is skipped without them; it sends no order to the exchange.
 //!
 //! Run with: cargo run --example error_handling
-//! Env: SYMBOL, PRODUCT, EXCHANGE (see examples/README.md)
+//! Env: SYMBOL, PRODUCT, EXCHANGE, START_TIME (see examples/README.md)
 
 #[path = "shared/common.rs"]
 mod common;
