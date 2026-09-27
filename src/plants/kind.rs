@@ -78,26 +78,22 @@ pub(crate) enum Outgoing<T> {
         id: String,
         replay: PendingReplay,
     },
-    /// Refused because a close was requested. Fails with
-    /// [`RithmicError::ConnectionClosed`].
-    Refused(Tag<T>),
 }
 
 /// What a plant's own code may touch: it builds requests through the sender
 /// API and queues them. The core registers them and has them sent, in order,
-/// once the plant returns.
+/// once the plant returns. The core only builds one while no close is
+/// requested: its command guard drops every command after a close.
 pub(crate) struct Cx<'a, T> {
     api: &'a mut RithmicSenderApi,
-    closing: bool,
     outgoing: Vec<Outgoing<T>>,
 }
 
 impl<'a, T> Cx<'a, T> {
-    /// A context that refuses every request when `closing`.
-    pub(crate) fn new(api: &'a mut RithmicSenderApi, closing: bool) -> Self {
+    /// A context that queues requests built through `api`.
+    pub(crate) fn new(api: &'a mut RithmicSenderApi) -> Self {
         Cx {
             api,
-            closing,
             outgoing: Vec::new(),
         }
     }
@@ -128,13 +124,6 @@ impl<'a, T> Cx<'a, T> {
         build: impl FnOnce(&mut RithmicSenderApi) -> Result<(Vec<u8>, String), RithmicError>,
         responder: Responder,
     ) {
-        if self.closing {
-            self.outgoing
-                .push(Outgoing::Refused(Tag::Caller(responder)));
-
-            return;
-        }
-
         match build(self.api) {
             Ok((buf, id)) => self.outgoing.push(Outgoing::Request {
                 buf,
@@ -153,12 +142,6 @@ impl<'a, T> Cx<'a, T> {
         build: impl FnOnce(&mut RithmicSenderApi) -> (Vec<u8>, String),
         replay: PendingReplay,
     ) {
-        // Dropping the replay drops its caller's responder, which the handle
-        // reports as `ConnectionClosed`.
-        if self.closing {
-            return;
-        }
-
         let (buf, id) = build(self.api);
 
         self.outgoing.push(Outgoing::Replay { buf, id, replay });
@@ -169,18 +152,12 @@ impl<'a, T> Cx<'a, T> {
         self.outgoing
     }
 
-    /// The close guard: after a close is requested nothing is built or sent.
+    /// Build the request and queue it under `tag`.
     fn queue(
         &mut self,
         build: impl FnOnce(&mut RithmicSenderApi) -> (Vec<u8>, String),
         tag: Tag<T>,
     ) {
-        if self.closing {
-            self.outgoing.push(Outgoing::Refused(tag));
-
-            return;
-        }
-
         let (buf, id) = build(self.api);
 
         self.outgoing.push(Outgoing::Request { buf, id, tag });
@@ -210,29 +187,11 @@ mod tests {
         RithmicSenderApi::new(&config)
     }
 
-    /// After a close is requested, a request is refused before it is built,
-    /// so it takes no id and nothing reaches the wire.
-    #[test]
-    fn a_closing_context_refuses_a_request_without_building_it() {
-        let mut api = sender_api();
-        let mut cx = Cx::<Infallible>::new(&mut api, true);
-
-        cx.send_for(
-            |_| panic!("a refused request is never built"),
-            oneshot::channel().0,
-        );
-
-        assert!(matches!(
-            cx.into_outgoing().as_slice(),
-            [Outgoing::Refused(Tag::Caller(_))]
-        ));
-    }
-
     /// Requests go out in the order the plant queued them.
     #[test]
     fn an_open_context_queues_requests_in_order() {
         let mut api = sender_api();
-        let mut cx = Cx::<Infallible>::new(&mut api, false);
+        let mut cx = Cx::<Infallible>::new(&mut api);
 
         cx.send_for(|api| api.request_login_info(), oneshot::channel().0);
         cx.send_for(|api| api.request_trade_routes(true), oneshot::channel().0);

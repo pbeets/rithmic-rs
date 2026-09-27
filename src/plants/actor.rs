@@ -1,5 +1,5 @@
 use std::{collections::VecDeque, time::Duration};
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use futures_util::{
     Sink, StreamExt,
@@ -175,10 +175,12 @@ where
                     None
                 }
                 Effect::Forward(response) => {
-                    if let Err(e) = self.subscription_sender.send(response) {
-                        warn!(
-                            "{}: no active subscribers: {:?}",
-                            self.rithmic_receiver_api.source, e
+                    // Updates arrive many times a second: with nobody
+                    // listening, say so briefly instead of dumping each one.
+                    if self.subscription_sender.send(response).is_err() {
+                        debug!(
+                            "{}: no active subscribers, update dropped",
+                            self.rithmic_receiver_api.source
                         );
                     }
 
@@ -202,6 +204,13 @@ where
             };
 
             if let Some(event) = outcome {
+                // A timed-out write poisons the sink, and the core has already
+                // failed every pending request: writing the rest would only
+                // block the loop for another timeout each.
+                if matches!(event, Event::SendTimedOut(_)) {
+                    effects.retain(|effect| !matches!(effect, Effect::Send { .. }));
+                }
+
                 for effect in self.core.on_event(event).into_iter().rev() {
                     effects.push_front(effect);
                 }
@@ -863,6 +872,31 @@ mod tests {
             rx2.try_recv(),
             Err(oneshot::error::TryRecvError::Empty)
         ));
+    }
+
+    /// Once a write times out, the writes queued behind it are dropped: their
+    /// requests are already failed, and each would block for another timeout
+    /// on the poisoned sink.
+    #[tokio::test(start_paused = true)]
+    async fn a_timed_out_write_drops_the_writes_queued_behind_it() {
+        let reader = make_dormant_ws_reader().await;
+        let (mut plant, mut sub_rx) = make_test_plant(MockMessageSink::pending(), reader);
+        let mut rx1 = register_request(&mut plant, "req-1");
+        let mut rx2 = register_request(&mut plant, "req-2");
+
+        let start = tokio::time::Instant::now();
+        plant.perform(vec![send("req-1"), send("req-2")]).await;
+
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(2 * SEND_TIMEOUT_SECS),
+            "only the first write may wait out the timeout"
+        );
+        assert_eq!(rx1.try_recv().unwrap(), Err(RithmicError::ConnectionClosed));
+        assert_eq!(rx2.try_recv().unwrap(), Err(RithmicError::ConnectionClosed));
+
+        let broadcast = sub_rx.try_recv().expect("the timeout is broadcast");
+        assert!(matches!(broadcast.message, RithmicMessage::ConnectionError));
+        assert!(sub_rx.try_recv().is_err(), "the timeout is broadcast once");
     }
 
     #[tokio::test]

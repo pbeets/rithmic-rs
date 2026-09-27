@@ -1019,6 +1019,19 @@ fn the_core_answers_a_login_whose_login_info_and_trade_routes_failed() {
     assert!(core.kind.trade_routes.resolve(None, "CME").is_err());
 }
 
+/// A write that times out while the login info and trade routes load poisons
+/// the sink, so the login fails rather than completing on a dead connection.
+#[test]
+fn the_core_fails_a_preparing_login_whose_write_timed_out() {
+    let mut core = order_core();
+    let (mut rx, login_info_id, _trade_routes_id) = accepted_login(&mut core);
+
+    core.on_event(Event::SendTimedOut(login_info_id));
+
+    assert_eq!(answer(&mut rx), Some(Err(RithmicError::ConnectionClosed)));
+    assert!(matches!(core.session, Session::Connected));
+}
+
 /// A caller that stops waiting once the login reply is in changes nothing:
 /// the plant still loads its scope and routes and finishes the login.
 #[test]

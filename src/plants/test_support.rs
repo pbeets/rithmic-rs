@@ -28,7 +28,7 @@ const WIRE_WRITE_TIMEOUT: Duration = Duration::from_secs(5);
 const WIRE_SILENCE_WINDOW: Duration = Duration::from_millis(200);
 
 /// The response channel every request-bearing plant command carries.
-pub(crate) type Responder = oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>;
+pub(crate) use crate::request_handler::Responder;
 
 /// A plant with nothing of its own: every command it takes is one every plant
 /// shares, and it loads nothing after login.

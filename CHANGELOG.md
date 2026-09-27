@@ -46,6 +46,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - If a caller stops waiting mid-reply, the rest of the reply is no longer held
   in memory.
 - An unexpected final response is logged as one `ERROR` line, not a dump.
+- An update that arrives with no subscriber is logged as one `DEBUG` line,
+  instead of a `WARN` with a dump of the frame for every update.
 - A plant logs in once per connection. Concurrent `login()` calls share one
   login request and all get its reply, and `login()` on a plant that is
   already logged in returns the kept reply without sending anything. A
@@ -66,8 +68,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - An order plant login whose caller stops waiting after the reply, for example
   under `tokio::time::timeout`, now still loads the login scope and trade
   routes, so orders no longer fail with `NoTradeRoute`.
-- `disconnect()`, `abort()` or a dropped connection during a login now fails
-  that login with `ConnectionClosed` at once, instead of leaving it waiting.
+- `disconnect()`, `abort()`, a dropped connection or a timed-out write during
+  a login now fails that login with `ConnectionClosed` at once, instead of
+  leaving it waiting.
 - `RithmicResponse::resume_key` is documented as the key the server's
   truncation notice carries.
 

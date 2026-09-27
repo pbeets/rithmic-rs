@@ -178,7 +178,7 @@ impl<K: PlantKind> PlantCore<K> {
             }) => self.login(config, response_sender),
             Ok(PlantCommand::Logout { response_sender }) => self.logout(response_sender),
             Err(command) => {
-                let mut cx = Cx::new(&mut self.sender_api, self.session.is_closing());
+                let mut cx = Cx::new(&mut self.sender_api);
                 self.kind.on_command(command, &mut cx);
                 let outgoing = cx.into_outgoing();
 
@@ -187,8 +187,7 @@ impl<K: PlantKind> PlantCore<K> {
         }
     }
 
-    /// Send what the plant queued through a [`Cx`], in order, and fail what
-    /// its close guard refused.
+    /// Send what the plant queued through a [`Cx`], in order.
     fn send_outgoing(&mut self, outgoing: Vec<Outgoing<K::Tag>>) {
         for request in outgoing {
             match request {
@@ -200,7 +199,6 @@ impl<K: PlantKind> PlantCore<K> {
                         self.effects.push(Effect::Send { id, frame: buf });
                     }
                 }
-                Outgoing::Refused(tag) => self.dispatch(tag, Err(RithmicError::ConnectionClosed)),
             }
         }
     }
@@ -276,13 +274,20 @@ impl<K: PlantKind> PlantCore<K> {
     /// treated as poisoned. A half-open TCP connection may not surface through
     /// the reader, so fail every pending request and broadcast
     /// `ConnectionError` now rather than letting later sends pile into a dead
-    /// sink. The session is left as it is: the loop stops when the next ping
-    /// fails to go out, and a closed session would skip that ping.
+    /// sink. The session is not closed: the loop stops when the next ping
+    /// fails to go out, and a closed session would skip that ping. A login
+    /// still preparing fails with [`RithmicError::ConnectionClosed`] first, so
+    /// its loads settling below cannot complete it on a poisoned sink.
     fn on_send_timed_out(&mut self, request_id: &str) {
         self.emit_connection_health_event(
             request_id,
             RithmicError::ConnectionFailed("WebSocket send timed out — sink poisoned".to_string()),
         );
+
+        if matches!(self.session, Session::Preparing { .. }) {
+            self.session.close(Session::Connected);
+        }
+
         self.fail_pending_requests();
     }
 
@@ -401,7 +406,7 @@ impl<K: PlantKind> PlantCore<K> {
             waiters,
         };
 
-        let mut cx = Cx::new(&mut self.sender_api, self.session.is_closing());
+        let mut cx = Cx::new(&mut self.sender_api);
         self.kind.after_login(&mut cx);
         let outgoing = cx.into_outgoing();
 
@@ -570,7 +575,10 @@ impl<K: PlantKind> PlantCore<K> {
 
                 return;
             }
+            // `on_command` drops every login once a close is requested, so
+            // this never runs. It answers anyway rather than panic the actor.
             Session::Closing | Session::Closed => {
+                debug_assert!(false, "a login got past the close guard");
                 let _ = response_sender.send(Err(RithmicError::ConnectionClosed));
 
                 return;
