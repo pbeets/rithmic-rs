@@ -709,10 +709,10 @@ impl RithmicHistoryPlantHandle {
     /// the replay early any other way, this returns `Ok` and the last frame has
     /// [`error`](RithmicResponse::error) set.
     ///
-    /// Time bar replays have also been seen to stop early with no notice (a
-    /// 60-day window of one-minute bars came back 7.5 days short). Check that
-    /// the last record reaches the end of your window, and request the rest if
-    /// not.
+    /// Replays have also been seen to stop early with no notice. A 60-day window
+    /// of one-minute bars came back 7.5 days short, and some servers end a tick
+    /// replay at exactly 500,000 ticks. Check that the last record reaches the
+    /// end of your window, and request the rest if not.
     ///
     /// A very large window may get no reply at all, so wrap the call in a
     /// timeout of your own.
