@@ -1637,17 +1637,20 @@ fn route_decode_failure(payload: &[u8], mut response: RithmicResponse) -> Rithmi
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use prost::{Message, bytes::Bytes};
     use std::collections::BTreeSet;
 
-    use crate::error::{RithmicError, RithmicRequestError};
-    use crate::rti::{
-        Reject, ResponseAccountList, ResponseGetUserInfo, ResponseListAcceptedAgreements,
-        ResponseLogin, ResponseOrderSessionConfig, ResponseReplayExecutions, ResponseSearchSymbols,
-        ResponseShowFillHistory, RithmicOrderNotification, TradeRoute, UpdateEasyToBorrowList,
-        UserInfoUpdate, messages::RithmicMessage,
+    use super::*;
+
+    use crate::{
+        error::{RithmicError, RithmicRequestError},
+        rti::{
+            Reject, ResponseAccountList, ResponseGetUserInfo, ResponseListAcceptedAgreements,
+            ResponseLogin, ResponseOrderSessionConfig, ResponseReplayExecutions,
+            ResponseSearchSymbols, ResponseShowFillHistory, RithmicOrderNotification, TradeRoute,
+            UpdateEasyToBorrowList, UserInfoUpdate, messages::RithmicMessage,
+        },
     };
-    use prost::{Message, bytes::Bytes};
 
     // Prost keeps template_id's wire tag but drops the canonical mapping,
     // which lives outside the .proto schema — this table supplies it.

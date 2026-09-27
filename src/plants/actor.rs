@@ -492,16 +492,17 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        pin::Pin,
-        task::{Context, Poll},
-    };
-
     use futures_util::StreamExt;
     use tokio::sync::{broadcast, oneshot};
     use tokio_tungstenite::tungstenite::{Error, Message, error::ProtocolError};
 
     use super::*;
+
+    use std::{
+        pin::Pin,
+        task::{Context, Poll},
+    };
+
     use crate::{
         api::receiver_api::RithmicResponse,
         config::{LoginConfig, RithmicEnv},

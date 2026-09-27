@@ -3,9 +3,7 @@
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
-use std::convert::Infallible;
-use std::fmt;
-use std::str::FromStr;
+use std::{convert::Infallible, fmt, str::FromStr};
 
 /// Status string for open orders.
 pub const OPEN: &str = "open";

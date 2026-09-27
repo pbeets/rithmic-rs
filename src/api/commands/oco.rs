@@ -1,7 +1,6 @@
 //! OCO (One-Cancels-Other) groups and the legs they hold.
 
-use super::triggers::TrailingStop;
-use super::validate_instrument;
+use super::{triggers::TrailingStop, validate_instrument};
 
 use crate::{
     error::RithmicError,

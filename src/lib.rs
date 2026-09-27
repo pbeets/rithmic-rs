@@ -321,25 +321,12 @@ mod ws;
 /// the same version.
 pub use prost;
 
-// Re-export plant types for easier access
-pub use plants::history_plant::{RithmicHistoryPlant, RithmicHistoryPlantHandle};
-pub use plants::order_plant::{RithmicOrderPlant, RithmicOrderPlantHandle};
-pub use plants::pnl_plant::{RithmicPnlPlant, RithmicPnlPlantHandle};
-pub use plants::subscription::SubscriptionFilter;
-pub use plants::ticker_plant::{RithmicTickerPlant, RithmicTickerPlantHandle};
-
-// Re-export modern configuration types for convenience
 pub use config::{ConfigError, RithmicAccount, RithmicConfig, RithmicConfigBuilder, RithmicEnv};
+pub use error::{RithmicError, RithmicRequestError};
 #[allow(deprecated)]
 pub use request_handler::DEFAULT_REQUEST_TIMEOUT;
-
-// Re-export error types
-pub use error::{RithmicError, RithmicRequestError};
-
-// Re-export connection strategy
 pub use ws::ConnectStrategy;
 
-// Re-export API types
 pub use api::{
     LoginConfig, RithmicBracketLevelAdjustment, RithmicBracketOrder, RithmicCancelAllOrders,
     RithmicCancelOrder, RithmicExitPosition, RithmicIfTouchedTrigger, RithmicLinkOrders,
@@ -347,16 +334,22 @@ pub use api::{
     RithmicOrder, RithmicResponse, TrailingStop,
 };
 
-// Re-export utility types for convenience
-pub use util::{
-    InstrumentInfo, InstrumentInfoError, OrderStatus, UnknownTemplateMessage,
-    rithmic_to_unix_nanos, rithmic_to_unix_nanos_precise,
+pub use plants::{
+    history_plant::{RithmicHistoryPlant, RithmicHistoryPlantHandle},
+    order_plant::{RithmicOrderPlant, RithmicOrderPlantHandle},
+    pnl_plant::{RithmicPnlPlant, RithmicPnlPlantHandle},
+    subscription::SubscriptionFilter,
+    ticker_plant::{RithmicTickerPlant, RithmicTickerPlantHandle},
 };
 
-// Re-export high-level trading types
 pub use types::{
     BracketOperationType, BracketType, EasyToBorrowRequest, FillHistoryRange, ManualOrAutoEntry,
     OrderCondition, OrderPriceField, OrderSide, OrderType, ParseOrderSideError,
     ParseOrderTypeError, ParseTimeInForceError, RmsUpdateBits, TickBarReplayRequest,
     TimeBarReplayRequest, TimeBarType, TimeInForce, VolumeProfileMinuteBarsRequest,
+};
+
+pub use util::{
+    InstrumentInfo, InstrumentInfoError, OrderStatus, UnknownTemplateMessage,
+    rithmic_to_unix_nanos, rithmic_to_unix_nanos_precise,
 };

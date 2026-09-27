@@ -175,6 +175,8 @@ pub(crate) fn reject_error(rp_code: &[String]) -> RithmicError {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     use crate::rti::{
         Reject, ResponseAcceptAgreement, ResponseAccountList, ResponseAccountRmsInfo,
         ResponseAccountRmsUpdates, ResponseAuxilliaryReferenceData, ResponseBracketOrder,
@@ -199,8 +201,6 @@ mod tests {
         ResponseUpdateStopBracketLevel, ResponseUpdateTargetBracketLevel,
         ResponseVolumeProfileMinuteBars, messages::RithmicMessage,
     };
-
-    use super::*;
 
     // =========================================================================
     // classify_rp_code_error() unit tests

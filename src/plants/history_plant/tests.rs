@@ -3,11 +3,13 @@ use tokio::net::TcpStream;
 
 use super::*;
 use crate::{
-    plants::core::Event,
-    plants::session::Session,
-    plants::test_support::{
-        self, Responder, assert_close_still_sent, assert_rejected_after_close,
-        assert_sent_while_open, assert_wire_silent, read_wire_request, write_wire_response,
+    plants::{
+        core::Event,
+        session::Session,
+        test_support::{
+            self, Responder, assert_close_still_sent, assert_rejected_after_close,
+            assert_sent_while_open, assert_wire_silent, read_wire_request, write_wire_response,
+        },
     },
     rti::{
         RequestTickBarReplay, RequestTimeBarReplay, ResponseTickBarReplay, ResponseTimeBarReplay,

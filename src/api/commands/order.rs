@@ -1,7 +1,9 @@
 //! A standalone order.
 
-use super::triggers::{RithmicIfTouchedTrigger, TrailingStop};
-use super::validate_instrument;
+use super::{
+    triggers::{RithmicIfTouchedTrigger, TrailingStop},
+    validate_instrument,
+};
 
 use crate::{
     error::RithmicError,

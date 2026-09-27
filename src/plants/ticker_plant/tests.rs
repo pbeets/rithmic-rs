@@ -2,10 +2,12 @@ use tokio::net::TcpStream;
 
 use super::*;
 use crate::{
-    plants::session::Session,
-    plants::test_support::{
-        self, Responder, assert_close_still_sent, assert_rejected_after_close,
-        assert_sent_while_open, assert_wire_silent, read_wire_request, write_wire_response,
+    plants::{
+        session::Session,
+        test_support::{
+            self, Responder, assert_close_still_sent, assert_rejected_after_close,
+            assert_sent_while_open, assert_wire_silent, read_wire_request, write_wire_response,
+        },
     },
     rti::request_market_data_update::{Request, UpdateBits},
 };

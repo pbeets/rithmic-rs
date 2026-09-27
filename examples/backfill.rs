@@ -9,9 +9,12 @@
 //!
 //! To use another environment or product, change the constants below.
 
-use std::future::Future;
-use std::time::{Duration, Instant, SystemTime};
 use tracing::info;
+
+use std::{
+    future::Future,
+    time::{Duration, Instant, SystemTime},
+};
 
 use rithmic_rs::{
     ConnectStrategy, RithmicConfig, RithmicEnv, RithmicError, RithmicHistoryPlant, RithmicResponse,

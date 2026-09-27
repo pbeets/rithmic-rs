@@ -288,12 +288,12 @@ pub(crate) async fn connect_with_strategy(
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     use std::{
         pin::Pin,
         task::{Context, Poll},
     };
-
-    use super::*;
 
     enum MockSinkBehavior {
         Ready,

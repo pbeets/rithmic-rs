@@ -1,7 +1,6 @@
 //! Bracket entry orders and the adjustment that moves one of their exit legs.
 
-use super::triggers::RithmicIfTouchedTrigger;
-use super::validate_instrument;
+use super::{triggers::RithmicIfTouchedTrigger, validate_instrument};
 
 use crate::{
     error::RithmicError,

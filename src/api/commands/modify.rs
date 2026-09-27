@@ -1,7 +1,6 @@
 //! Modifying a working order: its terms, and the tag it reports under.
 
-use super::triggers::RithmicIfTouchedTrigger;
-use super::validate_instrument;
+use super::{triggers::RithmicIfTouchedTrigger, validate_instrument};
 
 use crate::{
     error::RithmicError,
