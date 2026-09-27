@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.2.0]
+
 No API breaks. Three behavior changes to check when upgrading:
 
 - A `load_*` replay the server refuses to continue now returns
@@ -1246,7 +1248,8 @@ Previous stable release. See git history for earlier changes.
 - **0.5.0** (2025-11-16): Major stability and API improvements - Connection strategies, unified config, panic fixes, connection health monitoring
 - **0.4.2** (2025-11-15): Previous stable release
 
-[Unreleased]: https://github.com/pbeets/rithmic-rs/compare/v3.1.0...HEAD
+[Unreleased]: https://github.com/pbeets/rithmic-rs/compare/v3.2.0...HEAD
+[3.2.0]: https://github.com/pbeets/rithmic-rs/compare/v3.1.0...v3.2.0
 [3.1.0]: https://github.com/pbeets/rithmic-rs/compare/v3.0.0...v3.1.0
 [3.0.0]: https://github.com/pbeets/rithmic-rs/compare/v2.0.0...v3.0.0
 [2.0.0]: https://github.com/pbeets/rithmic-rs/compare/v1.0.0...v2.0.0
