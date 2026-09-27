@@ -5,7 +5,7 @@
 //! Optional env vars: SYMBOL, EXCHANGE, START_TIME (unix seconds)
 
 use std::{env, time::SystemTime};
-use tracing::info;
+use tracing::{info, warn};
 
 use rithmic_rs::{
     ConnectStrategy, RithmicConfig, RithmicEnv, RithmicHistoryPlant, rti::messages::RithmicMessage,
@@ -53,12 +53,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .load_ticks_all(symbol, exchange, start_time, end_time)
         .await?;
 
-    info!("Received {} tick responses", ticks.len());
+    // A replay the server ends early still returns `Ok`; the reason is on the
+    // last frame.
+    if let Some(error) = ticks.last().and_then(|r| r.error.as_ref()) {
+        warn!("The server ended the replay early: {error}");
+    }
 
-    for r in ticks.iter().take(5) {
-        if let RithmicMessage::ResponseTickBarReplay(tick) = &r.message {
-            info!("Tick: {:?}", tick);
-        }
+    // Every replay ends with a marker frame that carries no tick, so
+    // `ticks.len()` would count one too many.
+    let ticks: Vec<_> = ticks
+        .iter()
+        .filter_map(|r| match &r.message {
+            RithmicMessage::ResponseTickBarReplay(tick) if !tick.data_bar_ssboe.is_empty() => {
+                Some(tick)
+            }
+            _ => None,
+        })
+        .collect();
+
+    info!("Received {} ticks", ticks.len());
+
+    for tick in ticks.iter().take(5) {
+        info!("Tick: {:?}", tick);
     }
 
     handle.disconnect().await?;

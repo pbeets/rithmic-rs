@@ -9,12 +9,33 @@
 //! Optional env vars: SYMBOL, EXCHANGE, START_TIME (unix seconds)
 
 use std::{env, time::SystemTime};
-use tracing::info;
+use tracing::{info, warn};
 
 use rithmic_rs::{
-    ConnectStrategy, RithmicConfig, RithmicEnv, RithmicHistoryPlant, TimeBarReplayRequest,
-    TimeBarType, rti::messages::RithmicMessage,
+    ConnectStrategy, RithmicConfig, RithmicEnv, RithmicHistoryPlant, RithmicResponse,
+    TimeBarReplayRequest, TimeBarType,
+    rti::{ResponseTimeBarReplay, messages::RithmicMessage},
 };
+
+/// The bars in a reply. Every replay ends with a marker frame that carries no
+/// bar, so counting `responses.len()` is one too many.
+fn bars_only(responses: &[RithmicResponse]) -> Vec<&ResponseTimeBarReplay> {
+    responses
+        .iter()
+        .filter_map(|r| match &r.message {
+            RithmicMessage::ResponseTimeBarReplay(bar) if bar.marker.is_some() => Some(bar),
+            _ => None,
+        })
+        .collect()
+}
+
+/// A replay the server ends early still returns `Ok`; the reason is on the
+/// last frame.
+fn log_early_end(responses: &[RithmicResponse]) {
+    if let Some(error) = responses.last().and_then(|r| r.error.as_ref()) {
+        warn!("The server ended the replay early: {error}");
+    }
+}
 
 fn default_start_time() -> i32 {
     // Note: Rithmic API uses i32 timestamps. This will overflow in 2038.
@@ -64,13 +85,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             end_time,
         )
         .await?;
+    log_early_end(&bars);
+    let bars = bars_only(&bars);
 
     info!("Received {} bars", bars.len());
 
-    for r in bars.iter().take(5) {
-        if let RithmicMessage::ResponseTimeBarReplay(bar) = &r.message {
-            info!("Bar: {:?}", bar);
-        }
+    for bar in bars.iter().take(5) {
+        info!("Bar: {:?}", bar);
     }
 
     // The struct form sends the request exactly as built. Unlike the `_all`
@@ -89,14 +110,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("Loading the first 100 one-minute bars of the same window");
 
     let minute_bars = handle.load_time_bar_replay(request).await?;
+    log_early_end(&minute_bars);
+    let minute_bars = bars_only(&minute_bars);
 
-    // The last response is the replay's end marker, not a bar.
-    info!("Received {} bars", minute_bars.len().saturating_sub(1));
+    info!("Received {} bars", minute_bars.len());
 
-    for r in minute_bars.iter().take(5) {
-        if let RithmicMessage::ResponseTimeBarReplay(bar) = &r.message {
-            info!("Bar: {:?}", bar);
-        }
+    for bar in minute_bars.iter().take(5) {
+        info!("Bar: {:?}", bar);
     }
 
     handle.disconnect().await?;
