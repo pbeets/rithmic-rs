@@ -12,6 +12,7 @@ const ENV: RithmicEnv = RithmicEnv::Demo;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenvy::dotenv().ok();
     tracing_subscriber::fmt().init();
+
     let config = RithmicConfig::from_env(ENV)?;
 
     let ticker_plant = RithmicTickerPlant::connect(&config, ConnectStrategy::Retry).await?;

@@ -25,6 +25,7 @@ const ENV: RithmicEnv = RithmicEnv::Demo;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenvy::dotenv().ok();
     tracing_subscriber::fmt().init();
+
     let config = RithmicConfig::from_env(ENV)?;
     let account = RithmicAccount::from_env(ENV)?;
     let exchange = common::exchange();
@@ -56,15 +57,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // With no route for the exchange, this fails with `NoTradeRoute` and sends nothing.
     let responses = handle.place_order(order).await?;
+
     if let Some(e) = responses.iter().find_map(|r| r.error.as_ref()) {
         warn!("order refused: {e}");
     }
+
     let basket_id = responses.iter().find_map(|r| match &r.message {
         RithmicMessage::ResponseNewOrder(r) => r.basket_id.clone(),
         _ => None,
     });
 
     let deadline = Instant::now() + Duration::from_secs(10);
+
     loop {
         let update = match timeout_at(deadline, handle.subscription_receiver.recv()).await {
             Err(_) => break,
@@ -76,6 +80,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             Ok(Err(RecvError::Closed)) => break,
         };
+
         if update
             .error
             .as_ref()
@@ -91,6 +96,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "route update: {:?} -> {:?}",
                 route.exchange, route.trade_route
             );
+
             handle.record_trade_route(route).await?;
         }
     }
@@ -99,6 +105,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let reply = handle
             .cancel_order(RithmicCancelOrder::new().id(id).build()?)
             .await?;
+
         if let Some(e) = reply.iter().find_map(|r| r.error.as_ref()) {
             warn!("cancel refused: {e}");
         }

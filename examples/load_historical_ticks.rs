@@ -15,6 +15,7 @@ const ENV: RithmicEnv = RithmicEnv::Demo;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenvy::dotenv().ok();
     tracing_subscriber::fmt().init();
+
     let config = RithmicConfig::from_env(ENV)?;
     let exchange = common::exchange();
     let symbol = common::symbol();
@@ -39,12 +40,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         warn!("empty reply");
         return Ok(());
     };
+
     // A replay the server ends early still returns `Ok`; the reason is on the end marker.
     if let Some(e) = &end.error {
         warn!("server ended the replay early: {e}");
     }
 
     info!("Received {} ticks", ticks.len());
+
     for tick in ticks.iter().take(5) {
         info!("Tick: {:?}", tick.message);
     }

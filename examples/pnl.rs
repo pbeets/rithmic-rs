@@ -20,6 +20,7 @@ const ENV: RithmicEnv = RithmicEnv::Demo;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenvy::dotenv().ok();
     tracing_subscriber::fmt().init();
+
     let config = RithmicConfig::from_env(ENV)?;
     let account = RithmicAccount::from_env(ENV)?;
 
@@ -31,21 +32,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("Position snapshot: {:?}", snapshot);
 
     let resp = handle.subscribe_pnl_updates().await?;
+
     if let Some(err) = &resp.error {
         return Err(format!("P&L subscribe rejected: {err}").into());
     }
 
     // An account with no positions and no fills may send nothing, so an empty run is normal.
     let deadline = Instant::now() + Duration::from_secs(30);
+
     loop {
         let update = match timeout_at(deadline, handle.subscription_receiver.recv()).await {
             Err(_) => break,
             Ok(Ok(update)) => update,
+
             // Lagged may have swallowed a ConnectionError; the deadline keeps this loop from hanging.
             Ok(Err(RecvError::Lagged(n))) => {
                 warn!("missed {n} updates");
                 continue;
             }
+
             Ok(Err(RecvError::Closed)) => break,
         };
 
@@ -56,22 +61,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 pnl.open_position_pnl.as_deref().unwrap_or("?"),
                 pnl.net_quantity.unwrap_or(0)
             ),
+
             RithmicMessage::InstrumentPnLPositionUpdate(pnl) => info!(
                 "Instrument: {} day_pnl={:.2} qty={}",
                 pnl.symbol.as_deref().unwrap_or("?"),
                 pnl.day_pnl.unwrap_or(0.0),
                 pnl.open_position_quantity.unwrap_or(0)
             ),
+
             // A rejected heartbeat leaves the connection up; any other timeout ends it.
             RithmicMessage::HeartbeatTimeout
                 if matches!(update.error, Some(RithmicError::RequestRejected(_))) =>
             {
                 warn!("server rejected a heartbeat, connection is fine");
             }
+
             RithmicMessage::ConnectionError | RithmicMessage::HeartbeatTimeout => {
                 error!("connection lost: {:?}", update.error);
                 break;
             }
+
             _ => {}
         }
     }

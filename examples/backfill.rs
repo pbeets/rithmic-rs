@@ -94,6 +94,7 @@ async fn check(
         info!("FAIL  {name}: empty reply after {elapsed:.1}s");
         return None;
     };
+
     let rows = records.len();
     let last = records.iter().rev().find_map(data_time);
 
@@ -157,6 +158,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .start_time_sec(now - 7 * DAY)
         .end_time_sec(now)
         .resume_bars(true);
+
     check(
         "7 days of 1-minute volume profile",
         now,
@@ -168,6 +170,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // The 4 hours up to the last minute bar, so the window has trading in it
     // even on a weekend.
     let tick_end = last_minute.unwrap_or(now);
+
     check(
         "4 hours of ticks",
         tick_end,
@@ -183,6 +186,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Daily bars take their window as YYYYMMDD dates, not Unix seconds.
     let (from, to) = (yyyymmdd(now - 100 * DAY), yyyymmdd(now));
+
     check(
         "100 days of daily bars",
         to,

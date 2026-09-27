@@ -31,6 +31,7 @@ const STABLE_SESSION_THRESHOLD: Duration = Duration::from_secs(30);
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenvy::dotenv().ok();
     tracing_subscriber::fmt().init();
+
     let config = RithmicConfig::from_env(ENV)?;
     let exchange = common::exchange();
     let symbol = common::symbol();
@@ -41,6 +42,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     loop {
         let plant = match RithmicTickerPlant::connect(&config, ConnectStrategy::Retry).await {
             Ok(p) => p,
+
             Err(e) => {
                 error!("Connect failed: {e}");
                 sleep_with_backoff(&mut backoff).await;
@@ -76,11 +78,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     None => info!("Subscribed to {symbol} on {exchange}"),
                 },
+
                 Err(e) if e.is_connection_issue() => {
                     warn!("Subscribe failed (connection lost): {e}");
                     connection_lost = true;
                     break;
                 }
+
                 Err(e) => warn!("Subscribe error for {symbol}/{exchange}: {e}"),
             }
         }
@@ -99,28 +103,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     {
                         warn!("Heartbeat rejected (connection fine): {:?}", update.error);
                     }
+
                     RithmicMessage::HeartbeatTimeout
                     | RithmicMessage::ForcedLogout(_)
                     | RithmicMessage::ConnectionError => {
                         warn!("Session lost ({:?}), reconnecting", update.message);
                         break;
                     }
+
                     RithmicMessage::LastTrade(t) => {
                         received_data = true;
+
                         info!(
                             "Trade: {} @ {}",
                             t.trade_size.unwrap_or(0),
                             t.trade_price.unwrap_or(0.0)
                         );
                     }
+
                     _ => {}
                 },
+
                 // The missed updates may include the ConnectionError, and the channel
                 // stays open while we hold the plant, so reconnect rather than wait.
                 Err(RecvError::Lagged(n)) => {
                     warn!("Missed {n} updates, reconnecting");
                     break;
                 }
+
                 Err(RecvError::Closed) => {
                     warn!("Subscription channel closed, reconnecting");
                     break;

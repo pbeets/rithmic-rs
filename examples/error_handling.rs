@@ -35,6 +35,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = RithmicConfigBuilder::from_env(ENV)?
         .retry_timeout(Duration::from_secs(60))
         .build()?;
+
     let exchange = common::exchange();
 
     let plant = match RithmicTickerPlant::connect(&config, ConnectStrategy::Retry).await {
@@ -45,17 +46,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             return Ok(());
         }
     };
+
     let mut handle = plant.get_handle();
 
     if !login(&handle).await {
         return Ok(());
     }
+
     let symbol = common::front_month(&handle, &exchange).await?;
 
     if !requests(&handle, &symbol, &exchange).await {
         handle.abort();
         return Ok(());
     }
+
     caller_timeout(&handle).await;
     history(&config, &symbol, &exchange).await;
     orders(&config, &symbol, &exchange).await;
@@ -64,6 +68,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Err(e) = handle.disconnect().await {
         warn!("disconnect: {e}");
     }
+
     Ok(())
 }
 
@@ -78,6 +83,7 @@ async fn login(handle: &RithmicTickerPlantHandle) -> bool {
                 err.code.as_deref().unwrap_or("?"),
                 err.message.as_deref().unwrap_or("")
             );
+
             false
         }
         // A second login with a different LoginConfig. Reconnect to change it.
@@ -117,6 +123,7 @@ async fn requests(handle: &RithmicTickerPlantHandle, symbol: &str, exchange: &st
         }
         Err(e) => error!("subscribe: {e}"),
     }
+
     true
 }
 
@@ -142,7 +149,9 @@ async fn history(config: &RithmicConfig, symbol: &str, exchange: &str) {
         Ok(plant) => plant,
         Err(e) => return error!("history connect: {e}"),
     };
+
     let handle = plant.get_handle();
+
     if let Err(e) = handle.login().await {
         return error!("history login: {e}");
     }
@@ -188,6 +197,7 @@ async fn orders(config: &RithmicConfig, symbol: &str, exchange: &str) {
         .transaction_type(OrderSide::Buy)
         .price_type(OrderType::Limit)
         .build();
+
     if let Err(e) = unpriced {
         info!("build: {e}");
     }
@@ -196,7 +206,9 @@ async fn orders(config: &RithmicConfig, symbol: &str, exchange: &str) {
         Ok(plant) => plant,
         Err(e) => return error!("order connect: {e}"),
     };
+
     let handle = plant.get_handle(&account);
+
     if let Err(e) = handle.login().await {
         return error!("order login: {e}");
     }

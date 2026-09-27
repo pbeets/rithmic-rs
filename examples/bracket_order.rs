@@ -25,6 +25,7 @@ const ENV: RithmicEnv = RithmicEnv::Demo;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenvy::dotenv().ok();
     tracing_subscriber::fmt().init();
+
     let config = RithmicConfig::from_env(ENV)?;
     let account = RithmicAccount::from_env(ENV)?;
     let exchange = common::exchange();
@@ -60,15 +61,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build()?;
 
     let responses = handle.place_bracket_order(order).await?;
+
     if let Some(e) = responses.iter().find_map(|r| r.error.as_ref()) {
         warn!("bracket refused: {e}");
     }
+
     let basket_id = responses.iter().find_map(|r| match &r.message {
         RithmicMessage::ResponseBracketOrder(r) => r.basket_id.clone(),
         _ => None,
     });
 
     let deadline = Instant::now() + Duration::from_secs(10);
+
     loop {
         let update = match timeout_at(deadline, handle.subscription_receiver.recv()).await {
             Err(_) => break,
@@ -80,6 +84,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             Ok(Err(RecvError::Closed)) => break,
         };
+
         // A refused heartbeat also carries an error, but the connection is fine.
         if let Some(e) = &update.error {
             warn!("update error: {e}");
@@ -109,6 +114,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let reply = handle
             .cancel_order(RithmicCancelOrder::new().id(id).build()?)
             .await?;
+
         if let Some(e) = reply.iter().find_map(|r| r.error.as_ref()) {
             warn!("cancel refused: {e}");
         }

@@ -27,6 +27,7 @@ const TAG: &str = "example-timeout-1";
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenvy::dotenv().ok();
     tracing_subscriber::fmt().init();
+
     let config = RithmicConfig::from_env(ENV)?;
     let account = RithmicAccount::from_env(ENV)?;
     let exchange = common::exchange();
@@ -35,6 +36,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let order_plant = RithmicOrderPlant::connect(&config, ConnectStrategy::Retry).await?;
     let mut handle = order_plant.get_handle(&account);
     handle.login().await?;
+
     if let Some(e) = handle.subscribe_order_updates().await?.error {
         warn!("order updates refused: {e}");
     }
@@ -47,6 +49,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     Some(e) => warn!("rms info refused: {e}"),
                     None => info!("rms info received"),
                 }
+
                 break;
             }
             Err(_) => warn!("rms info: no reply within 5s (attempt {attempt})"),
@@ -70,9 +73,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let basket_id = match timeout(Duration::from_secs(5), handle.place_order(order)).await {
         Ok(reply) => {
             let responses = reply?;
+
             if let Some(e) = responses.iter().find_map(|r| r.error.as_ref()) {
                 warn!("order refused: {e}");
             }
+
             responses.iter().find_map(|r| match &r.message {
                 RithmicMessage::ResponseNewOrder(r) => r.basket_id.clone(),
                 _ => None,
@@ -89,6 +94,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let reply = handle
                 .cancel_order(RithmicCancelOrder::new().id(id).build()?)
                 .await?;
+
             if let Some(e) = reply.iter().find_map(|r| r.error.as_ref()) {
                 warn!("cancel refused: {e}");
             }
@@ -114,6 +120,7 @@ async fn find_order(
     }
 
     let deadline = Instant::now() + Duration::from_secs(10);
+
     loop {
         let update = match timeout_at(deadline, handle.subscription_receiver.recv()).await {
             Err(_) => return Ok(None),
@@ -125,6 +132,7 @@ async fn find_order(
             }
             Ok(Err(RecvError::Closed)) => return Err(RithmicError::ConnectionClosed),
         };
+
         if let Some(e) = update.error.filter(|e| e.is_connection_issue()) {
             return Err(e);
         }
@@ -135,6 +143,7 @@ async fn find_order(
                     "found it: status={:?} basket_id={:?}",
                     n.status, n.basket_id
                 );
+
                 return Ok(n.basket_id);
             }
         }

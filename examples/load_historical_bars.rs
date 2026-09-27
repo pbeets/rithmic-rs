@@ -22,11 +22,14 @@ fn log_bars(responses: &[RithmicResponse]) {
         warn!("empty reply");
         return;
     };
+
     // A replay the server ends early still returns `Ok`; the reason is on the end marker.
     if let Some(e) = &end.error {
         warn!("server ended the replay early: {e}");
     }
+
     info!("Received {} bars", bars.len());
+
     for bar in bars.iter().take(5) {
         info!("Bar: {:?}", bar.message);
     }
@@ -36,6 +39,7 @@ fn log_bars(responses: &[RithmicResponse]) {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenvy::dotenv().ok();
     tracing_subscriber::fmt().init();
+
     let config = RithmicConfig::from_env(ENV)?;
     let exchange = common::exchange();
     let symbol = common::symbol();
@@ -62,6 +66,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             end_time,
         )
         .await?;
+
     log_bars(&bars);
 
     // The struct form sends the request exactly as built. Unlike the `_all`

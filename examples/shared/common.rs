@@ -28,7 +28,9 @@ pub async fn front_month(
     if let Ok(symbol) = env::var("SYMBOL") {
         return Ok(symbol);
     }
+
     let product = env::var("PRODUCT").unwrap_or_else(|_| "ES".to_string());
+
     let response = handle
         .get_front_month_contract(&product, exchange, false)
         .await?;
@@ -48,16 +50,19 @@ pub fn start_time() -> i32 {
     if let Some(start) = env::var("START_TIME").ok().and_then(|s| s.parse().ok()) {
         return start;
     }
+
     // Rithmic uses i32 timestamps, which overflow in 2038.
     let now = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0);
+
     let mut day = now / DAY - 1;
 
     // 1970-01-01 was a Thursday, so (day + 3) % 7 is 0 on Monday.
     while (day + 3) % 7 >= 5 {
         day -= 1;
     }
+
     i32::try_from(day * DAY).unwrap_or(0)
 }
