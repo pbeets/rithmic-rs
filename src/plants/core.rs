@@ -26,7 +26,8 @@ use crate::{
     config::{LoginConfig, RithmicConfig},
     error::RithmicError,
     ping_manager::PingManager,
-    request_handler::{PendingReplay, Resume, RithmicRequest, RithmicRequestHandler},
+    plants::tag::{Tag, answer_caller},
+    request_handler::{PendingReplay, Reply, Resume, RithmicRequestHandler, Routed},
     rti::{messages::RithmicMessage, request_login::SysInfraType},
     ws::{
         PING_TIMEOUT_SECS, SEND_TIMEOUT_SECS, WebSocketSendError, connect_with_strategy,
@@ -74,7 +75,7 @@ pub(crate) struct PlantCore<S = WsSink> {
     pub(crate) logged_in: bool,
     pub(crate) ping_interval: Interval,
     pub(crate) ping_manager: PingManager,
-    pub(crate) request_handler: RithmicRequestHandler,
+    pub(crate) request_handler: RithmicRequestHandler<Tag>,
     pub(crate) rithmic_reader: WsReader,
     pub(crate) rithmic_receiver_api: RithmicReceiverApi,
     pub(crate) rithmic_sender: S,
@@ -148,7 +149,21 @@ where
 
     pub(crate) fn fail_connection_and_drain(&mut self, request_id: &str, error: RithmicError) {
         self.emit_connection_health_event(request_id, error);
-        self.request_handler.drain_and_drop();
+        self.drain_requests();
+    }
+
+    /// Fail every pending request with [`RithmicError::ConnectionClosed`].
+    pub(crate) fn drain_requests(&mut self) {
+        for tag in self.request_handler.drain_and_drop() {
+            self.dispatch(tag, Err(RithmicError::ConnectionClosed));
+        }
+    }
+
+    /// Act on a completed reply according to what its request was for.
+    fn dispatch(&mut self, tag: Tag, reply: Reply) {
+        match tag {
+            Tag::Caller(responder) => answer_caller(responder, reply),
+        }
     }
 
     pub(crate) async fn send_or_fail(&mut self, msg: Message, request_id: &str) {
@@ -169,8 +184,12 @@ where
                 // promptly through the reader (e.g. Error::ConnectionClosed),
                 // which drains remaining requests and emits the connection-health
                 // event from a path that can stop the actor loop.
-                self.request_handler
-                    .fail_request(request_id, RithmicError::SendFailed);
+                if let Some((tag, reply)) = self
+                    .request_handler
+                    .fail_request(request_id, RithmicError::SendFailed)
+                {
+                    self.dispatch(tag, reply);
+                }
             }
             Err(WebSocketSendError::Timeout) => {
                 error!(
@@ -369,7 +388,7 @@ where
                 let _ = self.subscription_sender.send(synthetic);
             }
 
-            let _ = self.request_handler.handle_response(response);
+            self.route_reply(response).await;
 
             return;
         }
@@ -386,10 +405,21 @@ where
                     self.rithmic_receiver_api.source, e
                 );
             }
-        } else if let Some(resume) = self.request_handler.handle_response(response) {
-            // This write pauses the loop, as answering a ping does. It is
-            // normally instant and gives up after SEND_TIMEOUT_SECS.
-            self.resume_truncated_replay(resume).await;
+        } else {
+            self.route_reply(response).await;
+        }
+    }
+
+    /// Match a reply to its request, and dispatch it once it is complete.
+    async fn route_reply(&mut self, response: RithmicResponse) {
+        match self.request_handler.handle_response(response) {
+            Some(Routed::Reply(tag, reply)) => self.dispatch(tag, reply),
+            Some(Routed::Resume(resume)) => {
+                // This write pauses the loop, as answering a ping does. It is
+                // normally instant and gives up after SEND_TIMEOUT_SECS.
+                self.resume_truncated_replay(resume).await;
+            }
+            None => {}
         }
     }
 
@@ -436,7 +466,7 @@ where
                 );
 
                 if self.close_requested {
-                    self.request_handler.drain_and_drop();
+                    self.drain_requests();
                 } else {
                     self.fail_connection_and_drain("", RithmicError::ConnectionClosed);
                 }
@@ -561,7 +591,7 @@ where
             self.rithmic_receiver_api.source
         );
         // Drain first: the loop is about to stop, so nothing else will resolve these.
-        self.request_handler.drain_and_drop();
+        self.drain_requests();
         self.emit_connection_health_event("", RithmicError::ConnectionClosed);
         self.close_requested = true;
 
@@ -589,7 +619,7 @@ where
                 "{}: ping timed out while waiting for server close echo — terminating",
                 self.rithmic_receiver_api.source
             );
-            self.request_handler.drain_and_drop();
+            self.drain_requests();
         } else {
             self.fail_connection_and_drain(
                 "websocket_ping_timeout",
@@ -619,10 +649,8 @@ where
         id: String,
         responder: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
     ) {
-        self.request_handler.register_request(RithmicRequest {
-            request_id: id.clone(),
-            responder,
-        });
+        self.request_handler
+            .register_request(id.clone(), Tag::Caller(responder));
 
         self.send_or_fail(Message::Binary(buf.into()), &id).await;
     }
@@ -644,7 +672,7 @@ where
         self.close_requested = true;
         // Drain pending requests immediately so callers are not left waiting for
         // a server close-echo that may never arrive (e.g. on network drop).
-        self.request_handler.drain_and_drop();
+        self.drain_requests();
         self.send_close_best_effort().await;
     }
 
@@ -712,7 +740,7 @@ mod tests {
         config::{RithmicConfig, RithmicEnv},
         error::RithmicError,
         ping_manager::PingManager,
-        request_handler::{RithmicRequest, RithmicRequestHandler},
+        request_handler::RithmicRequestHandler,
         rti::messages::RithmicMessage,
         ws::{PING_TIMEOUT_SECS, get_heartbeat_interval, get_ping_interval},
     };
@@ -914,10 +942,8 @@ mod tests {
         id: &str,
     ) -> oneshot::Receiver<Result<Vec<RithmicResponse>, RithmicError>> {
         let (tx, rx) = oneshot::channel();
-        core.request_handler.register_request(RithmicRequest {
-            request_id: id.to_string(),
-            responder: tx,
-        });
+        core.request_handler
+            .register_request(id.to_string(), Tag::Caller(tx));
         rx
     }
 

@@ -24,13 +24,18 @@ pub(crate) use replay::PendingReplay;
 )]
 pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
-#[derive(Debug)]
-pub(crate) struct RithmicRequest {
-    pub(crate) request_id: String,
-    pub(crate) responder: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
-}
+/// A completed reply: every frame of it, or why it failed.
+pub(crate) type Reply = Result<Vec<RithmicResponse>, RithmicError>;
 
-type Responder = oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>;
+/// The channel a handle method waits on for its reply.
+pub(crate) type Responder = oneshot::Sender<Reply>;
+
+/// What the handler keeps for a request until its reply completes.
+pub(crate) trait RequestTag {
+    /// Whether nothing is waiting for the reply any more, so its parts need
+    /// not be kept.
+    fn abandoned(&self) -> bool;
+}
 
 /// Tells the plant to send `RequestResumeBars` with `key`, so the server
 /// continues the reply for `request_id`.
@@ -42,14 +47,26 @@ pub(crate) struct Resume {
     pub(crate) key: String,
 }
 
-/// Matches Rithmic responses to the callers waiting on them.
+/// What the plant must do with a response the handler has routed.
+#[derive(Debug)]
+pub(crate) enum Routed<T> {
+    /// A reply completed: answer whatever `T` stands for.
+    Reply(T, Reply),
+    /// The server cut a replay short: ask it to continue.
+    Resume(Resume),
+}
+
+/// Matches Rithmic responses to the requests waiting on them.
 ///
 /// A registered request is resolved by a response carrying its id, by
 /// [`Self::fail_request`], or by [`Self::drain_and_drop`] on disconnect. It is
 /// never failed on a clock: the caller owns its own deadline.
-#[derive(Debug, Default)]
-pub(crate) struct RithmicRequestHandler {
-    handle_map: HashMap<String, Responder>,
+///
+/// The handler keeps a tag `T` for each request and hands it back with the
+/// completed reply, so the plant decides who gets it.
+#[derive(Debug)]
+pub(crate) struct RithmicRequestHandler<T> {
+    handle_map: HashMap<String, T>,
     response_vec_map: HashMap<String, Vec<RithmicResponse>>,
 
     /// History replays, which the server can cut short and continue on the
@@ -68,16 +85,21 @@ pub(crate) struct RithmicRequestHandler {
     resumes: HashMap<String, String>,
 }
 
-impl RithmicRequestHandler {
+impl<T: RequestTag> RithmicRequestHandler<T> {
     pub(crate) fn new() -> Self {
-        Self::default()
+        Self {
+            handle_map: HashMap::new(),
+            response_vec_map: HashMap::new(),
+            replay_map: HashMap::new(),
+            late_continuations: HashMap::new(),
+            resumes: HashMap::new(),
+        }
     }
 
     /// Register a request. It waits until a response carries its id, until it
     /// is failed, or until the connection drops.
-    pub(crate) fn register_request(&mut self, request: RithmicRequest) {
-        self.handle_map
-            .insert(request.request_id, request.responder);
+    pub(crate) fn register_request(&mut self, request_id: String, tag: T) {
+        self.handle_map.insert(request_id, tag);
     }
 
     /// Record that `resume_id` is the `RequestResumeBars` sent to continue
@@ -86,64 +108,45 @@ impl RithmicRequestHandler {
         self.resumes.insert(resume_id, request_id);
     }
 
-    /// Hand the reply to its caller, or log one line if it stopped waiting.
-    fn send_to_responder(
-        &self,
-        responder: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
-        responses: Vec<RithmicResponse>,
-    ) {
-        if let Err(unsent) = responder.send(Ok(responses)) {
-            let frames = unsent.as_ref().map(Vec::len).unwrap_or(0);
-            let last = unsent.as_ref().ok().and_then(|frames| frames.last());
-            let request_id = last.map(|frame| frame.request_id.as_str()).unwrap_or("");
-            let rp_code = last.and_then(RithmicResponse::rp_code).unwrap_or(&[]);
-
-            info!(
-                "request_id {}: the caller stopped waiting before the reply arrived; {} frames \
-                 dropped, final rp_code {:?}",
-                request_id, frames, rp_code
-            );
-        }
-    }
-
-    /// Remove a pending request and send an error through its oneshot channel.
+    /// Remove a pending request and fail it with `error`.
     ///
     /// Also removes any partially-accumulated multi-part responses for the same
     /// request ID so that `response_vec_map` does not retain stale data.
     ///
-    /// Returns `true` if the request was found and the error was sent.
-    pub(crate) fn fail_request(&mut self, request_id: &str, error: RithmicError) -> bool {
+    /// A replay is failed here. Any other request is handed back with its
+    /// failed reply for the plant to answer. Returns `None` for a replay or an
+    /// unknown id.
+    pub(crate) fn fail_request(
+        &mut self,
+        request_id: &str,
+        error: RithmicError,
+    ) -> Option<(T, Reply)> {
         if self.fail_replay(request_id, error.clone()) {
-            return true;
+            return None;
         }
 
         self.response_vec_map.remove(request_id);
 
-        if let Some(responder) = self.handle_map.remove(request_id) {
-            let _ = responder.send(Err(error));
-            true
-        } else {
-            false
-        }
+        self.handle_map
+            .remove(request_id)
+            .map(|tag| (tag, Err(error)))
     }
 
-    /// Route one response. Returns the resume the plant must send when the
-    /// server cut a replay short; `None` otherwise.
-    pub(crate) fn handle_response(&mut self, response: RithmicResponse) -> Option<Resume> {
+    /// Route one response. Returns the completed reply for the plant to
+    /// answer, or the resume it must send when the server cut a replay short;
+    /// `None` otherwise.
+    pub(crate) fn handle_response(&mut self, response: RithmicResponse) -> Option<Routed<T>> {
         self.release_abandoned_replays();
 
         if self.replay_map.contains_key(&response.request_id) {
-            return self.handle_replay_response(response);
+            return self.handle_replay_response(response).map(Routed::Resume);
         }
 
         match response.message {
-            RithmicMessage::ResponseHeartbeat(_) => {
-                if let Some(responder) = self.handle_map.remove(&response.request_id) {
-                    self.send_to_responder(responder, vec![response]);
-                }
-
-                None
-            }
+            RithmicMessage::ResponseHeartbeat(_) => self
+                .handle_map
+                .remove(&response.request_id)
+                .map(|tag| Routed::Reply(tag, Ok(vec![response]))),
 
             RithmicMessage::ResponseResumeBars(_)
                 if self.resumes.contains_key(&response.request_id) =>
@@ -153,11 +156,7 @@ impl RithmicRequestHandler {
                 None
             }
 
-            _ if !response.multi_response => {
-                self.resolve_single_frame(response);
-
-                None
-            }
+            _ if !response.multi_response => self.resolve_single_frame(response),
 
             _ if response.has_more => {
                 self.collect_part(response);
@@ -165,22 +164,22 @@ impl RithmicRequestHandler {
                 None
             }
 
-            _ => {
-                self.resolve_multi_part(response);
-
-                None
-            }
+            _ => self.resolve_multi_part(response),
         }
     }
 
     /// A reply that arrives as a single frame.
-    fn resolve_single_frame(&mut self, response: RithmicResponse) {
+    fn resolve_single_frame(&mut self, response: RithmicResponse) -> Option<Routed<T>> {
         // A decode failure can end a multi-part reply early; drop its parts.
         self.response_vec_map.remove(&response.request_id);
 
         match self.handle_map.remove(&response.request_id) {
-            Some(responder) => self.send_to_responder(responder, vec![response]),
-            None => self.report_unmatched_terminal(&response),
+            Some(tag) => Some(Routed::Reply(tag, Ok(vec![response]))),
+            None => {
+                self.report_unmatched_terminal(&response);
+
+                None
+            }
         }
     }
 
@@ -188,7 +187,7 @@ impl RithmicRequestHandler {
     fn collect_part(&mut self, response: RithmicResponse) {
         // Keep parts only while the caller is waiting; otherwise count them.
         match self.handle_map.get(&response.request_id) {
-            Some(responder) if !responder.is_closed() => {
+            Some(tag) if !tag.abandoned() => {
                 self.response_vec_map
                     .entry(response.request_id.clone())
                     .or_default()
@@ -204,12 +203,11 @@ impl RithmicRequestHandler {
         }
     }
 
-    /// The last frame of a multi-part reply. Hands the collected parts to the
-    /// caller.
-    fn resolve_multi_part(&mut self, response: RithmicResponse) {
-        let Some(responder) = self.handle_map.remove(&response.request_id) else {
+    /// The last frame of a multi-part reply. Hands back the collected parts.
+    fn resolve_multi_part(&mut self, response: RithmicResponse) -> Option<Routed<T>> {
+        let Some(tag) = self.handle_map.remove(&response.request_id) else {
             self.report_unmatched_terminal(&response);
-            return;
+            return None;
         };
 
         let mut reply = self
@@ -218,7 +216,7 @@ impl RithmicRequestHandler {
             .unwrap_or_default();
         reply.push(response);
 
-        self.send_to_responder(responder, reply);
+        Some(Routed::Reply(tag, Ok(reply)))
     }
 
     /// Handle the answer to a `RequestResumeBars`. A refusal fails the replay,
@@ -336,21 +334,38 @@ impl RithmicRequestHandler {
         }
     }
 
-    /// Send [`RithmicError::ConnectionClosed`] to all pending request responders, then clear
-    /// internal state.
+    /// Fail every replay with [`RithmicError::ConnectionClosed`], clear
+    /// internal state, and hand back the tag of every other pending request
+    /// for the plant to fail the same way.
     ///
     /// Call this during an unclean shutdown (e.g., abort) to unblock any tasks that are
     /// waiting for a response that will never arrive.
-    pub(crate) fn drain_and_drop(&mut self) {
+    pub(crate) fn drain_and_drop(&mut self) -> Vec<T> {
         self.drain_replays();
-
-        for (_, responder) in self.handle_map.drain() {
-            let _ = responder.send(Err(RithmicError::ConnectionClosed));
-        }
 
         self.response_vec_map.clear();
         self.late_continuations.clear();
         self.resumes.clear();
+
+        self.handle_map.drain().map(|(_, tag)| tag).collect()
+    }
+}
+
+#[cfg(test)]
+impl RithmicRequestHandler<crate::plants::tag::Tag> {
+    /// Route one response and answer its caller, as the plant does. Returns
+    /// the resume the plant would send.
+    pub(crate) fn route(&mut self, response: RithmicResponse) -> Option<Resume> {
+        use crate::plants::tag::{Tag, answer_caller};
+
+        match self.handle_response(response)? {
+            Routed::Reply(Tag::Caller(responder), reply) => {
+                answer_caller(responder, reply);
+
+                None
+            }
+            Routed::Resume(resume) => Some(resume),
+        }
     }
 }
 
@@ -423,6 +438,8 @@ pub(crate) mod log_capture {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use crate::plants::tag::{Tag, answer_caller};
 
     use crate::rti::{
         ResponseHeartbeat, ResponseLogin, ResponseReferenceData, ResponseResumeBars,
@@ -506,15 +523,12 @@ mod tests {
 
     #[test]
     fn single_response_delivered_to_responder() {
-        let mut handler = RithmicRequestHandler::new();
+        let mut handler = RithmicRequestHandler::<Tag>::new();
         let (tx, mut rx) = oneshot::channel();
 
-        handler.register_request(RithmicRequest {
-            request_id: "1".to_string(),
-            responder: tx,
-        });
+        handler.register_request("1".to_string(), Tag::Caller(tx));
 
-        handler.handle_response(make_response("1", login_message()));
+        handler.route(make_response("1", login_message()));
 
         let result = rx.try_recv().unwrap().unwrap();
         assert_eq!(result.len(), 1);
@@ -523,19 +537,16 @@ mod tests {
 
     #[test]
     fn single_response_removes_request_from_handler() {
-        let mut handler = RithmicRequestHandler::new();
+        let mut handler = RithmicRequestHandler::<Tag>::new();
         let (tx, mut rx) = oneshot::channel();
 
-        handler.register_request(RithmicRequest {
-            request_id: "1".to_string(),
-            responder: tx,
-        });
+        handler.register_request("1".to_string(), Tag::Caller(tx));
 
-        handler.handle_response(make_response("1", login_message()));
+        handler.route(make_response("1", login_message()));
         let _ = rx.try_recv().unwrap();
 
         // A second response for the same ID should not panic (just logs error)
-        handler.handle_response(make_response("1", login_message()));
+        handler.route(make_response("1", login_message()));
     }
 
     // =========================================================================
@@ -544,27 +555,24 @@ mod tests {
 
     #[test]
     fn multi_response_collects_all_parts() {
-        let mut handler = RithmicRequestHandler::new();
+        let mut handler = RithmicRequestHandler::<Tag>::new();
         let (tx, mut rx) = oneshot::channel();
 
-        handler.register_request(RithmicRequest {
-            request_id: "2".to_string(),
-            responder: tx,
-        });
+        handler.register_request("2".to_string(), Tag::Caller(tx));
 
         // Two intermediate responses with has_more = true
         for _ in 0..2 {
             let mut resp = make_response("2", ref_data_message());
             resp.multi_response = true;
             resp.has_more = true;
-            handler.handle_response(resp);
+            handler.route(resp);
         }
 
         // Final response with has_more = false
         let mut final_resp = make_response("2", ref_data_message());
         final_resp.multi_response = true;
         final_resp.has_more = false;
-        handler.handle_response(final_resp);
+        handler.route(final_resp);
 
         let result = rx.try_recv().unwrap().unwrap();
         assert_eq!(result.len(), 3);
@@ -572,19 +580,16 @@ mod tests {
 
     #[test]
     fn multi_response_single_message_no_has_more() {
-        let mut handler = RithmicRequestHandler::new();
+        let mut handler = RithmicRequestHandler::<Tag>::new();
         let (tx, mut rx) = oneshot::channel();
 
-        handler.register_request(RithmicRequest {
-            request_id: "3".to_string(),
-            responder: tx,
-        });
+        handler.register_request("3".to_string(), Tag::Caller(tx));
 
         // multi_response = true but has_more = false (single-item multi-response)
         let mut resp = make_response("3", ref_data_message());
         resp.multi_response = true;
         resp.has_more = false;
-        handler.handle_response(resp);
+        handler.route(resp);
 
         let result = rx.try_recv().unwrap().unwrap();
         assert_eq!(result.len(), 1);
@@ -596,15 +601,12 @@ mod tests {
 
     #[test]
     fn heartbeat_delivered_when_responder_registered() {
-        let mut handler = RithmicRequestHandler::new();
+        let mut handler = RithmicRequestHandler::<Tag>::new();
         let (tx, mut rx) = oneshot::channel();
 
-        handler.register_request(RithmicRequest {
-            request_id: "hb".to_string(),
-            responder: tx,
-        });
+        handler.register_request("hb".to_string(), Tag::Caller(tx));
 
-        handler.handle_response(make_response("hb", heartbeat_message()));
+        handler.route(make_response("hb", heartbeat_message()));
 
         let result = rx.try_recv().unwrap().unwrap();
         assert_eq!(result.len(), 1);
@@ -612,9 +614,9 @@ mod tests {
 
     #[test]
     fn heartbeat_without_responder_does_not_panic() {
-        let mut handler = RithmicRequestHandler::new();
+        let mut handler = RithmicRequestHandler::<Tag>::new();
         // No responder registered — should silently ignore
-        handler.handle_response(make_response("hb", heartbeat_message()));
+        handler.route(make_response("hb", heartbeat_message()));
     }
 
     // =========================================================================
@@ -622,25 +624,29 @@ mod tests {
     // =========================================================================
 
     #[test]
-    fn fail_request_sends_error_and_returns_true() {
-        let mut handler = RithmicRequestHandler::new();
+    fn fail_request_hands_back_the_caller_with_the_error() {
+        let mut handler = RithmicRequestHandler::<Tag>::new();
         let (tx, mut rx) = oneshot::channel();
 
-        handler.register_request(RithmicRequest {
-            request_id: "fail".to_string(),
-            responder: tx,
-        });
+        handler.register_request("fail".to_string(), Tag::Caller(tx));
 
-        assert!(handler.fail_request("fail", RithmicError::SendFailed));
+        let (Tag::Caller(responder), reply) = handler
+            .fail_request("fail", RithmicError::SendFailed)
+            .expect("the request is pending");
+        answer_caller(responder, reply);
 
         let result = rx.try_recv().unwrap();
         assert!(result.is_err());
     }
 
     #[test]
-    fn fail_request_returns_false_for_unknown_id() {
-        let mut handler = RithmicRequestHandler::new();
-        assert!(!handler.fail_request("unknown", RithmicError::SendFailed));
+    fn fail_request_returns_none_for_unknown_id() {
+        let mut handler = RithmicRequestHandler::<Tag>::new();
+        assert!(
+            handler
+                .fail_request("unknown", RithmicError::SendFailed)
+                .is_none()
+        );
     }
 
     // =========================================================================
@@ -648,22 +654,18 @@ mod tests {
     // =========================================================================
 
     #[test]
-    fn drain_and_drop_sends_connection_closed_to_all_pending() {
-        let mut handler = RithmicRequestHandler::new();
+    fn drain_and_drop_hands_back_every_pending_request() {
+        let mut handler = RithmicRequestHandler::<Tag>::new();
         let (tx1, rx1) = oneshot::channel();
         let (tx2, rx2) = oneshot::channel();
 
-        handler.register_request(RithmicRequest {
-            request_id: "a".to_string(),
-            responder: tx1,
-        });
+        handler.register_request("a".to_string(), Tag::Caller(tx1));
 
-        handler.register_request(RithmicRequest {
-            request_id: "b".to_string(),
-            responder: tx2,
-        });
+        handler.register_request("b".to_string(), Tag::Caller(tx2));
 
-        handler.drain_and_drop();
+        for Tag::Caller(responder) in handler.drain_and_drop() {
+            answer_caller(responder, Err(RithmicError::ConnectionClosed));
+        }
 
         for mut rx in [rx1, rx2] {
             let err = rx.try_recv().unwrap().unwrap_err();
@@ -673,19 +675,16 @@ mod tests {
 
     #[test]
     fn drain_and_drop_clears_partial_multi_responses() {
-        let mut handler = RithmicRequestHandler::new();
+        let mut handler = RithmicRequestHandler::<Tag>::new();
         let (tx, _rx) = oneshot::channel();
 
-        handler.register_request(RithmicRequest {
-            request_id: "m".to_string(),
-            responder: tx,
-        });
+        handler.register_request("m".to_string(), Tag::Caller(tx));
 
         // Accumulate a partial multi-response
         let mut resp = make_response("m", ref_data_message());
         resp.multi_response = true;
         resp.has_more = true;
-        handler.handle_response(resp);
+        handler.route(resp);
 
         handler.drain_and_drop();
 
@@ -694,17 +693,14 @@ mod tests {
         // After drain, a new request with the same ID should work cleanly.
         let (tx2, mut rx2) = oneshot::channel();
 
-        handler.register_request(RithmicRequest {
-            request_id: "m".to_string(),
-            responder: tx2,
-        });
+        handler.register_request("m".to_string(), Tag::Caller(tx2));
 
         // Probe with a terminal multi-part response: only that branch merges
         // `response_vec_map`, so only it can observe a leftover part.
         let mut probe = make_response("m", ref_data_message());
         probe.multi_response = true;
         probe.has_more = false;
-        handler.handle_response(probe);
+        handler.route(probe);
 
         let result = rx2.try_recv().unwrap().unwrap();
         assert_eq!(
@@ -719,28 +715,25 @@ mod tests {
     // =========================================================================
 
     fn register(
-        handler: &mut RithmicRequestHandler,
+        handler: &mut RithmicRequestHandler<Tag>,
         id: &str,
     ) -> oneshot::Receiver<Result<Vec<RithmicResponse>, RithmicError>> {
         let (tx, rx) = oneshot::channel();
 
-        handler.register_request(RithmicRequest {
-            request_id: id.to_string(),
-            responder: tx,
-        });
+        handler.register_request(id.to_string(), Tag::Caller(tx));
 
         rx
     }
 
     #[test]
     fn a_failed_request_clears_its_partial_multi_response() {
-        let mut handler = RithmicRequestHandler::new();
+        let mut handler = RithmicRequestHandler::<Tag>::new();
         let rx = register(&mut handler, "m");
 
         let mut part = make_response("m", ref_data_message());
         part.multi_response = true;
         part.has_more = true;
-        handler.handle_response(part);
+        handler.route(part);
 
         handler.fail_request("m", RithmicError::ConnectionClosed);
         drop(rx);
@@ -754,20 +747,20 @@ mod tests {
         let mut probe = make_response("m", ref_data_message());
         probe.multi_response = true;
         probe.has_more = false;
-        handler.handle_response(probe);
+        handler.route(probe);
 
         assert_eq!(rx2.try_recv().unwrap().unwrap().len(), 1);
     }
 
     #[test]
     fn parts_arriving_after_a_failure_do_not_re_create_the_partial_buffer() {
-        let mut handler = RithmicRequestHandler::new();
+        let mut handler = RithmicRequestHandler::<Tag>::new();
         let rx = register(&mut handler, "42");
 
         let mut first = make_response("42", ref_data_message());
         first.multi_response = true;
         first.has_more = true;
-        handler.handle_response(first);
+        handler.route(first);
 
         handler.fail_request("42", RithmicError::ConnectionClosed);
         drop(rx);
@@ -777,7 +770,7 @@ mod tests {
             let mut late = make_response("42", ref_data_message());
             late.multi_response = true;
             late.has_more = true;
-            handler.handle_response(late);
+            handler.route(late);
         }
 
         assert!(
@@ -791,7 +784,7 @@ mod tests {
         );
 
         let (_, logged) = log_capture::capture(|| {
-            handler.handle_response(terminal("42", ref_data_message()));
+            handler.route(terminal("42", ref_data_message()));
         });
 
         assert!(handler.response_vec_map.is_empty());
@@ -805,13 +798,13 @@ mod tests {
 
     #[test]
     fn parts_for_a_never_registered_id_do_not_accumulate() {
-        let mut handler = RithmicRequestHandler::new();
+        let mut handler = RithmicRequestHandler::<Tag>::new();
 
         for _ in 0..3 {
             let mut part = make_response("ghost", ref_data_message());
             part.multi_response = true;
             part.has_more = true;
-            handler.handle_response(part);
+            handler.route(part);
         }
 
         assert!(
@@ -822,10 +815,10 @@ mod tests {
 
     #[test]
     fn a_part_whose_request_is_gone_is_counted_without_a_warning() {
-        let mut handler = RithmicRequestHandler::new();
+        let mut handler = RithmicRequestHandler::<Tag>::new();
 
         let (_, logged) = log_capture::capture(|| {
-            handler.handle_response(part("gone", ref_data_message()));
+            handler.route(part("gone", ref_data_message()));
         });
 
         assert_eq!(logged.lines().count(), 1, "{logged}");
@@ -848,16 +841,16 @@ mod tests {
 
     #[test]
     fn late_parts_for_a_resolved_id_are_counted_and_produce_no_warning() {
-        let mut handler = RithmicRequestHandler::new();
+        let mut handler = RithmicRequestHandler::<Tag>::new();
         let mut rx = register(&mut handler, "208");
 
         // The end marker resolves the request and removes the responder.
-        handler.handle_response(terminal("208", volume_profile_message(&["0"])));
+        handler.route(terminal("208", volume_profile_message(&["0"])));
         assert_eq!(rx.try_recv().unwrap().unwrap().len(), 1);
 
         let (_, logged) = log_capture::capture(|| {
             for _ in 0..170 {
-                handler.handle_response(part("208", volume_profile_message(&[])));
+                handler.route(part("208", volume_profile_message(&[])));
             }
         });
 
@@ -880,18 +873,18 @@ mod tests {
 
     #[test]
     fn a_late_terminal_reports_the_continuation_once_at_info_and_clears_it() {
-        let mut handler = RithmicRequestHandler::new();
+        let mut handler = RithmicRequestHandler::<Tag>::new();
         let mut rx = register(&mut handler, "208");
 
-        handler.handle_response(terminal("208", volume_profile_message(&["0"])));
+        handler.route(terminal("208", volume_profile_message(&["0"])));
         let _ = rx.try_recv();
 
         for _ in 0..170 {
-            handler.handle_response(part("208", volume_profile_message(&[])));
+            handler.route(part("208", volume_profile_message(&[])));
         }
 
         let (_, logged) = log_capture::capture(|| {
-            handler.handle_response(terminal(
+            handler.route(terminal(
                 "208",
                 volume_profile_message(&["12", "output inhibited"]),
             ));
@@ -912,7 +905,7 @@ mod tests {
         // With the entry gone, a further terminal for the same id is once again
         // the genuinely unexpected case.
         let (_, second) = log_capture::capture(|| {
-            handler.handle_response(terminal(
+            handler.route(terminal(
                 "208",
                 volume_profile_message(&["12", "output inhibited"]),
             ));
@@ -924,10 +917,10 @@ mod tests {
 
     #[test]
     fn a_terminal_that_was_never_a_continuation_is_named_not_dumped() {
-        let mut handler = RithmicRequestHandler::new();
+        let mut handler = RithmicRequestHandler::<Tag>::new();
 
         let (_, logged) = log_capture::capture(|| {
-            handler.handle_response(make_response("ghost", login_message()));
+            handler.route(make_response("ghost", login_message()));
         });
 
         assert_eq!(logged.lines().count(), 1, "{logged}");
@@ -945,9 +938,9 @@ mod tests {
 
     #[test]
     fn drain_and_drop_clears_late_continuations() {
-        let mut handler = RithmicRequestHandler::new();
+        let mut handler = RithmicRequestHandler::<Tag>::new();
 
-        handler.handle_response(part("208", volume_profile_message(&[])));
+        handler.route(part("208", volume_profile_message(&[])));
         assert!(handler.late_continuations.contains_key("208"));
 
         handler.drain_and_drop();
@@ -961,9 +954,9 @@ mod tests {
 
     #[test]
     fn response_for_unregistered_id_does_not_panic() {
-        let mut handler = RithmicRequestHandler::new();
+        let mut handler = RithmicRequestHandler::<Tag>::new();
 
-        handler.handle_response(make_response("ghost", login_message()));
+        handler.route(make_response("ghost", login_message()));
     }
 
     /// The caller gave up mid-reply — its own deadline elapsed and it dropped
@@ -972,14 +965,14 @@ mod tests {
     /// continuation like any other.
     #[test]
     fn a_caller_that_stopped_waiting_mid_reply_frees_the_buffer_and_counts_the_rest_as_late() {
-        let mut handler = RithmicRequestHandler::new();
+        let mut handler = RithmicRequestHandler::<Tag>::new();
         let rx = register(&mut handler, "9");
-        handler.handle_response(part("9", volume_profile_message(&[])));
-        handler.handle_response(part("9", volume_profile_message(&[])));
+        handler.route(part("9", volume_profile_message(&[])));
+        handler.route(part("9", volume_profile_message(&[])));
         drop(rx);
 
         let (_, logged) = log_capture::capture(|| {
-            handler.handle_response(part("9", volume_profile_message(&[])));
+            handler.route(part("9", volume_profile_message(&[])));
         });
 
         assert!(
@@ -1000,7 +993,7 @@ mod tests {
         assert!(!logged.contains("RithmicResponse {"), "{logged}");
 
         let (_, ended) = log_capture::capture(|| {
-            handler.handle_response(terminal(
+            handler.route(terminal(
                 "9",
                 volume_profile_message(&["12", "output inhibited"]),
             ));
@@ -1015,14 +1008,14 @@ mod tests {
     /// count and the venue's code — never as a dump of every frame.
     #[test]
     fn a_reply_for_a_caller_that_stopped_waiting_is_one_line_not_a_dump() {
-        let mut handler = RithmicRequestHandler::new();
+        let mut handler = RithmicRequestHandler::<Tag>::new();
         let rx = register(&mut handler, "9");
-        handler.handle_response(part("9", volume_profile_message(&[])));
-        handler.handle_response(part("9", volume_profile_message(&[])));
+        handler.route(part("9", volume_profile_message(&[])));
+        handler.route(part("9", volume_profile_message(&[])));
         drop(rx);
 
         let (_, logged) = log_capture::capture(|| {
-            handler.handle_response(terminal("9", volume_profile_message(&["0"])));
+            handler.route(terminal("9", volume_profile_message(&["0"])));
         });
 
         assert!(handler.handle_map.is_empty() && handler.response_vec_map.is_empty());
@@ -1040,38 +1033,32 @@ mod tests {
 
     #[test]
     fn dropped_receiver_does_not_panic() {
-        let mut handler = RithmicRequestHandler::new();
+        let mut handler = RithmicRequestHandler::<Tag>::new();
         let (tx, rx) = oneshot::channel();
 
-        handler.register_request(RithmicRequest {
-            request_id: "drop".to_string(),
-            responder: tx,
-        });
+        handler.register_request("drop".to_string(), Tag::Caller(tx));
 
         drop(rx);
         // Sending to a dropped receiver should not panic (just logs error)
-        handler.handle_response(make_response("drop", login_message()));
+        handler.route(make_response("drop", login_message()));
     }
 
     #[test]
     fn single_response_clears_partial_multi_responses_for_the_same_id() {
         // Mirrors a decode failure landing mid multi-part response.
-        let mut handler = RithmicRequestHandler::new();
+        let mut handler = RithmicRequestHandler::<Tag>::new();
         let (tx, mut rx) = oneshot::channel();
 
-        handler.register_request(RithmicRequest {
-            request_id: "m".to_string(),
-            responder: tx,
-        });
+        handler.register_request("m".to_string(), Tag::Caller(tx));
 
         let mut partial = make_response("m", ref_data_message());
         partial.multi_response = true;
         partial.has_more = true;
-        handler.handle_response(partial);
+        handler.route(partial);
 
         let mut failure = make_response("m", RithmicMessage::Unknown);
         failure.error = Some(crate::error::RithmicError::ProtocolError("bad".to_string()));
-        handler.handle_response(failure);
+        handler.route(failure);
 
         let result = rx.try_recv().unwrap().unwrap();
         assert_eq!(result.len(), 1, "only the terminating frame is delivered");
@@ -1079,14 +1066,11 @@ mod tests {
 
         let (tx2, mut rx2) = oneshot::channel();
 
-        handler.register_request(RithmicRequest {
-            request_id: "m".to_string(),
-            responder: tx2,
-        });
+        handler.register_request("m".to_string(), Tag::Caller(tx2));
 
         let mut terminal = make_response("m", login_message());
         terminal.multi_response = true;
-        handler.handle_response(terminal);
+        handler.route(terminal);
 
         let result = rx2.try_recv().unwrap().unwrap();
         assert_eq!(result.len(), 1, "no stale part may be prepended");
@@ -1106,20 +1090,14 @@ mod tests {
     /// resolves the whole reply — without the notice in it.
     #[test]
     fn a_truncation_notice_keeps_the_caller_waiting_and_asks_to_resume() {
-        let mut handler = RithmicRequestHandler::new();
+        let mut handler = RithmicRequestHandler::<Tag>::new();
         let mut rx = handler.register_test_replay("7");
 
-        assert_eq!(
-            handler.handle_response(part("7", volume_profile_message(&[]))),
-            None
-        );
-        assert_eq!(
-            handler.handle_response(part("7", volume_profile_message(&[]))),
-            None
-        );
+        assert_eq!(handler.route(part("7", volume_profile_message(&[]))), None);
+        assert_eq!(handler.route(part("7", volume_profile_message(&[]))), None);
 
         let (resume, logged) =
-            log_capture::capture(|| handler.handle_response(terminal("7", truncation_notice("0"))));
+            log_capture::capture(|| handler.route(terminal("7", truncation_notice("0"))));
         assert_eq!(
             resume,
             Some(Resume {
@@ -1138,7 +1116,7 @@ mod tests {
 
         handler.register_resume("9".to_string(), "7".to_string());
         let (ack, logged) = log_capture::capture(|| {
-            handler.handle_response(terminal(
+            handler.route(terminal(
                 "9",
                 RithmicMessage::ResponseResumeBars(ResponseResumeBars {
                     rp_code: vec!["0".to_string()],
@@ -1153,8 +1131,8 @@ mod tests {
         );
         assert!(!logged.contains("no caller waiting"), "{logged}");
 
-        handler.handle_response(part("7", volume_profile_message(&[])));
-        handler.handle_response(terminal("7", volume_profile_message(&["0"])));
+        handler.route(part("7", volume_profile_message(&[])));
+        handler.route(terminal("7", volume_profile_message(&["0"])));
 
         let reply = rx.try_recv().unwrap().unwrap();
         assert_eq!(
@@ -1174,12 +1152,12 @@ mod tests {
     /// key across cuts of the same replay.
     #[test]
     fn a_repeated_resume_key_without_new_data_is_not_asked_for_again() {
-        let mut handler = RithmicRequestHandler::new();
+        let mut handler = RithmicRequestHandler::<Tag>::new();
         let mut rx = handler.register_test_replay("7");
 
-        handler.handle_response(part("7", volume_profile_message(&[])));
+        handler.route(part("7", volume_profile_message(&[])));
         assert_eq!(
-            handler.handle_response(terminal("7", truncation_notice("0"))),
+            handler.route(terminal("7", truncation_notice("0"))),
             Some(Resume {
                 request_id: "7".to_string(),
                 key: "0".to_string(),
@@ -1187,14 +1165,14 @@ mod tests {
         );
 
         let (resume, logged) =
-            log_capture::capture(|| handler.handle_response(terminal("7", truncation_notice("0"))));
+            log_capture::capture(|| handler.route(terminal("7", truncation_notice("0"))));
         assert_eq!(resume, None, "a repeated key is not asked for again");
         assert!(!logged.contains("asking it to resume"), "{logged}");
         assert!(rx.try_recv().is_err(), "the caller keeps waiting");
 
-        handler.handle_response(marker_part("7"));
+        handler.route(marker_part("7"));
         assert_eq!(
-            handler.handle_response(terminal("7", truncation_notice("0"))),
+            handler.route(terminal("7", truncation_notice("0"))),
             Some(Resume {
                 request_id: "7".to_string(),
                 key: "0".to_string(),
@@ -1202,7 +1180,7 @@ mod tests {
             "data re-arms the key the venue reuses"
         );
 
-        handler.handle_response(terminal("7", volume_profile_message(&["0"])));
+        handler.route(terminal("7", volume_profile_message(&["0"])));
         let reply = rx.try_recv().unwrap().unwrap();
         assert_eq!(
             reply.len(),
@@ -1219,17 +1197,17 @@ mod tests {
     /// INFO, not an error for a reply nobody is missing.
     #[test]
     fn a_duplicate_resume_acknowledgement_is_counted_not_an_error() {
-        let mut handler = RithmicRequestHandler::new();
+        let mut handler = RithmicRequestHandler::<Tag>::new();
         let mut rx = handler.register_test_replay("7");
 
-        handler.handle_response(part("7", volume_profile_message(&[])));
+        handler.route(part("7", volume_profile_message(&[])));
         let resume = handler
-            .handle_response(terminal("7", truncation_notice("0")))
+            .route(terminal("7", truncation_notice("0")))
             .expect("a pending truncated reply asks to resume");
         handler.register_resume("9".to_string(), resume.request_id);
 
         let (_, logged) = log_capture::capture(|| {
-            handler.handle_response(terminal(
+            handler.route(terminal(
                 "9",
                 RithmicMessage::ResponseResumeBars(ResponseResumeBars {
                     rp_code: vec!["0".to_string()],
@@ -1243,7 +1221,7 @@ mod tests {
         );
 
         let (_, logged) = log_capture::capture(|| {
-            handler.handle_response(terminal(
+            handler.route(terminal(
                 "9",
                 RithmicMessage::ResponseResumeBars(ResponseResumeBars {
                     rp_code: vec!["0".to_string()],
@@ -1258,7 +1236,7 @@ mod tests {
         assert!(!logged.contains("no caller waiting"), "{logged}");
         assert!(!logged.contains("ERROR"), "{logged}");
 
-        handler.handle_response(terminal("7", volume_profile_message(&["0"])));
+        handler.route(terminal("7", volume_profile_message(&["0"])));
         let reply = rx.try_recv().unwrap().unwrap();
         assert_eq!(reply.len(), 2, "one part and the end marker");
         assert!(handler.resumes.is_empty());
@@ -1268,12 +1246,12 @@ mod tests {
     /// refusal as an error, never the prefix as a successful complete reply.
     #[test]
     fn a_refused_resume_never_reports_a_complete_prefix() {
-        let mut handler = RithmicRequestHandler::new();
+        let mut handler = RithmicRequestHandler::<Tag>::new();
         let mut rx = handler.register_test_replay("7");
 
-        handler.handle_response(part("7", volume_profile_message(&[])));
+        handler.route(part("7", volume_profile_message(&[])));
         let resume = handler
-            .handle_response(terminal("7", truncation_notice("0")))
+            .route(terminal("7", truncation_notice("0")))
             .expect("a pending truncated reply asks to resume");
         handler.register_resume("9".to_string(), resume.request_id);
 
@@ -1285,7 +1263,7 @@ mod tests {
             }),
         );
         refusal.error = Some(RithmicError::ProtocolError("refused".to_string()));
-        let (_, logged) = log_capture::capture(|| handler.handle_response(refusal));
+        let (_, logged) = log_capture::capture(|| handler.route(refusal));
 
         let reply = rx.try_recv().unwrap();
         assert_eq!(
@@ -1305,15 +1283,15 @@ mod tests {
     /// once, and what the venue still sends for the id is counted.
     #[test]
     fn a_truncation_notice_for_a_caller_that_stopped_waiting_is_counted_not_resumed() {
-        let mut handler = RithmicRequestHandler::new();
+        let mut handler = RithmicRequestHandler::<Tag>::new();
         let rx = handler.register_test_replay("7");
         handler.mark_sent("7");
 
-        handler.handle_response(part("7", volume_profile_message(&[])));
+        handler.route(part("7", volume_profile_message(&[])));
         drop(rx);
 
         let (resume, logged) =
-            log_capture::capture(|| handler.handle_response(terminal("7", truncation_notice("0"))));
+            log_capture::capture(|| handler.route(terminal("7", truncation_notice("0"))));
         assert_eq!(resume, None);
         assert!(
             logged.contains("request_id 7: the caller stopped waiting after 1 parts"),
@@ -1323,9 +1301,9 @@ mod tests {
 
         let (_, logged) = log_capture::capture(|| {
             for _ in 0..3 {
-                handler.handle_response(part("7", volume_profile_message(&[])));
+                handler.route(part("7", volume_profile_message(&[])));
             }
-            handler.handle_response(terminal(
+            handler.route(terminal(
                 "7",
                 volume_profile_message(&["12", "output inhibited"]),
             ));
@@ -1342,15 +1320,15 @@ mod tests {
     /// warning: nothing is missing a reply.
     #[test]
     fn a_refusal_after_the_replay_ended_is_not_a_warning() {
-        let mut handler = RithmicRequestHandler::new();
+        let mut handler = RithmicRequestHandler::<Tag>::new();
         let mut rx = handler.register_test_replay("7");
 
-        handler.handle_response(part("7", volume_profile_message(&[])));
+        handler.route(part("7", volume_profile_message(&[])));
         let resume = handler
-            .handle_response(terminal("7", truncation_notice("0")))
+            .route(terminal("7", truncation_notice("0")))
             .expect("a pending truncated reply asks to resume");
         handler.register_resume("9".to_string(), resume.request_id);
-        handler.handle_response(terminal("7", volume_profile_message(&["0"])));
+        handler.route(terminal("7", volume_profile_message(&["0"])));
         assert_eq!(rx.try_recv().unwrap().unwrap().len(), 2);
         assert!(
             handler.resumes.is_empty(),
@@ -1365,7 +1343,7 @@ mod tests {
             }),
         );
         refusal.error = Some(RithmicError::ProtocolError("late".to_string()));
-        let (_, logged) = log_capture::capture(|| handler.handle_response(refusal));
+        let (_, logged) = log_capture::capture(|| handler.route(refusal));
 
         assert!(!logged.contains("WARN"), "{logged}");
         assert!(!logged.contains("ERROR"), "{logged}");
@@ -1375,12 +1353,12 @@ mod tests {
     /// it is not a truncation and opens no continuation.
     #[test]
     fn a_complete_replay_opens_no_continuation() {
-        let mut handler = RithmicRequestHandler::new();
+        let mut handler = RithmicRequestHandler::<Tag>::new();
         let mut rx = handler.register_test_replay("8");
 
         let (_, logged) = log_capture::capture(|| {
-            handler.handle_response(part("8", volume_profile_message(&[])));
-            handler.handle_response(terminal("8", volume_profile_message(&["0"])));
+            handler.route(part("8", volume_profile_message(&[])));
+            handler.route(terminal("8", volume_profile_message(&["0"])));
         });
 
         let reply = rx.try_recv().unwrap().unwrap();

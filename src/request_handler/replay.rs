@@ -1,11 +1,9 @@
-use super::{Resume, RithmicRequestHandler};
+use super::{Reply, RequestTag, Resume, RithmicRequestHandler};
 use std::collections::HashSet;
 use tokio::sync::oneshot;
 use tracing::info;
 
 use crate::{RithmicError, RithmicResponse, rti::messages::RithmicMessage};
-
-pub(crate) type Reply = Result<Vec<RithmicResponse>, RithmicError>;
 
 /// A history replay the plant is collecting for a caller.
 ///
@@ -55,7 +53,7 @@ fn carries_replay_data(response: &RithmicResponse) -> bool {
     }
 }
 
-impl RithmicRequestHandler {
+impl<T: RequestTag> RithmicRequestHandler<T> {
     /// Track a replay. Returns `false` if the caller stopped waiting while the
     /// request was queued, in which case nothing should be sent.
     pub(crate) fn register_replay(&mut self, id: String, replay: PendingReplay) -> bool {
@@ -236,6 +234,8 @@ impl RithmicRequestHandler {
 mod tests {
     use super::*;
 
+    use crate::plants::tag::Tag;
+
     use crate::rti::{ResponseResumeBars, ResponseTimeBarReplay};
 
     fn frame(id: &str, marker: Option<i32>, code: &[&str], key: Option<&str>) -> RithmicResponse {
@@ -267,40 +267,40 @@ mod tests {
 
     #[test]
     fn a_reused_continuation_key_resumes_again_after_new_replay_data() {
-        let mut handler = RithmicRequestHandler::new();
+        let mut handler = RithmicRequestHandler::<Tag>::new();
         let mut rx = handler.register_test_replay("original");
         let _other = handler.register_test_replay("other");
         handler.mark_sent("original");
 
-        handler.handle_response(frame("original", Some(1), &[], None));
+        handler.route(frame("original", Some(1), &[], None));
         let first = handler
-            .handle_response(frame("original", None, &[], Some("0")))
+            .route(frame("original", None, &[], Some("0")))
             .expect("first cut asks to resume");
         handler.register_resume("resume-one".into(), first.request_id);
-        handler.handle_response(ack("resume-one", None));
+        handler.route(ack("resume-one", None));
 
-        handler.handle_response(frame("other", Some(1), &[], None));
+        handler.route(frame("other", Some(1), &[], None));
         assert!(
             handler
-                .handle_response(frame("original", None, &[], Some("0")))
+                .route(frame("original", None, &[], Some("0")))
                 .is_none(),
             "an acknowledgement or another replay cannot rearm the key"
         );
 
-        handler.handle_response(frame("original", Some(2), &[], None));
+        handler.route(frame("original", Some(2), &[], None));
         let continued = handler
-            .handle_response(frame("original", None, &[], Some("0")))
+            .route(frame("original", None, &[], Some("0")))
             .expect("the venue reuses the same key after another chunk of data");
         assert_eq!(continued.request_id, "original");
         assert_eq!(continued.key, "0");
         assert!(
             handler
-                .handle_response(frame("original", None, &[], Some("0")))
+                .route(frame("original", None, &[], Some("0")))
                 .is_none(),
             "the repeated notice stays inert until data advances again"
         );
 
-        handler.handle_response(frame("original", None, &["0"], None));
+        handler.route(frame("original", None, &["0"], None));
         let reply = rx.try_recv().unwrap().unwrap();
         assert_eq!(
             reply.len(),
@@ -319,13 +319,13 @@ mod tests {
             // No code: not proof the server has finished.
             (&[][..], None, true),
         ] {
-            let mut handler = RithmicRequestHandler::new();
+            let mut handler = RithmicRequestHandler::<Tag>::new();
             let mut rx = handler.register_test_replay("original");
 
-            handler.handle_response(frame("original", Some(1), &[], None));
+            handler.route(frame("original", Some(1), &[], None));
             let mut last = frame("original", None, code, None);
             last.error = error.clone();
-            handler.handle_response(last);
+            handler.route(last);
 
             let reply = rx.try_recv().unwrap().unwrap();
             assert_eq!(reply.len(), 2, "{code:?}");
@@ -345,13 +345,13 @@ mod tests {
             &["7", "no data"][..],
             &["7", "an error occurred while parsing data."][..],
         ] {
-            let mut handler = RithmicRequestHandler::new();
+            let mut handler = RithmicRequestHandler::<Tag>::new();
             let mut rx = handler.register_test_replay("original");
 
             let mut last = frame("original", None, code, None);
             // As the decoder classifies it.
             last.error = crate::api::rp_code::classify_rp_code_error(last.rp_code().unwrap());
-            handler.handle_response(last);
+            handler.route(last);
 
             let reply = rx.try_recv().unwrap().unwrap();
             assert_eq!(reply.len(), 1, "{code:?}");
@@ -360,11 +360,11 @@ mod tests {
 
     #[test]
     fn a_decode_failure_mid_replay_keeps_the_earlier_frames() {
-        let mut handler = RithmicRequestHandler::new();
+        let mut handler = RithmicRequestHandler::<Tag>::new();
         let mut rx = handler.register_test_replay("original");
 
-        handler.handle_response(frame("original", Some(1), &[], None));
-        handler.handle_response(RithmicResponse {
+        handler.route(frame("original", Some(1), &[], None));
+        handler.route(RithmicResponse {
             request_id: "original".into(),
             message: RithmicMessage::Unknown,
             is_update: false,
@@ -385,15 +385,15 @@ mod tests {
 
     #[test]
     fn a_refused_resume_returns_the_refusal_not_the_frames_so_far() {
-        let mut handler = RithmicRequestHandler::new();
+        let mut handler = RithmicRequestHandler::<Tag>::new();
         let mut rx = handler.register_test_replay("original");
 
-        handler.handle_response(frame("original", Some(1), &[], None));
-        handler.handle_response(frame("original", None, &[], Some("key")));
+        handler.route(frame("original", Some(1), &[], None));
+        handler.route(frame("original", None, &[], Some("key")));
         handler.register_resume("resume".into(), "original".into());
 
         let error = RithmicError::ProtocolError("refused".into());
-        handler.handle_response(ack("resume", Some(error.clone())));
+        handler.route(ack("resume", Some(error.clone())));
 
         assert_eq!(rx.try_recv().unwrap(), Err(error));
         assert!(handler.replay_map.is_empty());
@@ -402,13 +402,13 @@ mod tests {
 
     #[test]
     fn an_abandoned_replay_is_released_and_its_late_frames_are_counted() {
-        let mut handler = RithmicRequestHandler::new();
+        let mut handler = RithmicRequestHandler::<Tag>::new();
         let rx = handler.register_test_replay("original");
         let _other = handler.register_test_replay("other");
         handler.mark_sent("original");
 
-        handler.handle_response(frame("original", Some(1), &[], None));
-        handler.handle_response(frame("original", None, &[], Some("key")));
+        handler.route(frame("original", Some(1), &[], None));
+        handler.route(frame("original", None, &[], Some("key")));
         handler.register_resume("resume".into(), "original".into());
 
         drop(rx);
@@ -419,29 +419,29 @@ mod tests {
 
         assert!(
             handler
-                .handle_response(frame("original", None, &[], Some("late")))
+                .route(frame("original", None, &[], Some("late")))
                 .is_none(),
             "an abandoned replay is never continued"
         );
-        handler.handle_response(frame("original", None, &[], None));
+        handler.route(frame("original", None, &[], None));
         assert!(
             handler.late_continuations.contains_key("original"),
             "a frame without a code is not the server's end"
         );
 
-        handler.handle_response(frame("original", Some(2), &[], None));
+        handler.route(frame("original", Some(2), &[], None));
         assert_eq!(handler.late_continuations.get("original"), Some(&1));
 
-        handler.handle_response(ack("resume", None));
+        handler.route(ack("resume", None));
         assert!(handler.resumes.is_empty());
 
-        handler.handle_response(frame("original", None, &["12"], None));
+        handler.route(frame("original", None, &["12"], None));
         assert!(handler.late_continuations.is_empty());
     }
 
     #[test]
     fn an_abandoned_request_is_not_admitted_and_an_unsent_one_expects_no_late_frames() {
-        let mut handler = RithmicRequestHandler::new();
+        let mut handler = RithmicRequestHandler::<Tag>::new();
 
         let (tx, rx) = oneshot::channel();
         drop(rx);
@@ -469,10 +469,10 @@ mod tests {
 
     #[test]
     fn a_dropped_connection_fails_every_replay() {
-        let mut handler = RithmicRequestHandler::new();
+        let mut handler = RithmicRequestHandler::<Tag>::new();
         let mut rx = handler.register_test_replay("original");
 
-        handler.handle_response(frame("original", Some(1), &[], None));
+        handler.route(frame("original", Some(1), &[], None));
         handler.register_resume("resume".into(), "original".into());
         handler.drain_and_drop();
 

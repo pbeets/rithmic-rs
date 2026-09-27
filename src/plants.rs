@@ -23,6 +23,7 @@ pub mod order_plant;
 pub mod pnl_plant;
 /// Account-scoped subscription helpers for shared order/PnL plants
 pub mod subscription;
+pub(crate) mod tag;
 #[cfg(test)]
 pub(crate) mod test_support;
 /// Real-time market data subscription
