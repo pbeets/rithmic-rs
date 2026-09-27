@@ -364,6 +364,7 @@ impl RithmicRequestHandler<crate::plants::tag::Tag> {
 
                 None
             }
+            Routed::Reply(tag, _) => panic!("these tests register only callers, got {tag:?}"),
             Routed::Resume(resume) => Some(resume),
         }
     }
@@ -630,9 +631,11 @@ mod tests {
 
         handler.register_request("fail".to_string(), Tag::Caller(tx));
 
-        let (Tag::Caller(responder), reply) = handler
-            .fail_request("fail", RithmicError::SendFailed)
-            .expect("the request is pending");
+        let Some((Tag::Caller(responder), reply)) =
+            handler.fail_request("fail", RithmicError::SendFailed)
+        else {
+            panic!("the pending caller is handed back");
+        };
         answer_caller(responder, reply);
 
         let result = rx.try_recv().unwrap();
@@ -663,7 +666,10 @@ mod tests {
 
         handler.register_request("b".to_string(), Tag::Caller(tx2));
 
-        for Tag::Caller(responder) in handler.drain_and_drop() {
+        for tag in handler.drain_and_drop() {
+            let Tag::Caller(responder) = tag else {
+                panic!("only callers were registered, got {tag:?}");
+            };
             answer_caller(responder, Err(RithmicError::ConnectionClosed));
         }
 

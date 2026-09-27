@@ -149,6 +149,10 @@ pub enum RithmicError {
     HeartbeatTimeout,
     /// Server terminated the session with a reason string.
     ForcedLogout(String),
+    /// A login with a different [`LoginConfig`](crate::LoginConfig) is already
+    /// in progress or complete on this plant. Nothing was sent. Disconnect and
+    /// connect again to log in with another config.
+    LoginConflict,
 }
 
 impl RithmicError {
@@ -218,6 +222,12 @@ impl fmt::Display for RithmicError {
             RithmicError::HeartbeatTimeout => write!(f, "heartbeat timeout"),
             RithmicError::ForcedLogout(reason) => {
                 write!(f, "forced logout: {}", sanitize_for_display(reason))
+            }
+            RithmicError::LoginConflict => {
+                write!(
+                    f,
+                    "a login with a different config is already on this plant"
+                )
             }
         }
     }
@@ -448,6 +458,14 @@ mod tests {
     }
 
     #[test]
+    fn login_conflict_display() {
+        assert_eq!(
+            RithmicError::LoginConflict.to_string(),
+            "a login with a different config is already on this plant"
+        );
+    }
+
+    #[test]
     fn forced_logout_sanitizes_control_chars() {
         let err = RithmicError::ForcedLogout("bad\nreason".into());
         assert_eq!(err.to_string(), "forced logout: badreason");
@@ -473,6 +491,7 @@ mod tests {
         assert!(!RithmicError::ProtocolError("x".into()).is_connection_issue());
         assert!(!RithmicError::InvalidArgument("x".into()).is_connection_issue());
         assert!(!RithmicError::EmptyResponse.is_connection_issue());
+        assert!(!RithmicError::LoginConflict.is_connection_issue());
         assert!(
             !RithmicError::NoTradeRoute {
                 exchange: "CBOT".into(),

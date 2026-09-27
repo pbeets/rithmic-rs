@@ -195,6 +195,9 @@
 //!   connection problem rather than retrying in a loop.
 //! - [`ConnectionClosed`](RithmicError::ConnectionClosed) — the plant is gone.
 //!   Reconnect; calling again will not work.
+//! - [`LoginConflict`](RithmicError::LoginConflict) — `login` with a
+//!   different `LoginConfig` from the plant's own login. Nothing was sent.
+//!   Disconnect and connect again to change it.
 //!
 //! When a connection drops, everything in flight fails with `ConnectionClosed`
 //! whatever the real cause was. The cause goes out on the subscription channel,

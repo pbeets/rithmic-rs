@@ -1,4 +1,4 @@
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 use tracing::{debug, error, info, warn};
 
 use tokio::{
@@ -15,16 +15,19 @@ use crate::{
             RithmicModifyOrderReferenceData, RithmicOcoOrder, RithmicOrder,
         },
         receiver_api::RithmicResponse,
-        sender_api::LoginScope,
+        sender_api::{LoginScope, RithmicSenderApi},
     },
     config::{LoginConfig, RithmicAccount, RithmicConfig},
     error::RithmicError,
     plants::{
         await_all_responses, await_first_response,
-        core::{PlantActor, PlantCore, SelectResult},
+        core::{PlantActor, PlantCore, SelectResult, WsSink},
+        session::PlantKind,
         subscription::SubscriptionFilter,
+        tag::answer_caller,
         trade_routes::TradeRouteCache,
     },
+    request_handler::{Reply, Responder},
     rti::{TradeRoute, messages::RithmicMessage, request_login::SysInfraType},
     types::{EasyToBorrowRequest, FillHistoryRange, RmsUpdateBits},
 };
@@ -102,7 +105,6 @@ pub(crate) enum OrderPlantCommand {
         subscribe_for_updates: bool,
         response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
     },
-    RecordTradeRoutes(Vec<RithmicResponse>),
     RecordTradeRouteUpdate(Box<TradeRoute>),
     TradeRouteFor {
         exchange: String,
@@ -322,8 +324,6 @@ pub struct RithmicOrderPlant {
     pub(crate) connection_handle: JoinHandle<()>,
     sender: mpsc::Sender<OrderPlantCommand>,
     subscription_sender: broadcast::Sender<RithmicResponse>,
-    /// Shared with the actor and every handle, so one login scopes them all.
-    login_scope: Arc<OnceLock<LoginScope>>,
 }
 
 impl RithmicOrderPlant {
@@ -353,15 +353,7 @@ impl RithmicOrderPlant {
             .subscription_capacity
             .unwrap_or(DEFAULT_SUBSCRIPTION_CAPACITY);
         let (sub_tx, _sub_rx) = broadcast::channel(capacity);
-        let login_scope = Arc::new(OnceLock::new());
-        let mut order_plant = OrderPlant::new(
-            req_rx,
-            sub_tx.clone(),
-            config,
-            strategy,
-            Arc::clone(&login_scope),
-        )
-        .await?;
+        let mut order_plant = OrderPlant::new(req_rx, sub_tx.clone(), config, strategy).await?;
 
         let connection_handle = tokio::spawn(async move {
             order_plant.run().await;
@@ -371,7 +363,6 @@ impl RithmicOrderPlant {
             connection_handle,
             sender: req_tx,
             subscription_sender: sub_tx,
-            login_scope,
         })
     }
 }
@@ -392,7 +383,6 @@ impl RithmicOrderPlant {
 
         RithmicOrderPlantHandle {
             account,
-            login_scope: Arc::clone(&self.login_scope),
             sender: self.sender.clone(),
             subscription_receiver: SubscriptionFilter::new(
                 account_for_filter,
@@ -411,12 +401,160 @@ impl RithmicOrderPlant {
     }
 }
 
+/// A request the order plant sends for itself.
+#[derive(Debug)]
+enum OrderTag {
+    /// The login info, which scopes later requests. `caller` is the handle
+    /// that asked for it, or `None` when the plant loads it after login.
+    LoginInfo { caller: Option<Responder> },
+    /// The trade routes the plant loads after login, which orders go out on.
+    TradeRoutes,
+}
+
+/// What the order plant loads after login and keeps for the connection. Only
+/// the actor writes it.
+#[derive(Debug, Default)]
+struct OrderState {
+    /// Scopes the requests that carry a user type. Set by the first login
+    /// info that has one.
+    login_scope: Option<LoginScope>,
+    /// The routes orders go out on.
+    trade_routes: TradeRouteCache,
+    /// The login info loaded after login is still outstanding.
+    loading_login_info: bool,
+    /// The trade routes loaded after login are still outstanding.
+    loading_trade_routes: bool,
+}
+
+impl OrderState {
+    /// Scope later requests with the login info in `reply`, unless a scope is
+    /// already set. A rejected response has no usable identity in it.
+    fn record_login_info(&mut self, reply: &Reply) {
+        if self.login_scope.is_some() {
+            return;
+        }
+
+        // A `match` rather than a let-chain: those need Rust 1.88 and the MSRV
+        // is 1.85.
+        if let Ok(frames) = reply {
+            if let Some(response) = frames.first() {
+                match &response.message {
+                    RithmicMessage::ResponseLoginInfo(info) if response.error.is_none() => {
+                        self.login_scope = LoginScope::from_login_info(info);
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    /// Fill the route cache from the reply to the routes loaded after login.
+    /// A rejected frame is never cached.
+    fn record_trade_routes(&mut self, responses: &[RithmicResponse]) {
+        let loaded = responses
+            .iter()
+            .filter(|response| self.trade_routes.record_response(response))
+            .count();
+
+        match loaded {
+            0 => {
+                error!("order_plant: no trade routes published, orders will fail with NoTradeRoute")
+            }
+            loaded => info!("order_plant: {} trade routes loaded", loaded),
+        }
+    }
+}
+
+impl PlantKind for OrderState {
+    type Tag = OrderTag;
+
+    /// Load the login info and the routes orders are sent on. The routes are
+    /// the snapshot orders route from for the life of the connection. The
+    /// request subscribes, so updates reach the subscription channel, but only
+    /// `record_trade_route` applies one.
+    fn after_login(&mut self, api: &mut RithmicSenderApi) -> Vec<(Vec<u8>, String, OrderTag)> {
+        let (login_info_buf, login_info_id) = api.request_login_info();
+        let (trade_routes_buf, trade_routes_id) = api.request_trade_routes(true);
+
+        self.loading_login_info = true;
+        self.loading_trade_routes = true;
+
+        vec![
+            (
+                login_info_buf,
+                login_info_id,
+                OrderTag::LoginInfo { caller: None },
+            ),
+            (trade_routes_buf, trade_routes_id, OrderTag::TradeRoutes),
+        ]
+    }
+
+    fn is_ready(&self) -> bool {
+        !self.loading_login_info && !self.loading_trade_routes
+    }
+
+    /// A failure here is only logged: the login already succeeded, so it
+    /// leaves later requests unscoped, or orders failing with
+    /// [`RithmicError::NoTradeRoute`], rather than failing the connection.
+    fn on_reply(&mut self, tag: OrderTag, reply: Reply) {
+        match tag {
+            OrderTag::LoginInfo { caller } => {
+                self.record_login_info(&reply);
+
+                match caller {
+                    Some(caller) => answer_caller(caller, reply),
+                    None => {
+                        self.loading_login_info = false;
+
+                        match reply.as_ref().map(|frames| frames.first()) {
+                            Ok(Some(response)) => {
+                                if let Some(err) = &response.error {
+                                    warn!(
+                                        "order_plant: login info rejected, account list will be unscoped: {:?}",
+                                        err
+                                    );
+                                }
+                            }
+                            Ok(None) => warn!(
+                                "order_plant: login info unavailable, account list will be unscoped: {:?}",
+                                RithmicError::EmptyResponse
+                            ),
+                            Err(err) => warn!(
+                                "order_plant: login info unavailable, account list will be unscoped: {:?}",
+                                err
+                            ),
+                        }
+                    }
+                }
+            }
+            OrderTag::TradeRoutes => {
+                self.loading_trade_routes = false;
+
+                match reply {
+                    Ok(responses) => {
+                        for rejection in responses.iter().filter_map(|resp| resp.error.as_ref()) {
+                            error!(
+                                "order_plant: trade route request rejected, orders will fail: {}",
+                                rejection
+                            );
+                        }
+
+                        self.record_trade_routes(&responses);
+                    }
+                    Err(err) => error!(
+                        "order_plant: trade routes unavailable, orders will fail: {}",
+                        err
+                    ),
+                }
+            }
+        }
+    }
+}
+
 #[derive(Debug)]
 struct OrderPlant {
-    core: PlantCore,
+    core: PlantCore<WsSink, OrderState>,
     request_receiver: mpsc::Receiver<OrderPlantCommand>,
-    login_scope: Arc<OnceLock<LoginScope>>,
-    trade_routes: TradeRouteCache,
 }
 
 impl OrderPlant {
@@ -425,15 +563,19 @@ impl OrderPlant {
         subscription_sender: broadcast::Sender<RithmicResponse>,
         config: &RithmicConfig,
         strategy: ConnectStrategy,
-        login_scope: Arc<OnceLock<LoginScope>>,
     ) -> Result<OrderPlant, RithmicError> {
-        let core = PlantCore::new(subscription_sender, config, strategy, "order_plant").await?;
+        let core = PlantCore::new(
+            subscription_sender,
+            config,
+            strategy,
+            "order_plant",
+            OrderState::default(),
+        )
+        .await?;
 
         Ok(OrderPlant {
             core,
             request_receiver,
-            login_scope,
-            trade_routes: TradeRouteCache::default(),
         })
     }
 }
@@ -469,7 +611,7 @@ impl PlantActor for OrderPlant {
 
     async fn handle_command(&mut self, command: OrderPlantCommand) {
         // Disconnect race guard — see `TickerPlant::handle_command`.
-        if self.core.close_requested
+        if self.core.close_requested()
             && !matches!(command, OrderPlantCommand::Close | OrderPlantCommand::Abort)
         {
             debug!("order_plant: dropping a command queued after close was requested");
@@ -496,10 +638,16 @@ impl PlantActor for OrderPlant {
                 self.core.handle_logout(response_sender).await;
             }
             OrderPlantCommand::AccountList { response_sender } => {
+                // Warn here too, not just at login: this is where the wider list
+                // comes back.
+                if self.core.kind.login_scope.is_none() {
+                    warn!("order_plant: no login info retained, listing accounts unscoped");
+                }
+
                 let (req_buf, id) = self
                     .core
                     .rithmic_sender_api
-                    .request_account_list(self.login_scope.get());
+                    .request_account_list(self.core.kind.login_scope.as_ref());
 
                 self.core
                     .register_and_send(req_buf, id, response_sender)
@@ -536,7 +684,7 @@ impl PlantActor for OrderPlant {
                 account,
                 response_sender,
             } => {
-                let trade_route = match self.trade_routes.resolve(
+                let trade_route = match self.core.kind.trade_routes.resolve(
                     bracket_order.trade_route.as_deref(),
                     &bracket_order.exchange,
                 ) {
@@ -550,7 +698,7 @@ impl PlantActor for OrderPlant {
                 let (req_buf, id) = self.core.rithmic_sender_api.request_bracket_order(
                     *bracket_order,
                     &account,
-                    self.login_scope.get(),
+                    self.core.kind.login_scope.as_ref(),
                     &trade_route,
                 );
 
@@ -632,7 +780,7 @@ impl PlantActor for OrderPlant {
                 let (req_buf, id) = self.core.rithmic_sender_api.request_cancel_all_orders(
                     &command,
                     &account,
-                    self.login_scope.get(),
+                    self.core.kind.login_scope.as_ref(),
                 );
 
                 self.core
@@ -646,7 +794,7 @@ impl PlantActor for OrderPlant {
                 let (req_buf, id) = self
                     .core
                     .rithmic_sender_api
-                    .request_account_rms_info(&account, self.login_scope.get());
+                    .request_account_rms_info(&account, self.core.kind.login_scope.as_ref());
 
                 self.core
                     .register_and_send(req_buf, id, response_sender)
@@ -678,27 +826,14 @@ impl PlantActor for OrderPlant {
                     .register_and_send(req_buf, id, response_sender)
                     .await;
             }
-            OrderPlantCommand::RecordTradeRoutes(responses) => {
-                let loaded = responses
-                    .iter()
-                    .filter(|response| self.trade_routes.record_response(response))
-                    .count();
-
-                match loaded {
-                    0 => error!(
-                        "order_plant: no trade routes published, orders will fail with NoTradeRoute"
-                    ),
-                    loaded => info!("order_plant: {} trade routes loaded", loaded),
-                }
-            }
             OrderPlantCommand::RecordTradeRouteUpdate(update) => {
-                self.trade_routes.record_update(&update);
+                self.core.kind.trade_routes.record_update(&update);
             }
             OrderPlantCommand::TradeRouteFor {
                 exchange,
                 response_sender,
             } => {
-                let _ = response_sender.send(self.trade_routes.resolve(None, &exchange));
+                let _ = response_sender.send(self.core.kind.trade_routes.resolve(None, &exchange));
             }
             OrderPlantCommand::ShowOrderHistoryDates { response_sender } => {
                 let (req_buf, id) = self
@@ -759,6 +894,8 @@ impl PlantActor for OrderPlant {
                 response_sender,
             } => {
                 let trade_route = match self
+                    .core
+                    .kind
                     .trade_routes
                     .resolve(order.trade_route.as_deref(), &order.exchange)
                 {
@@ -785,7 +922,7 @@ impl PlantActor for OrderPlant {
             } => {
                 let timing = order.cancel_timing();
 
-                let legs = match self.trade_routes.resolve_legs(order.legs) {
+                let legs = match self.core.kind.trade_routes.resolve_legs(order.legs) {
                     Ok(legs) => legs,
                     Err(err) => {
                         let _ = response_sender.send(Err(err));
@@ -964,10 +1101,11 @@ impl PlantActor for OrderPlant {
             }
             OrderPlantCommand::GetLoginInfo { response_sender } => {
                 let (req_buf, id) = self.core.rithmic_sender_api.request_login_info();
+                let tag = OrderTag::LoginInfo {
+                    caller: Some(response_sender),
+                };
 
-                self.core
-                    .register_and_send(req_buf, id, response_sender)
-                    .await;
+                self.core.register_kind_and_send(req_buf, id, tag).await;
             }
             OrderPlantCommand::ListUnacceptedAgreements { response_sender } => {
                 let (req_buf, id) = self
@@ -1061,8 +1199,6 @@ impl PlantActor for OrderPlant {
 /// [`subscription_receiver`](Self::subscription_receiver).
 pub struct RithmicOrderPlantHandle {
     account: Arc<RithmicAccount>,
-    /// Set by the first successful login on any handle from this plant.
-    login_scope: Arc<OnceLock<LoginScope>>,
     sender: mpsc::Sender<OrderPlantCommand>,
     /// Receiver for real-time order updates and responses.
     pub subscription_receiver: SubscriptionFilter,
@@ -1098,26 +1234,48 @@ impl RithmicOrderPlantHandle {
     ///
     /// This must be called before sending orders or subscriptions.
     ///
-    /// Also loads the trade routes orders are sent on. If that fails the login still
-    /// succeeds, and orders fail with [`RithmicError::NoTradeRoute`].
+    /// Once the server accepts the login, the plant loads the login info, which
+    /// scopes later requests, and the trade routes orders are sent on. It does
+    /// so even if you stop waiting for this call. A failure to load either is
+    /// only logged: the login still succeeds, and orders fail with
+    /// [`RithmicError::NoTradeRoute`].
+    ///
+    /// The plant logs in once per connection. A call with the same config made
+    /// while that login is in progress waits for it, and one made after it
+    /// returns its response at once. Neither sends anything.
     ///
     /// # Returns
-    /// The login response or an error message
+    /// The login response, once the login info and trade routes are recorded
+    /// or have failed.
+    ///
+    /// # Errors
+    /// * The error the server's refusal carries, usually
+    ///   [`RithmicError::RequestRejected`]. You can log in again.
+    /// * [`RithmicError::LoginConflict`] if this plant is logging in, or is
+    ///   logged in, with a different [`LoginConfig`].
+    /// * [`RithmicError::ConnectionClosed`] if the plant disconnects before
+    ///   the login is done, or has disconnected.
     pub async fn login(&self) -> Result<RithmicResponse, RithmicError> {
         self.login_with_config(LoginConfig::default()).await
     }
 
     /// Log in to the Rithmic Order plant with custom configuration
     ///
-    /// This must be called before sending orders or subscriptions.
-    ///
-    /// Loads trade routes on success, like [`login`](Self::login).
+    /// This must be called before sending orders or subscriptions. It loads
+    /// the login info and trade routes, like [`login`](Self::login).
+    /// `aggregated_quotes` does not apply to this plant and is ignored.
     ///
     /// # Arguments
     /// * `config` - Login configuration options. See [`LoginConfig`] for details.
     ///
     /// # Returns
-    /// The login response or an error message
+    /// The login response, once the login info and trade routes are recorded
+    /// or have failed.
+    ///
+    /// # Errors
+    /// As for [`login`](Self::login). [`RithmicError::LoginConflict`] means
+    /// this plant logged in, or is logging in, with a config other than
+    /// `config`.
     pub async fn login_with_config(
         &self,
         config: LoginConfig,
@@ -1143,68 +1301,17 @@ impl RithmicOrderPlantHandle {
             return Err(err);
         }
 
-        // The actor marks itself logged in and adopts the server's heartbeat
-        // period when it sees this reply, so nothing here needs to reach it.
+        // The actor owns the session: it heartbeats, and has loaded the login
+        // info and trade routes, before this reply reaches us.
         if let RithmicMessage::ResponseLogin(resp) = &response.message {
             if let Some(session_id) = &resp.unique_user_id {
                 info!("order_plant: session id: {}", session_id);
             }
         }
 
-        // Non-fatal: the login already succeeded, so failing to get the scope just
-        // leaves later requests unscoped rather than failing the connection.
-        match self.get_login_info().await {
-            Ok(response) => {
-                if let Some(err) = &response.error {
-                    warn!(
-                        "order_plant: login info rejected, account list will be unscoped: {:?}",
-                        err
-                    );
-                }
-            }
-            Err(err) => warn!(
-                "order_plant: login info unavailable, account list will be unscoped: {:?}",
-                err
-            ),
-        }
-
-        self.prime_trade_routes().await;
-
         info!("order_plant: logged in");
 
         Ok(response)
-    }
-
-    /// Load the routes orders are sent on, once, and hand them to the plant.
-    ///
-    /// This is the snapshot orders route from for the life of the connection.
-    /// It subscribes, so updates reach the subscription channel, but only
-    /// [`record_trade_route`](Self::record_trade_route) applies one.
-    ///
-    /// A failure here is only logged: you get [`RithmicError::NoTradeRoute`]
-    /// when placing an order, rather than a bad route.
-    async fn prime_trade_routes(&self) {
-        match self.get_trade_routes(true).await {
-            Ok(responses) => {
-                for rejection in responses.iter().filter_map(|resp| resp.error.as_ref()) {
-                    error!(
-                        "order_plant: trade route request rejected, orders will fail: {}",
-                        rejection
-                    );
-                }
-
-                // Queued on the same channel orders are, so an order placed the
-                // moment `connect` returns is still handled after this.
-                let _ = self
-                    .sender
-                    .send(OrderPlantCommand::RecordTradeRoutes(responses))
-                    .await;
-            }
-            Err(err) => error!(
-                "order_plant: trade routes unavailable, orders will fail: {}",
-                err
-            ),
-        }
     }
 
     /// Disconnect from the Rithmic Order plant
@@ -1220,7 +1327,7 @@ impl RithmicOrderPlantHandle {
 
         let _ = self.sender.send(command).await;
         // Held rather than propagated here so that `Close` is queued either way:
-        // `handle_logout` has already set `close_requested`, so an actor that
+        // `handle_logout` has already closed the session, so an actor that
         // never receives `Close` stops sending heartbeats, drops every later
         // command, and never drains its pending requests.
         let outcome = rx.await.map_err(|_| RithmicError::ConnectionClosed);
@@ -1251,11 +1358,6 @@ impl RithmicOrderPlantHandle {
     /// A vector of account list responses or an error message
     pub async fn get_account_list(&self) -> Result<Vec<RithmicResponse>, RithmicError> {
         let (tx, rx) = oneshot::channel::<Result<Vec<RithmicResponse>, RithmicError>>();
-
-        // Warn here too, not just at login: this is where the wider list comes back.
-        if self.login_scope.get().is_none() {
-            warn!("order_plant: no login info retained, listing accounts unscoped");
-        }
 
         let command = OrderPlantCommand::AccountList {
             response_sender: tx,
@@ -2164,8 +2266,9 @@ impl RithmicOrderPlantHandle {
 
     /// Get login information for the current session
     ///
-    /// [`Self::login`] already calls this once and the first success is what scopes
-    /// later requests, so calling it again returns the response but changes nothing.
+    /// [`Self::login`] already loads this once, and the first success is what
+    /// scopes later requests. Calling it again returns the response, and scopes
+    /// the plant only if no login info has yet.
     ///
     /// # Returns
     /// The login info response or an error message
@@ -2178,22 +2281,7 @@ impl RithmicOrderPlantHandle {
 
         let _ = self.sender.send(command).await;
 
-        let response = await_first_response(rx).await?;
-
-        // A rejected response has no usable identity in it. (A `match` rather than a
-        // let-chain: those need Rust 1.88 and the MSRV is 1.85.)
-        let scope = match &response.message {
-            RithmicMessage::ResponseLoginInfo(info) if response.error.is_none() => {
-                LoginScope::from_login_info(info)
-            }
-            _ => None,
-        };
-
-        if let Some(scope) = scope {
-            let _ = self.login_scope.set(scope);
-        }
-
-        Ok(response)
+        await_first_response(rx).await
     }
 
     /// List unaccepted agreements
@@ -2338,7 +2426,6 @@ impl Clone for RithmicOrderPlantHandle {
     fn clone(&self) -> Self {
         RithmicOrderPlantHandle {
             account: Arc::clone(&self.account),
-            login_scope: Arc::clone(&self.login_scope),
             sender: self.sender.clone(),
             subscription_receiver: self.subscription_receiver.resubscribe(),
         }

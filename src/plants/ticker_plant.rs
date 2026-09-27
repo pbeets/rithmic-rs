@@ -289,7 +289,8 @@ impl TickerPlant {
         config: &RithmicConfig,
         strategy: ConnectStrategy,
     ) -> Result<TickerPlant, RithmicError> {
-        let core = PlantCore::new(subscription_sender, config, strategy, "ticker_plant").await?;
+        let core =
+            PlantCore::new(subscription_sender, config, strategy, "ticker_plant", ()).await?;
 
         Ok(TickerPlant {
             core,
@@ -331,7 +332,7 @@ impl PlantActor for TickerPlant {
         // Drop a request queued after `close_requested`; handles report the dropped
         // responder as `ConnectionClosed`. The listed variants carry none and must
         // still run — `Close` has to reach `handle_close()`. All four plants alike.
-        if self.core.close_requested
+        if self.core.close_requested()
             && !matches!(
                 command,
                 TickerPlantCommand::Close | TickerPlantCommand::Abort
@@ -617,21 +618,40 @@ impl RithmicTickerPlantHandle {
     ///
     /// To customize login options, use [`login_with_config`](Self::login_with_config).
     ///
+    /// The plant logs in once per connection. A call with the same config made
+    /// while that login is in progress waits for it, and one made after it
+    /// returns its response at once. Neither sends anything.
+    ///
     /// # Returns
-    /// The login response or an error message
+    /// The login response, once the server accepts the login.
+    ///
+    /// # Errors
+    /// * The error the server's refusal carries, usually
+    ///   [`RithmicError::RequestRejected`]. You can log in again.
+    /// * [`RithmicError::LoginConflict`] if this plant is logging in, or is
+    ///   logged in, with a different [`LoginConfig`].
+    /// * [`RithmicError::ConnectionClosed`] if the plant disconnects before
+    ///   the login is done, or has disconnected.
     pub async fn login(&self) -> Result<RithmicResponse, RithmicError> {
         self.login_with_config(LoginConfig::default()).await
     }
 
     /// Log in to the Rithmic ticker plant with custom configuration
     ///
-    /// This must be called before subscribing to any market data.
+    /// This must be called before subscribing to any market data. Leaving
+    /// `aggregated_quotes` unset means tick-by-tick quotes, the same config as
+    /// [`login`](Self::login).
     ///
     /// # Arguments
     /// * `config` - Login configuration options. See [`LoginConfig`] for details.
     ///
     /// # Returns
-    /// The login response or an error message
+    /// The login response, once the server accepts the login.
+    ///
+    /// # Errors
+    /// As for [`login`](Self::login). [`RithmicError::LoginConflict`] means
+    /// this plant logged in, or is logging in, with a config other than
+    /// `config`.
     pub async fn login_with_config(
         &self,
         config: LoginConfig,
@@ -661,8 +681,8 @@ impl RithmicTickerPlantHandle {
             return Err(err);
         }
 
-        // The actor marks itself logged in and adopts the server's heartbeat
-        // period when it sees this reply, so nothing here needs to reach it.
+        // The actor owns the session: it heartbeats before this reply reaches
+        // us, whether or not anyone is still waiting for it.
         if let RithmicMessage::ResponseLogin(resp) = &response.message {
             if let Some(session_id) = &resp.unique_user_id {
                 info!("ticker_plant: session id: {}", session_id);

@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{mem, time::Duration};
 use tracing::{error, info, warn};
 
 use futures_util::{
@@ -26,7 +26,10 @@ use crate::{
     config::{LoginConfig, RithmicConfig},
     error::RithmicError,
     ping_manager::PingManager,
-    plants::tag::{Tag, answer_caller},
+    plants::{
+        session::{PlantKind, Session, answer_waiters},
+        tag::{Tag, answer_caller},
+    },
     request_handler::{PendingReplay, Reply, Resume, RithmicRequestHandler, Routed},
     rti::{messages::RithmicMessage, request_login::SysInfraType},
     ws::{
@@ -61,35 +64,37 @@ pub(crate) enum SelectResult<C> {
 /// Shared infrastructure for all Rithmic plant actors.
 ///
 /// Holds the WebSocket connection, heartbeat/ping timers, request handler,
-/// and sender/receiver APIs that every plant uses. Each plant wraps a
-/// `PlantCore` plus its own command receiver.
+/// the login session, and sender/receiver APIs that every plant uses. Each
+/// plant wraps a `PlantCore` plus its own command receiver.
 ///
 /// The type parameter `S` is the WebSocket sink type. It defaults to [`WsSink`]
 /// (the concrete split-sink from a real TLS connection) but can be replaced
-/// with a mock sink in tests.
+/// with a mock sink in tests. `K` is what the plant loads and answers for
+/// itself; see [`PlantKind`].
 #[derive(Debug)]
-pub(crate) struct PlantCore<S = WsSink> {
+pub(crate) struct PlantCore<S = WsSink, K: PlantKind = ()> {
     pub(crate) config: RithmicConfig,
-    pub(crate) close_requested: bool,
     pub(crate) interval: Interval,
-    pub(crate) logged_in: bool,
+    pub(crate) kind: K,
     pub(crate) ping_interval: Interval,
     pub(crate) ping_manager: PingManager,
-    pub(crate) request_handler: RithmicRequestHandler<Tag>,
+    pub(crate) request_handler: RithmicRequestHandler<Tag<K::Tag>>,
     pub(crate) rithmic_reader: WsReader,
     pub(crate) rithmic_receiver_api: RithmicReceiverApi,
     pub(crate) rithmic_sender: S,
     pub(crate) rithmic_sender_api: RithmicSenderApi,
+    pub(crate) session: Session,
     pub(crate) subscription_sender: broadcast::Sender<RithmicResponse>,
 }
 
-impl PlantCore<WsSink> {
+impl<K: PlantKind> PlantCore<WsSink, K> {
     pub(crate) async fn new(
         subscription_sender: broadcast::Sender<RithmicResponse>,
         config: &RithmicConfig,
         strategy: ConnectStrategy,
         source: &'static str,
-    ) -> Result<PlantCore, RithmicError> {
+        kind: K,
+    ) -> Result<PlantCore<WsSink, K>, RithmicError> {
         let ws_stream = connect_with_strategy(
             &config.url,
             &config.beta_url,
@@ -112,9 +117,8 @@ impl PlantCore<WsSink> {
 
         Ok(PlantCore {
             config: config.clone(),
-            close_requested: false,
             interval,
-            logged_in: false,
+            kind,
             ping_interval,
             ping_manager,
             request_handler: RithmicRequestHandler::new(),
@@ -122,14 +126,16 @@ impl PlantCore<WsSink> {
             rithmic_receiver_api,
             rithmic_sender,
             rithmic_sender_api,
+            session: Session::Connected,
             subscription_sender,
         })
     }
 }
 
-impl<S> PlantCore<S>
+impl<S, K> PlantCore<S, K>
 where
     S: Sink<Message, Error = Error> + Unpin,
+    K: PlantKind,
 {
     pub(crate) fn emit_connection_health_event(&self, request_id: &str, error: RithmicError) {
         let message = error.as_connection_message();
@@ -152,17 +158,38 @@ where
         self.drain_requests();
     }
 
-    /// Fail every pending request with [`RithmicError::ConnectionClosed`].
+    /// Whether a close was requested, so only the close may still go out.
+    pub(crate) fn close_requested(&self) -> bool {
+        self.session.is_closing()
+    }
+
+    /// End the session and fail every pending request, and every login still
+    /// waiting, with [`RithmicError::ConnectionClosed`].
     pub(crate) fn drain_requests(&mut self) {
+        self.session.close(Session::Closed);
+        self.fail_pending_requests();
+    }
+
+    /// Fail every pending request with [`RithmicError::ConnectionClosed`].
+    fn fail_pending_requests(&mut self) {
         for tag in self.request_handler.drain_and_drop() {
             self.dispatch(tag, Err(RithmicError::ConnectionClosed));
         }
     }
 
     /// Act on a completed reply according to what its request was for.
-    fn dispatch(&mut self, tag: Tag, reply: Reply) {
+    ///
+    /// A login reply never gets here, only a failed login request: an
+    /// accepted login has requests of its own to send, so
+    /// [`Self::route_reply`] hands every login reply to [`Self::on_login_reply`].
+    fn dispatch(&mut self, tag: Tag<K::Tag>, reply: Reply) {
         match tag {
             Tag::Caller(responder) => answer_caller(responder, reply),
+            Tag::Login => self.login_failed(reply),
+            Tag::Kind(tag) => {
+                self.kind.on_reply(tag, reply);
+                self.check_ready();
+            }
         }
     }
 
@@ -199,17 +226,18 @@ where
                 // send_with_timeout's contract requires the sink be treated as
                 // poisoned after a Timeout (the message may still be buffered).
                 // A half-open TCP connection may not surface through the reader,
-                // so drain all pending requests and broadcast ConnectionError
+                // so fail all pending requests and broadcast ConnectionError
                 // now rather than letting subsequent sends pile into a dead sink.
-                // The actor loop will stop when the next ping fires (within
-                // PING_INTERVAL_SECS). Heartbeat does not stop it because
-                // send_heartbeat returns early when logged_in=false.
-                self.fail_connection_and_drain(
+                // The session is left as it is: the actor loop stops when the
+                // next ping fires (within PING_INTERVAL_SECS), and a closed
+                // session would skip that ping.
+                self.emit_connection_health_event(
                     request_id,
                     RithmicError::ConnectionFailed(
                         "WebSocket send timed out — sink poisoned".to_string(),
                     ),
                 );
+                self.fail_pending_requests();
             }
         }
     }
@@ -240,7 +268,7 @@ where
     ///
     /// Skips (returns `false`) when a close has already been requested.
     pub(crate) async fn send_ping(&mut self) -> bool {
-        if self.close_requested {
+        if self.close_requested() {
             return false;
         }
 
@@ -287,9 +315,10 @@ where
 
     /// Send a Rithmic heartbeat message. Returns `true` if the actor should stop.
     ///
-    /// Skips (returns `false`) when not yet logged in or a close has been requested.
+    /// Skips (returns `false`) unless the session is logged in: preparing or
+    /// ready, and no close requested.
     pub(crate) async fn send_heartbeat(&mut self) -> bool {
-        if !self.logged_in || self.close_requested {
+        if !self.session.heartbeats() {
             return false;
         }
 
@@ -357,18 +386,8 @@ where
     /// broadcast, replies go to the per-request responder. Responses that
     /// failed to decode take the same paths. Heartbeats are the one special
     /// case: a failed heartbeat is also broadcast as `HeartbeatTimeout`, while
-    /// the original frame still resolves any request waiting on it. A
-    /// successful login reply also updates the actor's own login state before
-    /// it is routed.
+    /// the original frame still resolves any request waiting on it.
     async fn forward_response(&mut self, response: RithmicResponse) {
-        // The actor owns its login state: a caller can stop waiting after the
-        // reply arrives, and the session still needs its heartbeats.
-        if response.error.is_none() {
-            if let RithmicMessage::ResponseLogin(resp) = &response.message {
-                self.handle_login_accepted(resp.heartbeat_interval);
-            }
-        }
-
         // A failed heartbeat is broadcast as a synthetic HeartbeatTimeout, but
         // handle_response must get the original ResponseHeartbeat, not the
         // synthetic: it dispatches on message type, and a caller awaiting the
@@ -413,6 +432,7 @@ where
     /// Match a reply to its request, and dispatch it once it is complete.
     async fn route_reply(&mut self, response: RithmicResponse) {
         match self.request_handler.handle_response(response) {
+            Some(Routed::Reply(Tag::Login, reply)) => self.on_login_reply(reply).await,
             Some(Routed::Reply(tag, reply)) => self.dispatch(tag, reply),
             Some(Routed::Resume(resume)) => {
                 // This write pauses the loop, as answering a ping does. It is
@@ -423,15 +443,81 @@ where
         }
     }
 
-    /// Mark the session logged in so heartbeats go out, on the period the
-    /// server asked for when it named one.
-    fn handle_login_accepted(&mut self, heartbeat_interval: Option<f64>) {
-        self.logged_in = true;
+    /// Act on the reply to the session's login request.
+    async fn on_login_reply(&mut self, reply: Reply) {
+        let accepted = match &reply {
+            Ok(frames) => frames.first().filter(|frame| frame.error.is_none()),
+            Err(_) => None,
+        };
 
-        if let Some(hb) = heartbeat_interval {
-            if hb > 0.0 {
-                self.interval = get_heartbeat_interval(Some(hb as u64));
+        match accepted.cloned() {
+            Some(login) => self.login_accepted(login).await,
+            None => self.login_failed(reply),
+        }
+    }
+
+    /// Start heartbeating, on the period the server asked for when it named
+    /// one, and send what the plant loads before the login is done.
+    async fn login_accepted(&mut self, login: RithmicResponse) {
+        let (config, waiters) = match mem::replace(&mut self.session, Session::Connected) {
+            Session::LoggingIn { config, waiters } => (config, waiters),
+            // A close was requested while the login was on the wire.
+            other => {
+                self.session = other;
+
+                return;
             }
+        };
+
+        if let RithmicMessage::ResponseLogin(resp) = &login.message {
+            if let Some(hb) = resp.heartbeat_interval {
+                if hb > 0.0 {
+                    self.interval = get_heartbeat_interval(Some(hb as u64));
+                }
+            }
+        }
+
+        self.session = Session::Preparing {
+            config,
+            login,
+            waiters,
+        };
+
+        for (buf, id, tag) in self.kind.after_login(&mut self.rithmic_sender_api) {
+            self.register_kind_and_send(buf, id, tag).await;
+        }
+
+        self.check_ready();
+    }
+
+    /// Answer every login waiter with a login that did not succeed, exactly as
+    /// it came back, and return to `Connected` so a later login can try again.
+    fn login_failed(&mut self, reply: Reply) {
+        match mem::replace(&mut self.session, Session::Connected) {
+            Session::LoggingIn { waiters, .. } => answer_waiters(waiters, &reply),
+            // A close was requested while the login was on the wire, and its
+            // waiters were answered then.
+            other => self.session = other,
+        }
+    }
+
+    /// Finish a login once the plant has loaded what it needs.
+    fn check_ready(&mut self) {
+        if !self.kind.is_ready() {
+            return;
+        }
+
+        match mem::replace(&mut self.session, Session::Connected) {
+            Session::Preparing {
+                config,
+                login,
+                waiters,
+            } => {
+                answer_waiters(waiters, &Ok(vec![login.clone()]));
+
+                self.session = Session::Ready { config, login };
+            }
+            other => self.session = other,
         }
     }
 
@@ -465,7 +551,7 @@ where
                     self.rithmic_receiver_api.source, frame
                 );
 
-                if self.close_requested {
+                if self.close_requested() {
                     self.drain_requests();
                 } else {
                     self.fail_connection_and_drain("", RithmicError::ConnectionClosed);
@@ -590,10 +676,10 @@ where
             "{}: server sent a forced logout — stopping",
             self.rithmic_receiver_api.source
         );
-        // Drain first: the loop is about to stop, so nothing else will resolve these.
+        // Drain first: the loop is about to stop, so nothing else will resolve
+        // these. Draining also closes the session.
         self.drain_requests();
         self.emit_connection_health_event("", RithmicError::ConnectionClosed);
-        self.close_requested = true;
 
         true
     }
@@ -614,7 +700,7 @@ where
     /// After a requested close this is the expected way out (the server close
     /// echo may never arrive); otherwise it is a dead connection.
     pub(crate) fn handle_ping_timeout(&mut self) -> bool {
-        if self.close_requested {
+        if self.close_requested() {
             warn!(
                 "{}: ping timed out while waiting for server close echo — terminating",
                 self.rithmic_receiver_api.source
@@ -655,6 +741,15 @@ where
         self.send_or_fail(Message::Binary(buf.into()), &id).await;
     }
 
+    /// Register a request whose reply the plant acts on itself, then send it
+    /// like [`Self::register_and_send`].
+    pub(crate) async fn register_kind_and_send(&mut self, buf: Vec<u8>, id: String, tag: K::Tag) {
+        self.request_handler
+            .register_request(id.clone(), Tag::Kind(tag));
+
+        self.send_or_fail(Message::Binary(buf.into()), &id).await;
+    }
+
     /// Register a history replay and send it, unless its caller stopped
     /// waiting while it was queued.
     pub(crate) async fn register_replay_and_send(
@@ -669,9 +764,9 @@ where
     }
 
     pub(crate) async fn handle_close(&mut self) {
-        self.close_requested = true;
-        // Drain pending requests immediately so callers are not left waiting for
-        // a server close-echo that may never arrive (e.g. on network drop).
+        // Close the session and drain pending requests immediately so callers
+        // are not left waiting for a server close-echo that may never arrive
+        // (e.g. on network drop).
         self.drain_requests();
         self.send_close_best_effort().await;
     }
@@ -685,12 +780,57 @@ where
             .await;
     }
 
+    /// Log the session in with `config`, or join or answer the login it has.
+    ///
+    /// The first login sends the request; the session, not the request,
+    /// holds its callers. A login with the session's config joins one in
+    /// progress, or gets the kept reply once it is done. One with another
+    /// config gets [`RithmicError::LoginConflict`]. Neither sends anything.
     pub(crate) async fn handle_login(
         &mut self,
         config: LoginConfig,
         sys_infra_type: SysInfraType,
         response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
     ) {
+        match &mut self.session {
+            Session::Connected => {}
+            Session::LoggingIn {
+                config: current,
+                waiters,
+            }
+            | Session::Preparing {
+                config: current,
+                waiters,
+                ..
+            } => {
+                if *current == config {
+                    waiters.push(response_sender);
+                } else {
+                    let _ = response_sender.send(Err(RithmicError::LoginConflict));
+                }
+
+                return;
+            }
+            Session::Ready {
+                config: current,
+                login,
+            } => {
+                let reply = if *current == config {
+                    Ok(vec![login.clone()])
+                } else {
+                    Err(RithmicError::LoginConflict)
+                };
+                let _ = response_sender.send(reply);
+
+                return;
+            }
+            Session::Closing | Session::Closed => {
+                let _ = response_sender.send(Err(RithmicError::ConnectionClosed));
+
+                return;
+            }
+        }
+
         let (login_buf, id) = self.rithmic_sender_api.request_login(
             &self.config.system_name,
             sys_infra_type,
@@ -704,18 +844,27 @@ where
             self.rithmic_receiver_api.source, id
         );
 
-        self.register_and_send(login_buf, id, response_sender).await;
+        // Set before the send, so a failed write finds the waiter to answer.
+        self.session = Session::LoggingIn {
+            config,
+            waiters: vec![response_sender],
+        };
+        self.request_handler
+            .register_request(id.clone(), Tag::Login);
+
+        self.send_or_fail(Message::Binary(login_buf.into()), &id)
+            .await;
     }
 
     pub(crate) async fn handle_logout(
         &mut self,
         response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
     ) {
-        // Flip `close_requested` before any later async step: the actor handles
+        // Close the session before any later async step: the actor handles
         // commands sequentially, so anything a cloned handle queues after
-        // `Logout` was dequeued finds it set and is dropped by the guard in
-        // every plant's `handle_command`.
-        self.close_requested = true;
+        // `Logout` was dequeued finds it closing and is dropped by the guard
+        // in every plant's `handle_command`. A login still in flight fails now.
+        self.session.close(Session::Closing);
 
         let (logout_buf, id) = self.rithmic_sender_api.request_logout();
         self.register_and_send(logout_buf, id, response_sender)
@@ -740,6 +889,7 @@ mod tests {
         config::{RithmicConfig, RithmicEnv},
         error::RithmicError,
         ping_manager::PingManager,
+        plants::test_support,
         request_handler::RithmicRequestHandler,
         rti::messages::RithmicMessage,
         ws::{PING_TIMEOUT_SECS, get_heartbeat_interval, get_ping_interval},
@@ -921,9 +1071,8 @@ mod tests {
 
         let core = PlantCore {
             config,
-            close_requested: false,
             interval: get_heartbeat_interval(None),
-            logged_in: false,
+            kind: (),
             ping_interval: get_ping_interval(),
             ping_manager: PingManager::new(PING_TIMEOUT_SECS),
             request_handler,
@@ -931,6 +1080,7 @@ mod tests {
             rithmic_receiver_api,
             rithmic_sender: sink,
             rithmic_sender_api,
+            session: Session::Connected,
             subscription_sender: sub_tx,
         };
 
@@ -1039,16 +1189,54 @@ mod tests {
         Message::Binary(framed.into())
     }
 
+    /// Queue a login with `config`, returning its waiter.
+    async fn login(
+        core: &mut PlantCore<MockMessageSink>,
+        config: LoginConfig,
+    ) -> oneshot::Receiver<Result<Vec<RithmicResponse>, RithmicError>> {
+        let (tx, rx) = oneshot::channel();
+        core.handle_login(config, SysInfraType::TickerPlant, tx)
+            .await;
+
+        rx
+    }
+
+    /// The ids of the login requests the core has written so far.
+    fn sent_login_ids(core: &PlantCore<MockMessageSink>) -> Vec<String> {
+        use crate::rti::RequestLogin;
+        use prost::Message as _;
+
+        core.rithmic_sender
+            .sent_messages
+            .iter()
+            .filter_map(|message| match message {
+                Message::Binary(bytes) => RequestLogin::decode(&bytes[4..])
+                    .ok()
+                    .filter(|request| request.template_id == 10),
+                _ => None,
+            })
+            .map(|request| request.user_msg[0].clone())
+            .collect()
+    }
+
+    fn other_config() -> LoginConfig {
+        LoginConfig {
+            os_version: Some("other".to_string()),
+            ..LoginConfig::default()
+        }
+    }
+
     #[tokio::test]
     async fn an_accepted_login_reply_logs_the_actor_in_on_the_server_heartbeat() {
         let reader = make_dormant_ws_reader().await;
         let (mut core, _sub_rx) = make_test_core(MockMessageSink::ready(), reader);
-        let mut rx = register_request(&mut core, "login-1");
+        let mut rx = login(&mut core, LoginConfig::default()).await;
+        let id = sent_login_ids(&core).remove(0);
 
-        core.handle_rithmic_message(Ok(login_reply_frame("login-1", &["0"])))
+        core.handle_rithmic_message(Ok(login_reply_frame(&id, &["0"])))
             .await;
 
-        assert!(core.logged_in);
+        assert!(matches!(core.session, Session::Ready { .. }));
         assert_eq!(core.interval.period(), Duration::from_secs(30));
 
         let reply = rx.try_recv().unwrap().unwrap();
@@ -1060,12 +1248,13 @@ mod tests {
         let reader = make_dormant_ws_reader().await;
         let (mut core, _sub_rx) = make_test_core(MockMessageSink::ready(), reader);
         let default_period = core.interval.period();
-        let mut rx = register_request(&mut core, "login-1");
+        let mut rx = login(&mut core, LoginConfig::default()).await;
+        let id = sent_login_ids(&core).remove(0);
 
-        core.handle_rithmic_message(Ok(login_reply_frame("login-1", &["7", "bad"])))
+        core.handle_rithmic_message(Ok(login_reply_frame(&id, &["7", "bad"])))
             .await;
 
-        assert!(!core.logged_in);
+        assert!(matches!(core.session, Session::Connected));
         assert_eq!(core.interval.period(), default_period);
 
         let reply = rx.try_recv().unwrap().unwrap();
@@ -1075,18 +1264,180 @@ mod tests {
         );
     }
 
-    /// The caller stopped waiting after the reply arrived: the session must
+    /// The caller stopped waiting before the reply arrived: the session must
     /// still be logged in, or it never heartbeats and Rithmic drops it.
     #[tokio::test]
     async fn an_accepted_login_reply_nobody_waits_for_still_logs_the_actor_in() {
         let reader = make_dormant_ws_reader().await;
         let (mut core, _sub_rx) = make_test_core(MockMessageSink::ready(), reader);
+        drop(login(&mut core, LoginConfig::default()).await);
+        let id = sent_login_ids(&core).remove(0);
+
+        core.handle_rithmic_message(Ok(login_reply_frame(&id, &["0"])))
+            .await;
+
+        assert!(matches!(core.session, Session::Ready { .. }));
+        assert_eq!(core.interval.period(), Duration::from_secs(30));
+    }
+
+    /// Only the session's own login request logs it in. A login reply that
+    /// matches no request is dropped like any other unmatched reply.
+    #[tokio::test]
+    async fn a_login_reply_that_matches_no_request_is_ignored() {
+        let reader = make_dormant_ws_reader().await;
+        let (mut core, mut sub_rx) = make_test_core(MockMessageSink::ready(), reader);
+        let default_period = core.interval.period();
 
         core.handle_rithmic_message(Ok(login_reply_frame("login-1", &["0"])))
             .await;
 
-        assert!(core.logged_in);
-        assert_eq!(core.interval.period(), Duration::from_secs(30));
+        assert!(matches!(core.session, Session::Connected));
+        assert_eq!(core.interval.period(), default_period);
+        assert!(sub_rx.try_recv().is_err(), "a reply is not an update");
+    }
+
+    /// Concurrent logins share one request, and a login after it is done gets
+    /// the kept reply. Neither puts anything else on the wire.
+    #[tokio::test]
+    async fn one_login_request_answers_every_login_with_the_same_config() {
+        let reader = make_dormant_ws_reader().await;
+        let (mut core, _sub_rx) = make_test_core(MockMessageSink::ready(), reader);
+        let mut first = login(&mut core, LoginConfig::default()).await;
+        let mut second = login(&mut core, LoginConfig::default()).await;
+        let ids = sent_login_ids(&core);
+        assert_eq!(ids.len(), 1, "a login in progress is joined, not repeated");
+
+        core.handle_rithmic_message(Ok(login_reply_frame(&ids[0], &["0"])))
+            .await;
+
+        let mut later = login(&mut core, LoginConfig::default()).await;
+
+        for rx in [&mut first, &mut second, &mut later] {
+            let reply = rx.try_recv().unwrap().unwrap();
+            assert_eq!(reply[0].request_id, ids[0]);
+            assert!(reply[0].error.is_none());
+        }
+        assert_eq!(core.rithmic_sender.sent_messages.len(), 1);
+    }
+
+    /// A login with another config conflicts with the session's, whether its
+    /// login is still on the wire or done, and sends nothing.
+    #[tokio::test]
+    async fn a_login_with_a_different_config_conflicts_and_sends_nothing() {
+        let reader = make_dormant_ws_reader().await;
+        let (mut core, _sub_rx) = make_test_core(MockMessageSink::ready(), reader);
+        let mut first = login(&mut core, LoginConfig::default()).await;
+        let id = sent_login_ids(&core).remove(0);
+
+        let mut in_progress = login(&mut core, other_config()).await;
+        assert_eq!(
+            in_progress.try_recv().unwrap(),
+            Err(RithmicError::LoginConflict)
+        );
+
+        core.handle_rithmic_message(Ok(login_reply_frame(&id, &["0"])))
+            .await;
+        assert!(first.try_recv().unwrap().is_ok());
+
+        let mut done = login(&mut core, other_config()).await;
+        assert_eq!(done.try_recv().unwrap(), Err(RithmicError::LoginConflict));
+
+        assert_eq!(core.rithmic_sender.sent_messages.len(), 1);
+        assert!(matches!(core.session, Session::Ready { .. }));
+    }
+
+    /// A refused login leaves the plant free to try again, with any config.
+    #[tokio::test]
+    async fn a_login_after_a_refused_one_sends_a_new_request() {
+        let reader = make_dormant_ws_reader().await;
+        let (mut core, _sub_rx) = make_test_core(MockMessageSink::ready(), reader);
+        let _refused = login(&mut core, LoginConfig::default()).await;
+        let id = sent_login_ids(&core).remove(0);
+
+        core.handle_rithmic_message(Ok(login_reply_frame(&id, &["7", "bad"])))
+            .await;
+        let _retry = login(&mut core, other_config()).await;
+
+        assert_eq!(sent_login_ids(&core).len(), 2);
+        assert!(matches!(core.session, Session::LoggingIn { .. }));
+    }
+
+    /// A logout, a close, an abort, or a dropped connection fails a login
+    /// still in flight at once, rather than leaving it for a reply that may
+    /// never come.
+    #[tokio::test]
+    async fn closing_the_session_fails_a_login_in_flight() {
+        for close in ["logout", "close", "abort", "stream end"] {
+            let reader = make_dormant_ws_reader().await;
+            let (mut core, _sub_rx) = make_test_core(MockMessageSink::ready(), reader);
+            let mut rx = login(&mut core, LoginConfig::default()).await;
+            let id = sent_login_ids(&core).remove(0);
+
+            match close {
+                "logout" => core.handle_logout(oneshot::channel().0).await,
+                "close" => core.handle_close().await,
+                "abort" => assert!(core.handle_abort()),
+                _ => assert!(core.handle_stream_closed()),
+            }
+
+            assert_eq!(
+                rx.try_recv().unwrap(),
+                Err(RithmicError::ConnectionClosed),
+                "{close} must fail the login"
+            );
+
+            // The reply that arrives anyway must not reopen the session.
+            core.handle_rithmic_message(Ok(login_reply_frame(&id, &["0"])))
+                .await;
+            assert!(
+                core.close_requested(),
+                "{close} must keep the session closed"
+            );
+        }
+    }
+
+    /// Heartbeats go out once the login is accepted and until a close is
+    /// requested, and never otherwise.
+    #[tokio::test]
+    async fn heartbeats_go_out_only_while_preparing_or_ready() {
+        let Session::Ready { config, login } = test_support::logged_in_session() else {
+            unreachable!("a logged-in session is ready");
+        };
+        let sessions = [
+            (Session::Connected, false),
+            (
+                Session::LoggingIn {
+                    config: config.clone(),
+                    waiters: Vec::new(),
+                },
+                false,
+            ),
+            (
+                Session::Preparing {
+                    config: config.clone(),
+                    login: login.clone(),
+                    waiters: Vec::new(),
+                },
+                true,
+            ),
+            (Session::Ready { config, login }, true),
+            (Session::Closing, false),
+            (Session::Closed, false),
+        ];
+
+        for (session, heartbeats) in sessions {
+            let reader = make_dormant_ws_reader().await;
+            let (mut core, _sub_rx) = make_test_core(MockMessageSink::ready(), reader);
+            let name = format!("{session:?}");
+            core.session = session;
+
+            assert!(!core.send_heartbeat().await);
+            assert_eq!(
+                !core.rithmic_sender.sent_messages.is_empty(),
+                heartbeats,
+                "heartbeat sent in {name}"
+            );
+        }
     }
 
     #[tokio::test]
@@ -1211,7 +1562,7 @@ mod tests {
         let reader = make_dormant_ws_reader().await;
         let (mut core, _sub_rx) = make_test_core(MockMessageSink::ready(), reader);
 
-        core.close_requested = true;
+        core.session = Session::Closing;
         let stop = core.send_ping().await;
 
         assert!(
@@ -1283,7 +1634,7 @@ mod tests {
         let reader = make_dormant_ws_reader().await;
         let (mut core, mut sub_rx) = make_test_core(MockMessageSink::ready(), reader);
 
-        // logged_in defaults to false
+        // The session starts Connected.
         let stop = core.send_heartbeat().await;
 
         assert!(
@@ -1318,8 +1669,7 @@ mod tests {
         let reader = make_dormant_ws_reader().await;
         let (mut core, mut sub_rx) = make_test_core(MockMessageSink::ready(), reader);
 
-        core.logged_in = true;
-        core.close_requested = true;
+        core.session = Session::Closing;
         let stop = core.send_heartbeat().await;
 
         assert!(
@@ -1337,7 +1687,7 @@ mod tests {
         let reader = make_dormant_ws_reader().await;
         let (mut core, mut sub_rx) = make_test_core(MockMessageSink::error(), reader);
 
-        core.logged_in = true;
+        core.session = test_support::logged_in_session();
         let stop = core.send_heartbeat().await;
 
         assert!(stop, "send_heartbeat should return true on transport error");
@@ -1362,7 +1712,7 @@ mod tests {
         let reader = make_dormant_ws_reader().await;
         let (mut core, mut sub_rx) = make_test_core(MockMessageSink::pending(), reader);
 
-        core.logged_in = true;
+        core.session = test_support::logged_in_session();
 
         tokio::time::pause();
         let fut = core.send_heartbeat();
@@ -1382,7 +1732,7 @@ mod tests {
         let reader = make_dormant_ws_reader().await;
         let (mut core, mut sub_rx) = make_test_core(MockMessageSink::ready(), reader);
 
-        core.close_requested = true;
+        core.session = Session::Closing;
         let mut rx1 = register_request(&mut core, "req-1");
         let stop = core.handle_rithmic_message(Ok(Message::Close(None))).await;
 
@@ -1402,7 +1752,7 @@ mod tests {
         let reader = make_dormant_ws_reader().await;
         let (mut core, mut sub_rx) = make_test_core(MockMessageSink::ready(), reader);
 
-        // close_requested defaults to false
+        // The session starts Connected, so no close was requested.
         let mut rx1 = register_request(&mut core, "req-1");
         let stop = core.handle_rithmic_message(Ok(Message::Close(None))).await;
 
@@ -1420,23 +1770,23 @@ mod tests {
 
     #[tokio::test]
     async fn handle_logout_sets_close_requested_before_sending() {
-        // Regression guard for the disconnect race: `close_requested` must be
-        // set as soon as the Logout command is dequeued so that any request
+        // Regression guard for the disconnect race: the session must be
+        // closing as soon as the Logout command is dequeued so that any request
         // enqueued by a cloned handle after Logout is rejected by the
         // `handle_command` guard instead of hitting Rithmic after logout.
         let reader = make_dormant_ws_reader().await;
         let (mut core, _sub_rx) = make_test_core(MockMessageSink::ready(), reader);
         assert!(
-            !core.close_requested,
-            "fresh core starts with close_requested=false"
+            !core.close_requested(),
+            "a fresh core has no close requested"
         );
 
         let (tx, _rx) = oneshot::channel();
         core.handle_logout(tx).await;
 
         assert!(
-            core.close_requested,
-            "handle_logout must flip close_requested=true to close the disconnect race"
+            matches!(core.session, Session::Closing),
+            "handle_logout must close the session to close the disconnect race"
         );
     }
 
@@ -1629,7 +1979,7 @@ mod tests {
     }
 
     /// A server-sent `ForcedLogout` (template 77) ends the session: the actor
-    /// loop stops, `close_requested` is set, pending requests resolve with an
+    /// loop stops, the session is closed, pending requests resolve with an
     /// error, and subscribers get the frame followed by the `ConnectionError`
     /// event every stopping path emits.
     #[tokio::test]
@@ -1654,8 +2004,8 @@ mod tests {
 
         assert!(stop, "forced logout must stop the actor loop");
         assert!(
-            core.close_requested,
-            "forced logout must set close_requested"
+            matches!(core.session, Session::Closed),
+            "forced logout must close the session"
         );
 
         let result = rx
@@ -2051,9 +2401,15 @@ mod tests {
             .unwrap();
         let (subscription_sender, _) = broadcast::channel(4);
 
-        let err = PlantCore::new(subscription_sender, &config, ConnectStrategy::Retry, "test")
-            .await
-            .expect_err("nothing listens, so the deadline must end the retry");
+        let err = PlantCore::new(
+            subscription_sender,
+            &config,
+            ConnectStrategy::Retry,
+            "test",
+            (),
+        )
+        .await
+        .expect_err("nothing listens, so the deadline must end the retry");
 
         match err {
             RithmicError::ConnectionFailed(message) => assert!(

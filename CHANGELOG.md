@@ -22,6 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   contract and reports, for each, whether you got all of it.
 - `RithmicHistoryPlantHandle::load_tick_bar_replay()` and `load_time_bar_replay()`: take a `TickBarReplayRequest` or `TimeBarReplayRequest` as built, reaching fields such as `user_max_count` that the positional loaders do not.
 - `RithmicConfigBuilder::retry_timeout()` and `RithmicConfig::retry_timeout`: bound how long `ConnectStrategy::Retry` and `AlternateWithRetry` keep trying; once it passes, `connect` returns `RithmicError::ConnectionFailed` with the attempt count.
+- `RithmicError::LoginConflict`: returned by a `login()` whose `LoginConfig`
+  differs from the one the plant is logging in, or logged in, with. Disconnect
+  and connect again to change it.
+- `Eq` for `LoginConfig`.
 
 ### Deprecated
 
@@ -42,6 +46,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - If a caller stops waiting mid-reply, the rest of the reply is no longer held
   in memory.
 - An unexpected final response is logged as one `ERROR` line, not a dump.
+- A plant logs in once per connection. Concurrent `login()` calls share one
+  login request and all get its reply, and `login()` on a plant that is
+  already logged in returns the kept reply without sending anything. A
+  `login()` with a different `LoginConfig` fails with
+  `RithmicError::LoginConflict`.
 
 ### Fixed
 
@@ -54,6 +63,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The `_all` loaders' docs no longer claim they always return the whole window.
 - A login whose caller stops waiting after the reply arrives no longer leaves
   the plant without heartbeats.
+- An order plant login whose caller stops waiting after the reply, for example
+  under `tokio::time::timeout`, now still loads the login scope and trade
+  routes, so orders no longer fail with `NoTradeRoute`.
+- `disconnect()`, `abort()` or a dropped connection during a login now fails
+  that login with `ConnectionClosed` at once, instead of leaving it waiting.
 - `RithmicResponse::resume_key` is documented as the key the server's
   truncation notice carries.
 

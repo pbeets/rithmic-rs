@@ -21,6 +21,7 @@ pub mod history_plant;
 pub mod order_plant;
 /// Position and P&L tracking
 pub mod pnl_plant;
+pub(crate) mod session;
 /// Account-scoped subscription helpers for shared order/PnL plants
 pub mod subscription;
 pub(crate) mod tag;

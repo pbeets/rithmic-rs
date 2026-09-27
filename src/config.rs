@@ -212,7 +212,7 @@ impl RithmicAccount {
 /// # Ok(())
 /// # }
 /// ```
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct LoginConfig {
     /// Aggregated rather than tick-by-tick quotes. Ticker plant only.

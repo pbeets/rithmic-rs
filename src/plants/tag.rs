@@ -1,3 +1,4 @@
+use std::convert::Infallible;
 use tracing::info;
 
 use crate::{
@@ -6,17 +7,23 @@ use crate::{
 };
 
 /// What a plant keeps for each request it sends, so it knows what to do with
-/// the reply.
+/// the reply. `K` is what the plant keeps for requests it sends for itself.
 #[derive(Debug)]
-pub(crate) enum Tag {
+pub(crate) enum Tag<K = Infallible> {
     /// A handle method waiting on the reply.
     Caller(Responder),
+    /// The session's login request. Its callers wait in the session, not here.
+    Login,
+    /// A request the plant sent for itself, whose reply it acts on.
+    Kind(K),
 }
 
-impl RequestTag for Tag {
+impl<K> RequestTag for Tag<K> {
     fn abandoned(&self) -> bool {
         match self {
             Tag::Caller(responder) => responder.is_closed(),
+            // The plant acts on these replies whoever else stopped waiting.
+            Tag::Login | Tag::Kind(_) => false,
         }
     }
 }

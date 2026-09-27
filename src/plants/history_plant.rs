@@ -275,7 +275,8 @@ impl HistoryPlant {
         config: &RithmicConfig,
         strategy: ConnectStrategy,
     ) -> Result<HistoryPlant, RithmicError> {
-        let core = PlantCore::new(subscription_sender, config, strategy, "history_plant").await?;
+        let core =
+            PlantCore::new(subscription_sender, config, strategy, "history_plant", ()).await?;
 
         Ok(HistoryPlant {
             core,
@@ -317,7 +318,7 @@ impl PlantActor for HistoryPlant {
 
     async fn handle_command(&mut self, command: HistoryPlantCommand) {
         // Disconnect race guard — see `TickerPlant::handle_command`.
-        if self.core.close_requested
+        if self.core.close_requested()
             && !matches!(
                 command,
                 HistoryPlantCommand::Close | HistoryPlantCommand::Abort
@@ -472,10 +473,22 @@ impl RithmicHistoryPlantHandle {
 
     /// Log in to the Rithmic History plant
     ///
-    /// This must be called before requesting historical data
+    /// This must be called before requesting historical data.
+    ///
+    /// The plant logs in once per connection. A call with the same config made
+    /// while that login is in progress waits for it, and one made after it
+    /// returns its response at once. Neither sends anything.
     ///
     /// # Returns
-    /// The login response or an error message
+    /// The login response, once the server accepts the login.
+    ///
+    /// # Errors
+    /// * The error the server's refusal carries, usually
+    ///   [`RithmicError::RequestRejected`]. You can log in again.
+    /// * [`RithmicError::LoginConflict`] if this plant is logging in, or is
+    ///   logged in, with a different [`LoginConfig`].
+    /// * [`RithmicError::ConnectionClosed`] if the plant disconnects before
+    ///   the login is done, or has disconnected.
     pub async fn login(&self) -> Result<RithmicResponse, RithmicError> {
         self.login_with_config(LoginConfig::default()).await
     }
@@ -483,12 +496,18 @@ impl RithmicHistoryPlantHandle {
     /// Log in to the Rithmic History plant with custom configuration
     ///
     /// This must be called before requesting historical data.
+    /// `aggregated_quotes` does not apply to this plant and is ignored.
     ///
     /// # Arguments
     /// * `config` - Login configuration options. See [`LoginConfig`] for details.
     ///
     /// # Returns
-    /// The login response or an error message
+    /// The login response, once the server accepts the login.
+    ///
+    /// # Errors
+    /// As for [`login`](Self::login). [`RithmicError::LoginConflict`] means
+    /// this plant logged in, or is logging in, with a config other than
+    /// `config`.
     pub async fn login_with_config(
         &self,
         config: LoginConfig,
@@ -514,8 +533,8 @@ impl RithmicHistoryPlantHandle {
             return Err(err);
         }
 
-        // The actor marks itself logged in and adopts the server's heartbeat
-        // period when it sees this reply, so nothing here needs to reach it.
+        // The actor owns the session: it heartbeats before this reply reaches
+        // us, whether or not anyone is still waiting for it.
         if let RithmicMessage::ResponseLogin(resp) = &response.message {
             if let Some(session_id) = &resp.unique_user_id {
                 info!("history_plant: session id: {}", session_id);

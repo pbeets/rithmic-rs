@@ -15,11 +15,15 @@ use crate::{
         receiver_api::{RithmicReceiverApi, RithmicResponse},
         sender_api::RithmicSenderApi,
     },
-    config::{RithmicAccount, RithmicConfig, RithmicEnv},
+    config::{LoginConfig, RithmicAccount, RithmicConfig, RithmicEnv},
     error::RithmicError,
     ping_manager::PingManager,
-    plants::core::{PlantActor, PlantCore},
+    plants::{
+        core::{PlantActor, PlantCore, WsSink},
+        session::{PlantKind, Session},
+    },
     request_handler::RithmicRequestHandler,
+    rti::{ResponseLogin, messages::RithmicMessage},
     ws::{PING_TIMEOUT_SECS, get_heartbeat_interval, get_ping_interval},
 };
 
@@ -33,9 +37,36 @@ pub(crate) fn test_account() -> Arc<RithmicAccount> {
     Arc::new(RithmicAccount::new("FCM_A", "IB_A", "ACCOUNT_A"))
 }
 
+/// A session logged in with the default [`LoginConfig`], as a finished
+/// `login()` leaves it.
+pub(crate) fn logged_in_session() -> Session {
+    Session::Ready {
+        config: LoginConfig::default(),
+        login: RithmicResponse {
+            request_id: "1".to_string(),
+            message: RithmicMessage::ResponseLogin(ResponseLogin {
+                template_id: 11,
+                user_msg: vec!["1".to_string()],
+                rp_code: vec!["0".to_string()],
+                ..ResponseLogin::default()
+            }),
+            is_update: false,
+            has_more: false,
+            multi_response: false,
+            error: None,
+            source: "test".to_string(),
+        },
+    }
+}
+
 /// A logged-in `PlantCore` writing to the server half of a live loopback
 /// connection, returned with the client half so a test can watch the wire.
-pub(crate) async fn core_with_wire(source: &str) -> (PlantCore, TcpStream) {
+///
+/// A test that needs the core as `connect` leaves it sets its `session` to
+/// [`Session::Connected`].
+pub(crate) async fn core_with_wire<K: PlantKind + Default>(
+    source: &str,
+) -> (PlantCore<WsSink, K>, TcpStream) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let (client, server) =
@@ -64,9 +95,8 @@ pub(crate) async fn core_with_wire(source: &str) -> (PlantCore, TcpStream) {
 
     let core = PlantCore {
         config,
-        close_requested: false,
         interval: get_heartbeat_interval(None),
-        logged_in: true,
+        kind: K::default(),
         ping_interval: get_ping_interval(),
         ping_manager: PingManager::new(PING_TIMEOUT_SECS),
         request_handler,
@@ -76,6 +106,7 @@ pub(crate) async fn core_with_wire(source: &str) -> (PlantCore, TcpStream) {
         },
         rithmic_sender,
         rithmic_sender_api,
+        session: logged_in_session(),
         subscription_sender,
     };
 
@@ -84,9 +115,9 @@ pub(crate) async fn core_with_wire(source: &str) -> (PlantCore, TcpStream) {
 
 /// A plant actor built on `core_with_wire`, returned with its command sender and
 /// the client half of the socket.
-pub(crate) async fn plant_with_wire<P, C>(
+pub(crate) async fn plant_with_wire<P, C, K: PlantKind + Default>(
     source: &str,
-    build: impl FnOnce(PlantCore, mpsc::Receiver<C>) -> P,
+    build: impl FnOnce(PlantCore<WsSink, K>, mpsc::Receiver<C>) -> P,
 ) -> (P, mpsc::Sender<C>, TcpStream) {
     let (core, client) = core_with_wire(source).await;
     let (command_sender, request_receiver) = mpsc::channel(4);
@@ -123,8 +154,8 @@ pub(crate) async fn assert_close_still_sent<P: PlantActor>(
 }
 
 /// Fails the `Logout` a `disconnect()` queued, then asserts it still queues
-/// `Close`. Without that `Close` the actor is left with `close_requested`
-/// already set: no heartbeats, every later command dropped, pending requests
+/// `Close`. Without that `Close` the actor is left with its session already
+/// closing: no heartbeats, every later command dropped, pending requests
 /// never drained.
 pub(crate) async fn assert_close_follows_failed_logout<C>(
     command_receiver: &mut mpsc::Receiver<C>,
