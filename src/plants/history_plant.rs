@@ -92,6 +92,7 @@ pub(crate) enum ReplayQuery {
 /// # fn demo(ticks: Vec<RithmicResponse>) {
 /// // The last entry is the end marker; see below.
 /// let Some((_end, records)) = ticks.split_last() else { return };
+///
 /// for response in records {
 ///     if let RithmicMessage::ResponseTickBarReplay(tick) = &response.message {
 ///         println!("{:?} @ {:?}", tick.close_price, tick.data_bar_ssboe);
@@ -164,7 +165,9 @@ pub(crate) enum ReplayQuery {
 ///     // Credentials come from the environment; see examples/.env.blank.
 ///     let config = RithmicConfig::from_env(RithmicEnv::Demo)?;
 ///
-///     let plant = RithmicHistoryPlant::connect(&config, ConnectStrategy::Retry).await?;
+///     let plant =
+///         RithmicHistoryPlant::connect(&config, ConnectStrategy::Retry).await?;
+///
 ///     let handle = plant.get_handle();
 ///     handle.login().await?;
 ///
@@ -656,7 +659,9 @@ impl RithmicHistoryPlantHandle {
     ///
     /// ```no_run
     /// # use rithmic_rs::{RithmicHistoryPlantHandle, TickBarReplayRequest};
-    /// # async fn example(handle: RithmicHistoryPlantHandle) -> Result<(), Box<dyn std::error::Error>> {
+    /// # async fn example(
+    /// #     handle: RithmicHistoryPlantHandle,
+    /// # ) -> Result<(), Box<dyn std::error::Error>> {
     /// let request = TickBarReplayRequest::new()
     ///     .symbol("ESZ6")
     ///     .exchange("CME")
@@ -789,12 +794,22 @@ impl RithmicHistoryPlantHandle {
     /// check the newest bar and ask for the rest:
     ///
     /// ```no_run
-    /// # use rithmic_rs::{RithmicHistoryPlantHandle, TimeBarType, rti::messages::RithmicMessage};
+    /// # use rithmic_rs::{
+    /// #     RithmicHistoryPlantHandle, TimeBarType, rti::messages::RithmicMessage,
+    /// # };
     /// # async fn demo(handle: RithmicHistoryPlantHandle, start: i32, end: i32)
     /// #     -> Result<(), rithmic_rs::RithmicError> {
     /// let (symbol, exchange) = ("ESZ6".to_string(), "CME".to_string());
+    ///
     /// let mut bars = handle
-    ///     .load_time_bars_all(symbol.clone(), exchange.clone(), TimeBarType::MinuteBar, 1, start, end)
+    ///     .load_time_bars_all(
+    ///         symbol.clone(),
+    ///         exchange.clone(),
+    ///         TimeBarType::MinuteBar,
+    ///         1,
+    ///         start,
+    ///         end,
+    ///     )
     ///     .await?;
     ///
     /// loop {
@@ -802,14 +817,24 @@ impl RithmicHistoryPlantHandle {
     ///         RithmicMessage::ResponseTimeBarReplay(bar) => bar.marker,
     ///         _ => None,
     ///     });
+    ///
     ///     let Some(from) = newest else { break };
+    ///
     ///     if from + 60 > end {
     ///         break;
     ///     }
     ///
     ///     let rest = handle
-    ///         .load_time_bars_all(symbol.clone(), exchange.clone(), TimeBarType::MinuteBar, 1, from, end)
+    ///         .load_time_bars_all(
+    ///             symbol.clone(),
+    ///             exchange.clone(),
+    ///             TimeBarType::MinuteBar,
+    ///             1,
+    ///             from,
+    ///             end,
+    ///         )
     ///         .await?;
+    ///
     ///     if rest.iter().all(|r| r.rp_code().is_some_and(|c| !c.is_empty())) {
     ///         break; // nothing newer came back
     ///     }
@@ -918,8 +943,12 @@ impl RithmicHistoryPlantHandle {
     /// # Example
     ///
     /// ```no_run
-    /// # use rithmic_rs::{RithmicHistoryPlantHandle, TimeBarReplayRequest, TimeBarType};
-    /// # async fn example(handle: RithmicHistoryPlantHandle) -> Result<(), Box<dyn std::error::Error>> {
+    /// # use rithmic_rs::{
+    /// #     RithmicHistoryPlantHandle, TimeBarReplayRequest, TimeBarType,
+    /// # };
+    /// # async fn example(
+    /// #     handle: RithmicHistoryPlantHandle,
+    /// # ) -> Result<(), Box<dyn std::error::Error>> {
     /// let request = TimeBarReplayRequest::new()
     ///     .symbol("ESZ6")
     ///     .exchange("CME")

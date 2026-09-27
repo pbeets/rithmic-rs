@@ -61,11 +61,12 @@ pub(crate) enum PnlPlantCommand {
 /// # Example
 ///
 /// ```no_run
+/// use tokio::time::{sleep, Duration};
+///
 /// use rithmic_rs::{
 ///     RithmicAccount, RithmicConfig, RithmicEnv, ConnectStrategy, RithmicPnlPlant,
 ///     rti::messages::RithmicMessage,
 /// };
-/// use tokio::time::{sleep, Duration};
 ///
 /// #[tokio::main]
 /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -74,7 +75,8 @@ pub(crate) enum PnlPlantCommand {
 ///     let account = RithmicAccount::from_env(RithmicEnv::Demo)?;
 ///
 ///     // Step 2: Connect to the PnL plant
-///     let pnl_plant = RithmicPnlPlant::connect(&config, ConnectStrategy::Retry).await?;
+///     let pnl_plant =
+///         RithmicPnlPlant::connect(&config, ConnectStrategy::Retry).await?;
 ///
 ///     // Step 3: Get a handle to interact with the plant
 ///     let mut handle = pnl_plant.get_handle(&account);
@@ -98,6 +100,7 @@ pub(crate) enum PnlPlantCommand {
 ///                     _ => {}
 ///                 }
 ///             },
+///
 ///             Err(e) => println!("Error receiving update: {}", e),
 ///         }
 ///     }

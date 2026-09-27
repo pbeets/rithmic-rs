@@ -22,6 +22,7 @@ use crate::{
 ///
 /// ```
 /// use rithmic_rs::{OrderSide, OrderType, RithmicOrder};
+///
 /// # fn main() -> Result<(), rithmic_rs::RithmicError> {
 /// let order = RithmicOrder::new()
 ///     .symbol("ESZ6")
@@ -43,6 +44,7 @@ use crate::{
 ///
 /// ```
 /// use rithmic_rs::{OrderSide, OrderType, RithmicOrder};
+///
 /// # fn main() -> Result<(), rithmic_rs::RithmicError> {
 /// let order = RithmicOrder::new()
 ///     .symbol("ESZ6")
@@ -62,6 +64,7 @@ use crate::{
 ///
 /// ```
 /// use rithmic_rs::{OrderSide, OrderType, RithmicOrder};
+///
 /// # fn main() -> Result<(), rithmic_rs::RithmicError> {
 /// let order = RithmicOrder::new()
 ///     .symbol("ESZ6")

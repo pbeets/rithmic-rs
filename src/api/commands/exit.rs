@@ -11,11 +11,13 @@ use crate::{error::RithmicError, types::ManualOrAutoEntry};
 ///
 /// ```
 /// use rithmic_rs::RithmicExitPosition;
+///
 /// # fn main() -> Result<(), rithmic_rs::RithmicError> {
 /// let one = RithmicExitPosition::new()
 ///     .symbol("ESZ6")
 ///     .exchange("CME")
 ///     .build()?;
+///
 /// let all = RithmicExitPosition::new().build()?;
 /// # Ok(())
 /// # }

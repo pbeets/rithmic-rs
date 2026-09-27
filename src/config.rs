@@ -213,7 +213,9 @@ impl RithmicAccount {
 /// # Example
 ///
 /// ```no_run
-/// use rithmic_rs::{ConnectStrategy, LoginConfig, RithmicConfig, RithmicEnv, RithmicTickerPlant};
+/// use rithmic_rs::{
+///     ConnectStrategy, LoginConfig, RithmicConfig, RithmicEnv, RithmicTickerPlant,
+/// };
 ///
 /// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
 /// let config = RithmicConfig::from_env(RithmicEnv::Demo)?;
@@ -612,6 +614,7 @@ impl RithmicConfigBuilder {
     ///
     /// ```no_run
     /// use std::time::Duration;
+    ///
     /// use rithmic_rs::{
     ///     ConnectStrategy, RithmicConfigBuilder, RithmicEnv, RithmicTickerPlant,
     /// };

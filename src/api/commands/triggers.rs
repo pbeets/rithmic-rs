@@ -17,6 +17,7 @@ use crate::{
 ///
 /// ```
 /// use rithmic_rs::TrailingStop;
+///
 /// # fn main() -> Result<(), rithmic_rs::RithmicError> {
 /// let trailing = TrailingStop::new()
 ///     .trail_by_ticks(20)
@@ -87,6 +88,7 @@ impl TrailingStop {
 ///
 /// ```
 /// use rithmic_rs::{OrderCondition, OrderPriceField, RithmicIfTouchedTrigger};
+///
 /// # fn main() -> Result<(), rithmic_rs::RithmicError> {
 /// let trigger = RithmicIfTouchedTrigger::new()
 ///     .symbol("NQM6")

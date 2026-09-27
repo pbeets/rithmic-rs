@@ -26,7 +26,9 @@
 //!     let config = RithmicConfig::from_env(RithmicEnv::Demo)?;
 //!
 //!     // Connect with Retry strategy (recommended default)
-//!     let ticker_plant = RithmicTickerPlant::connect(&config, ConnectStrategy::Retry).await?;
+//!     let ticker_plant =
+//!         RithmicTickerPlant::connect(&config, ConnectStrategy::Retry).await?;
+//!
 //!     let mut handle = ticker_plant.get_handle();
 //!
 //!     // Login and subscribe to market data
@@ -257,7 +259,10 @@
 //!
 //! ```
 //! use rithmic_rs::RithmicResponse;
-//! use rithmic_rs::rti::{exchange_order_notification::NotifyType, messages::RithmicMessage};
+//!
+//! use rithmic_rs::rti::{
+//!     exchange_order_notification::NotifyType, messages::RithmicMessage,
+//! };
 //!
 //! fn log_rejection(update: &RithmicResponse) {
 //!     if let RithmicMessage::ExchangeOrderNotification(n) = &update.message

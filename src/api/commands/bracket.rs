@@ -25,6 +25,7 @@ use crate::{
 ///
 /// ```
 /// use rithmic_rs::{OrderSide, OrderType, RithmicBracketOrder};
+///
 /// # fn main() -> Result<(), rithmic_rs::RithmicError> {
 /// let order = RithmicBracketOrder::new()
 ///     .symbol("ESZ6")
@@ -45,6 +46,7 @@ use crate::{
 ///
 /// ```
 /// use rithmic_rs::{OrderSide, OrderType, RithmicBracketOrder};
+///
 /// # fn main() -> Result<(), rithmic_rs::RithmicError> {
 /// let order = RithmicBracketOrder::new()
 ///     .symbol("ESZ6")
@@ -158,6 +160,7 @@ pub struct RithmicBracketOrder {
 /// use rithmic_rs::RithmicBracketOrder;
 ///
 /// let sized = RithmicBracketOrder::new().quantity(2).target(8).stop(4);
+///
 /// let explicit = RithmicBracketOrder::new()
 ///     .targets([(1, 8), (1, 16)])
 ///     .stops([(2, 4)]);
@@ -504,6 +507,7 @@ impl RithmicBracketOrder {
 ///
 /// ```
 /// use rithmic_rs::RithmicBracketLevelAdjustment;
+///
 /// # fn main() -> Result<(), rithmic_rs::RithmicError> {
 /// // "123456" is the basket_id from the order notification.
 /// let adjustment = RithmicBracketLevelAdjustment::new()

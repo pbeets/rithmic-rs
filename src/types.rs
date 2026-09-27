@@ -674,6 +674,7 @@ impl From<RmsUpdateBits> for request_account_rms_updates::UpdateBits {
 ///
 /// ```
 /// use rithmic_rs::VolumeProfileMinuteBarsRequest;
+///
 /// # fn main() -> Result<(), rithmic_rs::RithmicError> {
 /// let request = VolumeProfileMinuteBarsRequest::new()
 ///     .symbol("ESZ6")
@@ -830,6 +831,7 @@ fn validate_replay_window(
 ///
 /// ```
 /// use rithmic_rs::TickBarReplayRequest;
+///
 /// # fn main() -> Result<(), rithmic_rs::RithmicError> {
 /// let request = TickBarReplayRequest::new()
 ///     .symbol("ESZ6")
@@ -966,6 +968,7 @@ impl TickBarReplayRequest {
 ///
 /// ```
 /// use rithmic_rs::{TimeBarReplayRequest, rti::request_time_bar_replay::BarType};
+///
 /// # fn main() -> Result<(), rithmic_rs::RithmicError> {
 /// let request = TimeBarReplayRequest::new()
 ///     .symbol("ESZ6")

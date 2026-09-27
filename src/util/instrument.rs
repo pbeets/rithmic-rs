@@ -12,11 +12,18 @@ use crate::rti::ResponseReferenceData;
 /// use rithmic_rs::{InstrumentInfo, InstrumentInfoError, RithmicResponse};
 /// use rithmic_rs::rti::messages::RithmicMessage;
 ///
-/// fn print_instrument(response: &RithmicResponse) -> Result<(), InstrumentInfoError> {
+/// fn print_instrument(
+///     response: &RithmicResponse,
+/// ) -> Result<(), InstrumentInfoError> {
 ///     if let RithmicMessage::ResponseReferenceData(data) = &response.message {
 ///         let info = InstrumentInfo::try_from(data)?;
-///         println!("{} on {} - tick size {:?}", info.symbol, info.exchange, info.tick_size);
+///
+///         println!(
+///             "{} on {} - tick size {:?}",
+///             info.symbol, info.exchange, info.tick_size
+///         );
 ///     }
+///
 ///     Ok(())
 /// }
 /// ```

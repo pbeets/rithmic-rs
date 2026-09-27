@@ -13,6 +13,7 @@ use crate::{
 ///
 /// ```
 /// use rithmic_rs::{OrderSide, OrderType, RithmicOcoOrderLeg};
+///
 /// # fn main() -> Result<(), rithmic_rs::RithmicError> {
 /// let take_profit = RithmicOcoOrderLeg::new()
 ///     .symbol("ESZ6")
@@ -199,6 +200,7 @@ impl RithmicOcoOrderLeg {
 ///
 /// ```
 /// use rithmic_rs::{OrderSide, OrderType, RithmicOcoOrder, RithmicOcoOrderLeg};
+///
 /// # fn main() -> Result<(), rithmic_rs::RithmicError> {
 /// let take_profit = RithmicOcoOrderLeg::new()
 ///     .symbol("ESZ6")
@@ -208,6 +210,7 @@ impl RithmicOcoOrderLeg {
 ///     .price_type(OrderType::Limit)
 ///     .price(5020.0)
 ///     .build()?;
+///
 /// let stop_loss = RithmicOcoOrderLeg::new()
 ///     .symbol("ESZ6")
 ///     .exchange("CME")

@@ -11,6 +11,7 @@ use crate::error::RithmicError;
 ///
 /// ```
 /// use rithmic_rs::RithmicLinkOrders;
+///
 /// # fn main() -> Result<(), rithmic_rs::RithmicError> {
 /// let command = RithmicLinkOrders::new()
 ///     .basket_ids(["123456", "123457"])

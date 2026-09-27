@@ -39,7 +39,10 @@ const MAX_RENDERED_BYTES: usize = 32;
 ///     };
 ///
 ///     // template_id=999999 (84 bytes) a2e135054d45535536aae13503434d45…+52B
-///     tracing::warn!(payload = %frame.payload_hex(), "unmapped template: {frame}");
+///     tracing::warn!(
+///         payload = %frame.payload_hex(),
+///         "unmapped template: {frame}"
+///     );
 ///
 ///     if frame.template_id == 999_999 {
 ///         if let Ok(decoded) = frame.decode_as::<Template999999>() {

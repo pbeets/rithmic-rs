@@ -242,10 +242,14 @@ end of the window; the README's History Plant section shows how.
 
 ```rust
 // Before — first 10,000 bars, silently
-let bars = handle.load_time_bars(symbol, exchange, BarType::MinuteBar, 5, start, end).await?;
+let bars = handle
+    .load_time_bars(symbol, exchange, BarType::MinuteBar, 5, start, end)
+    .await?;
 
 // After — the whole window
-let bars = handle.load_time_bars_all(symbol, exchange, TimeBarType::MinuteBar, 5, start, end).await?;
+let bars = handle
+    .load_time_bars_all(symbol, exchange, TimeBarType::MinuteBar, 5, start, end)
+    .await?;
 ```
 
 The whole window is buffered before the call returns, so a full 23-hour ES

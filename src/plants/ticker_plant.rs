@@ -161,7 +161,9 @@ pub(crate) enum TickerPlantCommand {
 ///     let config = RithmicConfig::from_env(RithmicEnv::Demo)?;
 ///
 ///     // Connect to the ticker plant
-///     let ticker_plant = RithmicTickerPlant::connect(&config, ConnectStrategy::Retry).await?;
+///     let ticker_plant =
+///         RithmicTickerPlant::connect(&config, ConnectStrategy::Retry).await?;
+///
 ///     let mut handle = ticker_plant.get_handle();
 ///
 ///     // Login to the ticker plant
@@ -177,10 +179,15 @@ pub(crate) enum TickerPlantCommand {
 ///                 // Check for connection errors
 ///                 if let Some(err) = &update.error {
 ///                     eprintln!("Error from {}: {}", update.source, err);
+///
 ///                     if err.is_connection_issue() {
-///                         eprintln!("Connection health issue - reconnection needed");
+///                         eprintln!(
+///                             "Connection health issue - reconnection needed"
+///                         );
+///
 ///                         break;
 ///                     }
+///
 ///                     continue;
 ///                 }
 ///
@@ -188,12 +195,15 @@ pub(crate) enum TickerPlantCommand {
 ///                     RithmicMessage::LastTrade(trade) => {
 ///                         println!("Trade: {:?}", trade);
 ///                     }
+///
 ///                     RithmicMessage::BestBidOffer(bbo) => {
 ///                         println!("BBO: {:?}", bbo);
 ///                     }
+///
 ///                     _ => {}
 ///                 }
 ///             }
+///
 ///             Err(e) => {
 ///                 eprintln!("Channel error: {}", e);
 ///                 break;
@@ -235,12 +245,17 @@ impl RithmicTickerPlant {
     ///
     /// # Example
     /// ```no_run
-    /// use rithmic_rs::{RithmicConfig, RithmicEnv, RithmicTickerPlant, ConnectStrategy};
+    /// use rithmic_rs::{
+    ///     RithmicConfig, RithmicEnv, RithmicTickerPlant, ConnectStrategy,
+    /// };
     ///
     /// #[tokio::main]
     /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
     ///     let config = RithmicConfig::from_env(RithmicEnv::Demo)?;
-    ///     let ticker_plant = RithmicTickerPlant::connect(&config, ConnectStrategy::Retry).await?;
+    ///
+    ///     let ticker_plant =
+    ///         RithmicTickerPlant::connect(&config, ConnectStrategy::Retry).await?;
+    ///
     ///     Ok(())
     /// }
     /// ```

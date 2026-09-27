@@ -32,6 +32,7 @@ use crate::{error::RithmicError, rti::messages::RithmicMessage};
 ///         if err.is_connection_issue() {
 ///             break; // reconnect
 ///         }
+///
 ///         eprintln!("{}: {err}", resp.source);
 ///         continue;
 ///     }

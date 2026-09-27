@@ -21,6 +21,7 @@ use crate::{
 ///
 /// ```
 /// use rithmic_rs::{OrderType, RithmicModifyOrder};
+///
 /// # fn main() -> Result<(), rithmic_rs::RithmicError> {
 /// // "123456" is the basket_id from the order notification.
 /// let modification = RithmicModifyOrder::new()
@@ -194,6 +195,7 @@ impl RithmicModifyOrder {
 ///
 /// ```
 /// use rithmic_rs::RithmicModifyOrderReferenceData;
+///
 /// # fn main() -> Result<(), rithmic_rs::RithmicError> {
 /// let command = RithmicModifyOrderReferenceData::new()
 ///     .basket_id("123456")

@@ -263,7 +263,8 @@ pub(crate) enum OrderPlantCommand {
 ///
 /// ```no_run
 /// use rithmic_rs::{
-///     RithmicAccount, RithmicConfig, RithmicEnv, ConnectStrategy, RithmicOrderPlant,
+///     RithmicAccount, RithmicConfig, RithmicEnv, ConnectStrategy,
+///     RithmicOrderPlant,
 ///     api::{OrderSide, OrderType, RithmicBracketOrder},
 ///     rti::messages::RithmicMessage,
 /// };
@@ -273,7 +274,9 @@ pub(crate) enum OrderPlantCommand {
 ///     let config = RithmicConfig::from_env(RithmicEnv::Demo)?;
 ///     let account = RithmicAccount::from_env(RithmicEnv::Demo)?;
 ///
-///     let order_plant = RithmicOrderPlant::connect(&config, ConnectStrategy::Retry).await?;
+///     let order_plant =
+///         RithmicOrderPlant::connect(&config, ConnectStrategy::Retry).await?;
+///
 ///     let mut handle = order_plant.get_handle(&account);
 ///
 ///     handle.login().await?;
@@ -281,18 +284,17 @@ pub(crate) enum OrderPlantCommand {
 ///     handle.subscribe_bracket_updates().await?;
 ///
 ///     // Place a bracket order
-///     let bracket_order =
-///         RithmicBracketOrder::new()
-///             .symbol("ESZ6")
-///             .exchange("CME")
-///             .quantity(1)
-///             .action(OrderSide::Buy)
-///             .price_type(OrderType::Limit)
-///             .price(4500.00)
-///             .target(8)
-///             .stop(4)
-///             .localid("order1")
-///             .build()?;
+///     let bracket_order = RithmicBracketOrder::new()
+///         .symbol("ESZ6")
+///         .exchange("CME")
+///         .quantity(1)
+///         .action(OrderSide::Buy)
+///         .price_type(OrderType::Limit)
+///         .price(4500.00)
+///         .target(8)
+///         .stop(4)
+///         .localid("order1")
+///         .build()?;
 ///
 ///     handle.place_bracket_order(bracket_order).await?;
 ///
@@ -303,10 +305,15 @@ pub(crate) enum OrderPlantCommand {
 ///                 // Check for errors on all messages
 ///                 if let Some(err) = &update.error {
 ///                     eprintln!("Error from {}: {}", update.source, err);
+///
 ///                     if err.is_connection_issue() {
-///                         eprintln!("Connection health issue - reconnection needed");
+///                         eprintln!(
+///                             "Connection health issue - reconnection needed"
+///                         );
+///
 ///                         break;
 ///                     }
+///
 ///                     continue;
 ///                 }
 ///
@@ -1152,12 +1159,16 @@ impl RithmicOrderPlantHandle {
     ///
     /// ```no_run
     /// # use rithmic_rs::{RithmicOrderPlantHandle, rti::messages::RithmicMessage};
-    /// # async fn example(handle: RithmicOrderPlantHandle) -> Result<(), Box<dyn std::error::Error>> {
+    /// # async fn example(
+    /// #     handle: RithmicOrderPlantHandle,
+    /// # ) -> Result<(), Box<dyn std::error::Error>> {
     /// handle.subscribe_order_updates().await?;
     /// let mut updates = handle.subscription_receiver.resubscribe();
     ///
     /// while let Ok(response) = updates.recv().await {
-    ///     if let RithmicMessage::ExchangeOrderNotification(order) = &response.message {
+    ///     if let RithmicMessage::ExchangeOrderNotification(order) =
+    ///         &response.message
+    ///     {
     ///         println!("{:?} filled {:?}", order.status, order.fill_size);
     ///     }
     /// }
@@ -1208,8 +1219,12 @@ impl RithmicOrderPlantHandle {
     /// each response.
     ///
     /// ```no_run
-    /// # use rithmic_rs::{OrderSide, OrderType, RithmicBracketOrder, RithmicOrderPlantHandle};
-    /// # async fn example(handle: RithmicOrderPlantHandle) -> Result<(), Box<dyn std::error::Error>> {
+    /// # use rithmic_rs::{
+    /// #     OrderSide, OrderType, RithmicBracketOrder, RithmicOrderPlantHandle,
+    /// # };
+    /// # async fn example(
+    /// #     handle: RithmicOrderPlantHandle,
+    /// # ) -> Result<(), Box<dyn std::error::Error>> {
     /// let order = RithmicBracketOrder::new()
     ///     .symbol("ESZ6")
     ///     .exchange("CME")
@@ -1289,7 +1304,9 @@ impl RithmicOrderPlantHandle {
     ///
     /// ```no_run
     /// # use rithmic_rs::{RithmicCancelOrder, RithmicOrderPlantHandle};
-    /// # async fn example(handle: RithmicOrderPlantHandle) -> Result<(), Box<dyn std::error::Error>> {
+    /// # async fn example(
+    /// #     handle: RithmicOrderPlantHandle,
+    /// # ) -> Result<(), Box<dyn std::error::Error>> {
     /// // "123456" is the basket_id from the order notification.
     /// let cancel = RithmicCancelOrder::new().id("123456").build()?;
     /// handle.cancel_order(cancel).await?;
@@ -1372,7 +1389,9 @@ impl RithmicOrderPlantHandle {
     ///
     /// ```no_run
     /// # use rithmic_rs::{rti::messages::RithmicMessage, RithmicOrderPlantHandle};
-    /// # async fn example(handle: RithmicOrderPlantHandle) -> Result<(), Box<dyn std::error::Error>> {
+    /// # async fn example(
+    /// #     handle: RithmicOrderPlantHandle,
+    /// # ) -> Result<(), Box<dyn std::error::Error>> {
     /// let mut updates = handle.subscription_receiver.resubscribe();
     /// handle.show_orders().await?;
     ///
@@ -1485,7 +1504,9 @@ impl RithmicOrderPlantHandle {
     ///
     /// ```no_run
     /// # use rithmic_rs::{RithmicOrderPlantHandle, rti::messages::RithmicMessage};
-    /// # async fn example(handle: RithmicOrderPlantHandle) -> Result<(), Box<dyn std::error::Error>> {
+    /// # async fn example(
+    /// #     handle: RithmicOrderPlantHandle,
+    /// # ) -> Result<(), Box<dyn std::error::Error>> {
     /// let mut updates = handle.subscription_receiver.resubscribe();
     ///
     /// while let Ok(response) = updates.recv().await {
@@ -1643,7 +1664,9 @@ impl RithmicOrderPlantHandle {
     ///
     /// ```no_run
     /// # use rithmic_rs::{OrderSide, OrderType, RithmicOrder, RithmicOrderPlantHandle};
-    /// # async fn example(handle: RithmicOrderPlantHandle) -> Result<(), Box<dyn std::error::Error>> {
+    /// # async fn example(
+    /// #     handle: RithmicOrderPlantHandle,
+    /// # ) -> Result<(), Box<dyn std::error::Error>> {
     /// let order = RithmicOrder::new()
     ///     .symbol("ESZ6")
     ///     .exchange("CME")
@@ -1691,8 +1714,13 @@ impl RithmicOrderPlantHandle {
     /// route for its own exchange, so a group can span exchanges.
     ///
     /// ```no_run
-    /// # use rithmic_rs::{OrderSide, OrderType, RithmicOcoOrder, RithmicOcoOrderLeg, RithmicOrderPlantHandle};
-    /// # async fn example(handle: RithmicOrderPlantHandle) -> Result<(), Box<dyn std::error::Error>> {
+    /// # use rithmic_rs::{
+    /// #     OrderSide, OrderType, RithmicOcoOrder, RithmicOcoOrderLeg,
+    /// #     RithmicOrderPlantHandle,
+    /// # };
+    /// # async fn example(
+    /// #     handle: RithmicOrderPlantHandle,
+    /// # ) -> Result<(), Box<dyn std::error::Error>> {
     /// let take_profit = RithmicOcoOrderLeg::new()
     ///     .symbol("ESZ6")
     ///     .exchange("CME")
@@ -1701,6 +1729,7 @@ impl RithmicOrderPlantHandle {
     ///     .price_type(OrderType::Limit)
     ///     .price(5020.0)
     ///     .build()?;
+    ///
     /// let stop_loss = RithmicOcoOrderLeg::new()
     ///     .symbol("ESZ6")
     ///     .exchange("CME")
@@ -1789,7 +1818,9 @@ impl RithmicOrderPlantHandle {
     ///
     /// ```no_run
     /// # use rithmic_rs::{RithmicExitPosition, RithmicOrderPlantHandle};
-    /// # async fn example(handle: RithmicOrderPlantHandle) -> Result<(), Box<dyn std::error::Error>> {
+    /// # async fn example(
+    /// #     handle: RithmicOrderPlantHandle,
+    /// # ) -> Result<(), Box<dyn std::error::Error>> {
     /// // One instrument.
     /// let one = RithmicExitPosition::new().symbol("ESZ6").exchange("CME").build()?;
     /// handle.exit_position(one).await?;
