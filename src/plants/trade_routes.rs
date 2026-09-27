@@ -261,17 +261,6 @@ mod tests {
         assert_eq!(routed(&cache, "CME").as_deref(), Some("globex"));
     }
 
-    /// What a caller handing back an update buys them: the orders that follow
-    /// take the route the server moved to.
-    #[test]
-    fn record_update_takes_the_route_off_a_350_frame() {
-        let mut cache = cache_with("CME", "globex");
-
-        cache.record_update(&trade_route_update("CME", "moved"));
-
-        assert_eq!(routed(&cache, "CME").as_deref(), Some("moved"));
-    }
-
     /// A rejection describes no route, so taking one from it would be worse
     /// than having no route at all.
     #[test]
@@ -382,8 +371,8 @@ mod tests {
         assert_eq!(routed(&cache, "CME").as_deref(), Some("the-default"));
     }
 
-    /// A caller handing back a 350 asked for that route, so it lands even where
-    /// a login frame marked the route it displaces default.
+    /// A caller handing back a 350 asked for that route, so later orders take
+    /// it even where a login frame marked the route it displaces default.
     #[test]
     fn record_update_replaces_a_route_marked_default() {
         let mut cache = TradeRouteCache::default();

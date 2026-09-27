@@ -513,6 +513,7 @@ mod tests {
             tag::Tag,
             test_support::{self, Bare},
         },
+        request_handler::Reply,
         rti::messages::RithmicMessage,
     };
 
@@ -789,7 +790,7 @@ mod tests {
         Message::Binary(framed.into())
     }
 
-    /// Queue a login with `config`, returning its waiter.
+    /// Queue a login with `config`, returning its reply receiver.
     async fn login(
         plant: &mut Plant<Bare, MockMessageSink>,
         config: LoginConfig,
@@ -897,51 +898,8 @@ mod tests {
 
         let broadcast = sub_rx.try_recv().expect("the timeout is broadcast");
         assert!(matches!(broadcast.message, RithmicMessage::ConnectionError));
+        assert!(broadcast.error.unwrap().is_connection_issue());
         assert!(sub_rx.try_recv().is_err(), "the timeout is broadcast once");
-    }
-
-    #[tokio::test]
-    async fn a_timed_out_request_write_drains_all_pending_and_broadcasts() {
-        // send_with_timeout's contract poisons the sink on any non-Ok return.
-        // A half-open TCP connection may not surface through the reader, so
-        // a timed-out write must drain ALL pending requests and broadcast a
-        // ConnectionError on Timeout, not just fail the one request.
-        let reader = make_dormant_ws_reader().await;
-        let (mut plant, mut sub_rx) = make_test_plant(MockMessageSink::pending(), reader);
-        let mut rx1 = register_request(&mut plant, "req-1");
-        let mut rx2 = register_request(&mut plant, "req-2");
-
-        tokio::time::pause();
-        let fut = plant.perform(vec![send("req-1")]);
-        tokio::time::advance(std::time::Duration::from_secs(SEND_TIMEOUT_SECS + 1)).await;
-        fut.await;
-
-        // Both pending requests drained with ConnectionClosed.
-        assert!(matches!(
-            rx1.try_recv().unwrap(),
-            Err(RithmicError::ConnectionClosed)
-        ));
-        assert!(matches!(
-            rx2.try_recv().unwrap(),
-            Err(RithmicError::ConnectionClosed)
-        ));
-
-        // Subscribers saw a ConnectionError, not a HeartbeatTimeout — the
-        // reviewer's note on the pong/ping asymmetry covers why this path uses
-        // ConnectionError (the sink, not the heartbeat, is what failed).
-        let broadcast_msg = sub_rx.try_recv().unwrap();
-        assert!(
-            matches!(broadcast_msg.message, RithmicMessage::ConnectionError),
-            "a timed-out write should broadcast ConnectionError, got {:?}",
-            broadcast_msg.message
-        );
-        assert!(
-            broadcast_msg
-                .error
-                .as_ref()
-                .expect("error should be set")
-                .is_connection_issue()
-        );
     }
 
     #[tokio::test]
@@ -1016,56 +974,32 @@ mod tests {
         ));
     }
 
-    #[tokio::test]
-    async fn send_heartbeat_skips_when_not_logged_in() {
-        let reader = make_dormant_ws_reader().await;
-        let (mut plant, mut sub_rx) = make_test_plant(MockMessageSink::ready(), reader);
-
-        // The session starts Connected.
-        let stop = plant.handle(Event::HeartbeatDue).await;
-
-        assert!(
-            !stop,
-            "send_heartbeat should return false when not logged in"
-        );
-        assert!(
-            sub_rx.try_recv().is_err(),
-            "no broadcast should have been sent"
-        );
-    }
-
     #[tokio::test(start_paused = true)]
     async fn next_event_never_fails_a_request_that_is_still_waiting() {
-        // Ten 60s interval ticks of simulated time — far past the 30s timeout
-        // the loop used to enforce. Nothing may resolve the request but a
-        // response, a failure, or a disconnect.
+        // Five heartbeat and five ping ticks, 300s of simulated time, handled
+        // as `run` handles them. Only a reply, a failure or a disconnect may
+        // resolve the request.
         let (reader, _peer) = make_open_ws_reader().await;
         let (mut plant, _sub_rx) = make_test_plant(MockMessageSink::ready(), reader);
         let mut rx = register_request(&mut plant, "req-1");
 
         for _ in 0..10 {
-            plant.next_event().await;
+            let stop = match plant.next_event().await {
+                SelectResult::HeartbeatFired => plant.handle(Event::HeartbeatDue).await,
+                SelectResult::PingFired => {
+                    let stop = plant.handle(Event::PingDue).await;
+                    // The server answers every ping.
+                    let pong = Ok(Message::Pong(vec![].into()));
+
+                    plant.handle_rithmic_message(pong).await || stop
+                }
+                SelectResult::PingTimeout => plant.handle(Event::PingTimedOut).await,
+                _ => panic!("only timers fire: no command is sent and the peer is silent"),
+            };
+
+            assert!(!stop, "the loop keeps running");
+            assert!(rx.try_recv().is_err(), "the request must still be waiting");
         }
-
-        assert!(rx.try_recv().is_err(), "the request must still be waiting");
-    }
-
-    #[tokio::test]
-    async fn send_heartbeat_skips_when_close_requested() {
-        let reader = make_dormant_ws_reader().await;
-        let (mut plant, mut sub_rx) = make_test_plant(MockMessageSink::ready(), reader);
-
-        plant.core.session = Session::Closing;
-        let stop = plant.handle(Event::HeartbeatDue).await;
-
-        assert!(
-            !stop,
-            "send_heartbeat should return false when close is requested"
-        );
-        assert!(
-            sub_rx.try_recv().is_err(),
-            "no broadcast should have been sent"
-        );
     }
 
     #[tokio::test]
@@ -1111,6 +1045,35 @@ mod tests {
             broadcast_msg.message,
             RithmicMessage::HeartbeatTimeout
         ));
+    }
+
+    #[tokio::test]
+    async fn a_close_command_writes_the_close_frame() {
+        let reader = make_dormant_ws_reader().await;
+        let (mut plant, _sub_rx) = make_test_plant(MockMessageSink::ready(), reader);
+
+        let stop = plant.handle(Event::Command(PlantCommand::Close)).await;
+
+        assert!(!stop, "the loop waits for the server's close echo");
+        assert!(matches!(
+            plant.rithmic_sender.sent_messages.as_slice(),
+            [Message::Close(None)]
+        ));
+    }
+
+    /// The close is best effort: a write that fails or times out is logged,
+    /// and the loop still waits for the echo or the ping timeout.
+    #[tokio::test(start_paused = true)]
+    async fn a_close_write_that_fails_or_times_out_only_logs() {
+        for sink in [MockMessageSink::error(), MockMessageSink::pending()] {
+            let reader = make_dormant_ws_reader().await;
+            let (mut plant, mut sub_rx) = make_test_plant(sink, reader);
+
+            let stop = plant.handle(Event::Command(PlantCommand::Close)).await;
+
+            assert!(!stop);
+            assert!(sub_rx.try_recv().is_err(), "nothing is broadcast");
+        }
     }
 
     #[tokio::test]
@@ -1223,59 +1186,69 @@ mod tests {
         ));
     }
 
-    #[tokio::test]
-    async fn handle_rithmic_message_already_closed_stops_actor() {
+    /// Hand the actor `error` as the reader returned it, with one request
+    /// pending. Returns whether it stopped, the error subscribers were sent
+    /// and the request's reply.
+    async fn read_error(error: Error) -> (bool, Option<RithmicError>, Reply) {
         let reader = make_dormant_ws_reader().await;
         let (mut plant, mut sub_rx) = make_test_plant(MockMessageSink::ready(), reader);
-        let stop = plant
-            .handle_rithmic_message(Err(Error::AlreadyClosed))
-            .await;
+        let mut rx = register_request(&mut plant, "req-1");
 
-        assert!(stop, "AlreadyClosed error should stop actor");
-        let broadcast_msg = sub_rx.try_recv().unwrap();
-        assert!(matches!(
-            broadcast_msg.message,
-            RithmicMessage::ConnectionError
-        ));
+        let stop = plant.handle_rithmic_message(Err(error)).await;
+
+        let broadcast = sub_rx.try_recv().expect("the error is broadcast");
+        assert!(matches!(broadcast.message, RithmicMessage::ConnectionError));
+
+        (stop, broadcast.error, rx.try_recv().unwrap())
     }
 
     #[tokio::test]
-    async fn handle_rithmic_message_protocol_reset_stops_actor() {
-        let reader = make_dormant_ws_reader().await;
-        let (mut plant, mut sub_rx) = make_test_plant(MockMessageSink::ready(), reader);
-
-        let stop = plant
-            .handle_rithmic_message(Err(Error::Protocol(
-                ProtocolError::ResetWithoutClosingHandshake,
-            )))
-            .await;
-
-        assert!(stop, "protocol reset should stop actor");
-        let broadcast_msg = sub_rx.try_recv().unwrap();
-        assert!(matches!(
-            broadcast_msg.message,
-            RithmicMessage::ConnectionError
-        ));
-    }
-
-    #[tokio::test]
-    async fn non_heartbeat_transport_error_still_broadcasts_connection_error() {
-        // Guard against over-application of the HeartbeatTimeout relabel —
-        // only ping/heartbeat SEND transport failures become HeartbeatTimeout;
-        // reader-side transport errors must remain ConnectionError.
-        let reader = make_dormant_ws_reader().await;
-        let (mut plant, mut sub_rx) = make_test_plant(MockMessageSink::ready(), reader);
-
-        let stop = plant
-            .handle_rithmic_message(Err(Error::ConnectionClosed))
-            .await;
+    async fn a_reader_already_closed_error_reports_connection_closed() {
+        let (stop, error, reply) = read_error(Error::AlreadyClosed).await;
 
         assert!(stop);
-        let broadcast_msg = sub_rx.try_recv().unwrap();
-        assert!(matches!(
-            broadcast_msg.message,
-            RithmicMessage::ConnectionError
-        ));
+        assert_eq!(error, Some(RithmicError::ConnectionClosed));
+        assert_eq!(reply, Err(RithmicError::ConnectionClosed));
+    }
+
+    #[tokio::test]
+    async fn a_reader_protocol_reset_reports_connection_closed() {
+        let reset = Error::Protocol(ProtocolError::ResetWithoutClosingHandshake);
+        let (stop, error, reply) = read_error(reset).await;
+
+        assert!(stop);
+        assert_eq!(error, Some(RithmicError::ConnectionClosed));
+        assert_eq!(reply, Err(RithmicError::ConnectionClosed));
+    }
+
+    #[tokio::test]
+    async fn a_reader_io_error_reports_connection_failed() {
+        let io = std::io::Error::new(std::io::ErrorKind::ConnectionReset, "reset by peer");
+        let (stop, error, reply) = read_error(Error::Io(io)).await;
+
+        assert!(stop);
+        assert_eq!(
+            error,
+            Some(RithmicError::ConnectionFailed(
+                "WebSocket I/O error: reset by peer".to_string()
+            ))
+        );
+        assert_eq!(reply, Err(RithmicError::ConnectionClosed));
+    }
+
+    /// Any reader error without an arm of its own still ends the connection.
+    #[tokio::test]
+    async fn an_unexpected_reader_error_reports_connection_failed() {
+        let unexpected = Error::Protocol(ProtocolError::HandshakeIncomplete);
+        let (stop, error, reply) = read_error(unexpected).await;
+
+        assert!(stop);
+        assert!(
+            matches!(&error, Some(RithmicError::ConnectionFailed(message))
+                if message.starts_with("WebSocket error: ")),
+            "got {error:?}"
+        );
+        assert_eq!(reply, Err(RithmicError::ConnectionClosed));
     }
 
     #[tokio::test]

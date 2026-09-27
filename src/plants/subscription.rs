@@ -125,40 +125,24 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn forwards_trade_route_updates_without_account_id() {
+    async fn forwards_updates_that_carry_no_account_id() {
         let (sender, receiver) = broadcast::channel(16);
         let mut filter = SubscriptionFilter::new(account("ACCOUNT_A"), receiver);
 
-        sender
-            .send(response(RithmicMessage::TradeRoute(TradeRoute {
+        for message in [
+            RithmicMessage::TradeRoute(TradeRoute {
                 template_id: 350,
                 ..TradeRoute::default()
-            })))
-            .unwrap();
+            }),
+            RithmicMessage::UpdateEasyToBorrowList(UpdateEasyToBorrowList {
+                template_id: 355,
+                ..UpdateEasyToBorrowList::default()
+            }),
+        ] {
+            sender.send(response(message.clone())).unwrap();
 
-        let response = filter.recv().await.unwrap();
-        assert!(matches!(response.message, RithmicMessage::TradeRoute(_)));
-    }
-
-    #[tokio::test]
-    async fn forwards_update_easy_to_borrow_messages_without_account_id() {
-        let (sender, receiver) = broadcast::channel(16);
-        let mut filter = SubscriptionFilter::new(account("ACCOUNT_A"), receiver);
-
-        sender
-            .send(response(RithmicMessage::UpdateEasyToBorrowList(
-                UpdateEasyToBorrowList {
-                    template_id: 355,
-                    ..UpdateEasyToBorrowList::default()
-                },
-            )))
-            .unwrap();
-
-        let response = filter.recv().await.unwrap();
-        assert!(matches!(
-            response.message,
-            RithmicMessage::UpdateEasyToBorrowList(_)
-        ));
+            assert_eq!(filter.recv().await.unwrap().message, message);
+        }
     }
 
     #[tokio::test]

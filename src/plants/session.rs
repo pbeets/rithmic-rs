@@ -16,13 +16,13 @@ pub(crate) enum Session {
     /// The login request is on the wire.
     LoggingIn {
         config: LoginConfig,
-        waiters: Vec<Responder>,
+        requesters: Vec<Responder>,
     },
     /// Logged in. The plant is loading what it needs before a login is done.
     Preparing {
         config: LoginConfig,
         login: RithmicResponse,
-        waiters: Vec<Responder>,
+        requesters: Vec<Responder>,
     },
     /// Logged in and loaded. A later login with the same config gets `login`.
     Ready {
@@ -49,23 +49,25 @@ impl Session {
     /// Move to `next`, failing every login still waiting with
     /// [`RithmicError::ConnectionClosed`].
     pub(crate) fn close(&mut self, next: Session) {
-        for waiter in mem::replace(self, next).into_waiters() {
-            let _ = waiter.send(Err(RithmicError::ConnectionClosed));
+        for requester in mem::replace(self, next).into_requesters() {
+            let _ = requester.send(Err(RithmicError::ConnectionClosed));
         }
     }
 
-    fn into_waiters(self) -> Vec<Responder> {
+    fn into_requesters(self) -> Vec<Responder> {
         match self {
-            Session::LoggingIn { waiters, .. } | Session::Preparing { waiters, .. } => waiters,
+            Session::LoggingIn { requesters, .. } | Session::Preparing { requesters, .. } => {
+                requesters
+            }
             _ => Vec::new(),
         }
     }
 }
 
-/// Answer every login waiter with the same reply.
-pub(crate) fn answer_waiters(waiters: Vec<Responder>, reply: &Reply) {
-    // A waiter that stopped waiting changes nothing.
-    for waiter in waiters {
-        let _ = waiter.send(reply.clone());
+/// Answer every login requester with the same reply.
+pub(crate) fn answer_requesters(requesters: Vec<Responder>, reply: &Reply) {
+    // A requester that stopped waiting changes nothing.
+    for requester in requesters {
+        let _ = requester.send(reply.clone());
     }
 }

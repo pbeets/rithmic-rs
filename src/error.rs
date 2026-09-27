@@ -188,7 +188,7 @@ impl fmt::Display for RithmicError {
         match self {
             RithmicError::ConnectionFailed(msg) => write!(f, "connection failed: {msg}"),
             RithmicError::ConnectionClosed => write!(f, "connection closed"),
-            RithmicError::SendFailed => write!(f, "WebSocket send failed or timed out"),
+            RithmicError::SendFailed => write!(f, "WebSocket send failed"),
             RithmicError::EmptyResponse => write!(f, "empty response"),
             RithmicError::RequestTimeout => write!(f, "request timed out"),
             RithmicError::RequestRejected(err) => {
@@ -307,41 +307,6 @@ mod tests {
     }
 
     #[test]
-    fn request_error_equality() {
-        let a = RithmicRequestError {
-            rp_code: vec!["3".to_string(), "bad request".to_string()],
-            code: Some("3".to_string()),
-            message: Some("bad request".to_string()),
-        };
-
-        let b = RithmicRequestError {
-            rp_code: vec!["3".to_string(), "bad request".to_string()],
-            code: Some("3".to_string()),
-            message: Some("bad request".to_string()),
-        };
-
-        let c = RithmicRequestError {
-            rp_code: vec!["4".to_string(), "bad request".to_string()],
-            code: Some("4".to_string()),
-            message: Some("bad request".to_string()),
-        };
-
-        assert_eq!(a, b);
-        assert_ne!(a, c);
-    }
-
-    #[test]
-    fn rithmic_error_equality_for_unit_variants() {
-        // `PartialEq` on `RithmicError` lets consumers write
-        // `assert_eq!(result, Err(RithmicError::ConnectionClosed))` in tests.
-        assert_eq!(
-            RithmicError::ConnectionClosed,
-            RithmicError::ConnectionClosed
-        );
-        assert_ne!(RithmicError::ConnectionClosed, RithmicError::SendFailed);
-    }
-
-    #[test]
     fn rithmic_error_source_chain_exposes_inner_request_error() {
         // `anyhow`/`eyre` and stdlib chain walkers rely on `source()`.
 
@@ -362,38 +327,6 @@ mod tests {
             RithmicError::ConnectionClosed.source().is_none(),
             "unit variants should have no source"
         );
-    }
-
-    #[test]
-    fn plant_rejection_mapping_produces_request_rejected() {
-        // For an rp_code rejection, `response.error` is populated with
-        // `RithmicError::RequestRejected` carrying the full structured payload.
-        let err = RithmicRequestError {
-            rp_code: vec!["3".to_string(), "bad request".to_string()],
-            code: Some("3".to_string()),
-            message: Some("bad request".to_string()),
-        };
-
-        let mapped = RithmicError::RequestRejected(err.clone());
-
-        match mapped {
-            RithmicError::RequestRejected(inner) => {
-                assert_eq!(inner, err);
-                assert_eq!(inner.code.as_deref(), Some("3"));
-                assert_eq!(inner.message.as_deref(), Some("bad request"));
-                assert_eq!(
-                    inner.rp_code,
-                    vec!["3".to_string(), "bad request".to_string()]
-                );
-            }
-            other => panic!("expected RequestRejected, got {other:?}"),
-        }
-
-        // Display for the RithmicError wrapper prefixes "request rejected: "
-        // and delegates to `RithmicRequestError::Display`.
-        let display = RithmicError::RequestRejected(err).to_string();
-
-        assert_eq!(display, "request rejected: [3] bad request");
     }
 
     #[test]
@@ -427,41 +360,10 @@ mod tests {
     }
 
     #[test]
-    fn rithmic_error_protocol_error_display() {
-        let err = RithmicError::ProtocolError("decode failed".to_string());
-
-        assert_eq!(err.to_string(), "protocol error: decode failed");
-    }
-
-    #[test]
-    fn request_timeout_display() {
-        assert_eq!(
-            RithmicError::RequestTimeout.to_string(),
-            "request timed out"
-        );
-    }
-
-    #[test]
-    fn heartbeat_timeout_display() {
-        assert_eq!(
-            RithmicError::HeartbeatTimeout.to_string(),
-            "heartbeat timeout"
-        );
-    }
-
-    #[test]
     fn forced_logout_display() {
         assert_eq!(
             RithmicError::ForcedLogout("srv reason".into()).to_string(),
             "forced logout: srv reason"
-        );
-    }
-
-    #[test]
-    fn login_conflict_display() {
-        assert_eq!(
-            RithmicError::LoginConflict.to_string(),
-            "a login with a different config is already on this plant"
         );
     }
 

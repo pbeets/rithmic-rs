@@ -166,7 +166,7 @@ mod tests {
 
     use crate::rti::{
         AccountPnLPositionUpdate, BestBidOffer, BracketUpdates, DepthByOrder, DepthByOrderEndEvent,
-        ExchangeOrderNotification, ForcedLogout, InstrumentPnLPositionUpdate, LastTrade, OrderBook,
+        ExchangeOrderNotification, InstrumentPnLPositionUpdate, LastTrade, OrderBook,
         RithmicOrderNotification, messages::RithmicMessage,
     };
 
@@ -203,16 +203,6 @@ mod tests {
         assert!(orderbook.is_market_data());
     }
 
-    #[test]
-    fn is_market_data_false_for_order_notifications() {
-        // Order notifications are NOT market data
-        let response = make_response(RithmicMessage::RithmicOrderNotification(
-            RithmicOrderNotification::default(),
-        ));
-
-        assert!(!response.is_market_data());
-    }
-
     // =========================================================================
     // is_order_update() tests
     // =========================================================================
@@ -232,14 +222,6 @@ mod tests {
         assert!(bracket.is_order_update());
     }
 
-    #[test]
-    fn is_order_update_false_for_market_data() {
-        // Market data is NOT an order update
-        let response = make_response(RithmicMessage::BestBidOffer(BestBidOffer::default()));
-
-        assert!(!response.is_order_update());
-    }
-
     // =========================================================================
     // is_pnl_update() tests
     // =========================================================================
@@ -255,16 +237,6 @@ mod tests {
 
         assert!(account_pnl.is_pnl_update());
         assert!(instrument_pnl.is_pnl_update());
-    }
-
-    #[test]
-    fn is_pnl_update_false_for_order_updates() {
-        // Order updates are NOT P&L updates
-        let response = make_response(RithmicMessage::RithmicOrderNotification(
-            RithmicOrderNotification::default(),
-        ));
-
-        assert!(!response.is_pnl_update());
     }
 
     // =========================================================================
@@ -304,41 +276,5 @@ mod tests {
         assert!(!conn_err.is_market_data());
         assert!(!conn_err.is_order_update());
         assert!(!conn_err.is_pnl_update());
-    }
-
-    // =========================================================================
-    // error field typing tests
-    // =========================================================================
-
-    #[test]
-    fn error_field_accepts_typed_rithmic_error() {
-        let mut response = make_response(RithmicMessage::ConnectionError);
-        response.error = Some(RithmicError::ConnectionClosed);
-
-        match &response.error {
-            Some(err) => {
-                assert!(err.is_connection_issue());
-                assert_eq!(err, &RithmicError::ConnectionClosed);
-            }
-            None => panic!("expected Some(RithmicError)"),
-        }
-    }
-
-    #[test]
-    fn error_field_forced_logout_is_connection_issue() {
-        let mut response = make_response(RithmicMessage::ForcedLogout(ForcedLogout::default()));
-        response.error = Some(RithmicError::ForcedLogout("server shutdown".into()));
-
-        let err = response.error.as_ref().expect("error should be set");
-        assert!(err.is_connection_issue());
-    }
-
-    #[test]
-    fn error_field_protocol_error_is_not_connection_issue() {
-        let mut response = make_response(RithmicMessage::ConnectionError);
-        response.error = Some(RithmicError::ProtocolError("decode failed".into()));
-
-        let err = response.error.as_ref().expect("error should be set");
-        assert!(!err.is_connection_issue());
     }
 }

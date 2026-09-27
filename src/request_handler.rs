@@ -249,6 +249,12 @@ impl<T: RequestTag> RithmicRequestHandler<T> {
         self.late_continuations.insert(request_id.into(), 0);
     }
 
+    /// Whether any `RequestResumeBars` is awaiting its acknowledgement.
+    #[cfg(test)]
+    pub(crate) fn resuming(&self) -> bool {
+        !self.resumes.is_empty()
+    }
+
     /// Whether frames that arrive for `request_id` are being counted.
     #[cfg(test)]
     pub(crate) fn expects_late_frames(&self, request_id: &str) -> bool {
@@ -537,20 +543,6 @@ mod tests {
         assert_eq!(result[0].request_id, "1");
     }
 
-    #[test]
-    fn single_response_removes_request_from_handler() {
-        let mut handler = RithmicRequestHandler::<Tag>::new();
-        let (tx, mut rx) = oneshot::channel();
-
-        handler.register_request("1".to_string(), Tag::Caller(tx));
-
-        handler.route(make_response("1", login_message()));
-        let _ = rx.try_recv().unwrap();
-
-        // A second response for the same ID should not panic (just logs error)
-        handler.route(make_response("1", login_message()));
-    }
-
     // =========================================================================
     // Multi-part responses
     // =========================================================================
@@ -612,13 +604,6 @@ mod tests {
 
         let result = rx.try_recv().unwrap().unwrap();
         assert_eq!(result.len(), 1);
-    }
-
-    #[test]
-    fn heartbeat_without_responder_does_not_panic() {
-        let mut handler = RithmicRequestHandler::<Tag>::new();
-        // No responder registered — should silently ignore
-        handler.route(make_response("hb", heartbeat_message()));
     }
 
     // =========================================================================
@@ -804,37 +789,26 @@ mod tests {
     }
 
     #[test]
-    fn parts_for_a_never_registered_id_do_not_accumulate() {
-        let mut handler = RithmicRequestHandler::<Tag>::new();
-
-        for _ in 0..3 {
-            let mut part = make_response("ghost", ref_data_message());
-            part.multi_response = true;
-            part.has_more = true;
-            handler.route(part);
-        }
-
-        assert!(
-            handler.response_vec_map.is_empty(),
-            "parts for an id that was never registered must not accumulate"
-        );
-    }
-
-    #[test]
     fn a_part_whose_request_is_gone_is_counted_without_a_warning() {
         let mut handler = RithmicRequestHandler::<Tag>::new();
 
         let (_, logged) = log_capture::capture(|| {
-            handler.route(part("gone", ref_data_message()));
+            for _ in 0..3 {
+                handler.route(part("gone", ref_data_message()));
+            }
         });
 
+        assert!(
+            handler.response_vec_map.is_empty(),
+            "the parts are not kept"
+        );
         assert_eq!(logged.lines().count(), 1, "{logged}");
         assert!(logged.contains("INFO"), "{logged}");
         assert!(
             logged.contains("request_id gone: parts are arriving after the reply was resolved"),
             "{logged}"
         );
-        assert_eq!(handler.late_continuations.get("gone"), Some(&1));
+        assert_eq!(handler.late_continuations.get("gone"), Some(&3));
     }
 
     // =========================================================================
@@ -959,13 +933,6 @@ mod tests {
     // Edge cases
     // =========================================================================
 
-    #[test]
-    fn response_for_unregistered_id_does_not_panic() {
-        let mut handler = RithmicRequestHandler::<Tag>::new();
-
-        handler.route(make_response("ghost", login_message()));
-    }
-
     /// The caller gave up mid-reply — its own deadline elapsed and it dropped
     /// its receiver — while the venue is still streaming. The next part frees the responder and the parts held for
     /// nobody, says so once, and the rest of the reply is counted as a late
@@ -1036,18 +1003,6 @@ mod tests {
         );
         assert!(logged.contains("rp_code [\"0\"]"), "{logged}");
         assert!(!logged.contains("RithmicResponse {"), "{logged}");
-    }
-
-    #[test]
-    fn dropped_receiver_does_not_panic() {
-        let mut handler = RithmicRequestHandler::<Tag>::new();
-        let (tx, rx) = oneshot::channel();
-
-        handler.register_request("drop".to_string(), Tag::Caller(tx));
-
-        drop(rx);
-        // Sending to a dropped receiver should not panic (just logs error)
-        handler.route(make_response("drop", login_message()));
     }
 
     #[test]

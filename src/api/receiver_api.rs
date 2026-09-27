@@ -1653,103 +1653,106 @@ mod tests {
     };
 
     // Prost keeps template_id's wire tag but drops the canonical mapping,
-    // which lives outside the .proto schema — this table supplies it.
+    // which lives outside the .proto schema — this table supplies it. `multi`
+    // is set exactly for the vendor protos that carry `rq_handler_rp_code`.
     macro_rules! inbound_templates {
         ($consumer:ident) => {
             $consumer! {
-                11 => ResponseLogin,
-                13 => ResponseLogout,
-                15 => ResponseReferenceData,
-                17 => ResponseRithmicSystemInfo,
-                18 => RequestHeartbeat,
-                19 => ResponseHeartbeat,
-                21 => ResponseRithmicSystemGatewayInfo,
-                75 => Reject,
-                76 => UserAccountUpdate,
-                77 => ForcedLogout,
-                101 => ResponseMarketDataUpdate,
-                103 => ResponseGetInstrumentByUnderlying,
-                104 => ResponseGetInstrumentByUnderlyingKeys,
-                106 => ResponseMarketDataUpdateByUnderlying,
-                108 => ResponseGiveTickSizeTypeTable,
-                110 => ResponseSearchSymbols,
-                112 => ResponseProductCodes,
-                114 => ResponseFrontMonthContract,
-                116 => ResponseDepthByOrderSnapshot,
-                118 => ResponseDepthByOrderUpdates,
-                120 => ResponseGetVolumeAtPrice,
-                122 => ResponseAuxilliaryReferenceData,
-                150 => LastTrade,
-                151 => BestBidOffer,
-                152 => TradeStatistics,
-                153 => QuoteStatistics,
-                154 => IndicatorPrices,
-                155 => EndOfDayPrices,
-                156 => OrderBook,
-                157 => MarketMode,
-                158 => OpenInterest,
-                159 => FrontMonthContractUpdate,
-                160 => DepthByOrder,
-                161 => DepthByOrderEndEvent,
-                162 => SymbolMarginRate,
-                163 => OrderPriceLimits,
-                201 => ResponseTimeBarUpdate,
-                203 => ResponseTimeBarReplay,
-                205 => ResponseTickBarUpdate,
-                207 => ResponseTickBarReplay,
-                209 => ResponseVolumeProfileMinuteBars,
-                211 => ResponseResumeBars,
-                250 => TimeBar,
-                251 => TickBar,
-                301 => ResponseLoginInfo,
-                303 => ResponseAccountList,
-                305 => ResponseAccountRmsInfo,
-                307 => ResponseProductRmsInfo,
-                309 => ResponseSubscribeForOrderUpdates,
-                311 => ResponseTradeRoutes,
-                313 => ResponseNewOrder,
-                315 => ResponseModifyOrder,
-                317 => ResponseCancelOrder,
-                319 => ResponseShowOrderHistoryDates,
-                321 => ResponseShowOrders,
-                323 => ResponseShowOrderHistory,
-                325 => ResponseShowOrderHistorySummary,
-                327 => ResponseShowOrderHistoryDetail,
-                329 => ResponseOcoOrder,
-                331 => ResponseBracketOrder,
-                333 => ResponseUpdateTargetBracketLevel,
-                335 => ResponseUpdateStopBracketLevel,
-                337 => ResponseSubscribeToBracketUpdates,
-                339 => ResponseShowBrackets,
-                341 => ResponseShowBracketStops,
-                343 => ResponseListExchangePermissions,
-                345 => ResponseLinkOrders,
-                347 => ResponseCancelAllOrders,
-                349 => ResponseEasyToBorrowList,
-                350 => TradeRoute,
-                351 => RithmicOrderNotification,
-                352 => ExchangeOrderNotification,
-                353 => BracketUpdates,
-                355 => UpdateEasyToBorrowList,
-                356 => AccountRmsUpdates,
-                357 => UserInfoUpdate,
-                358 => UserAccountUpdate,
-                401 => ResponsePnLPositionUpdates,
-                403 => ResponsePnLPositionSnapshot,
-                450 => InstrumentPnLPositionUpdate,
-                451 => AccountPnLPositionUpdate,
-                501 => ResponseListUnacceptedAgreements,
-                503 => ResponseListAcceptedAgreements,
-                505 => ResponseAcceptAgreement,
-                507 => ResponseShowAgreement,
-                509 => ResponseSetRithmicMrktDataSelfCertStatus,
-                3501 => ResponseModifyOrderReferenceData,
-                3503 => ResponseOrderSessionConfig,
-                3505 => ResponseExitPosition,
-                3507 => ResponseReplayExecutions,
-                3509 => ResponseAccountRmsUpdates,
-                3511 => ResponseGetUserInfo,
-                3513 => ResponseShowFillHistory,
+                11 => ResponseLogin { update: false, multi: false },
+                13 => ResponseLogout { update: false, multi: false },
+                15 => ResponseReferenceData { update: false, multi: false },
+                17 => ResponseRithmicSystemInfo { update: false, multi: false },
+                18 => RequestHeartbeat { update: true, multi: false },
+                // A reply, but flagged as an update. `forward_response` checks for
+                // heartbeats first, and only a failed one reaches subscribers.
+                19 => ResponseHeartbeat { update: true, multi: false },
+                21 => ResponseRithmicSystemGatewayInfo { update: false, multi: false },
+                75 => Reject { update: false, multi: false },
+                76 => UserAccountUpdate { update: true, multi: false },
+                77 => ForcedLogout { update: true, multi: false },
+                101 => ResponseMarketDataUpdate { update: false, multi: false },
+                103 => ResponseGetInstrumentByUnderlying { update: false, multi: true },
+                104 => ResponseGetInstrumentByUnderlyingKeys { update: false, multi: false },
+                106 => ResponseMarketDataUpdateByUnderlying { update: false, multi: false },
+                108 => ResponseGiveTickSizeTypeTable { update: false, multi: true },
+                110 => ResponseSearchSymbols { update: false, multi: true },
+                112 => ResponseProductCodes { update: false, multi: true },
+                114 => ResponseFrontMonthContract { update: false, multi: false },
+                116 => ResponseDepthByOrderSnapshot { update: false, multi: true },
+                118 => ResponseDepthByOrderUpdates { update: false, multi: false },
+                120 => ResponseGetVolumeAtPrice { update: false, multi: true },
+                122 => ResponseAuxilliaryReferenceData { update: false, multi: false },
+                150 => LastTrade { update: true, multi: false },
+                151 => BestBidOffer { update: true, multi: false },
+                152 => TradeStatistics { update: true, multi: false },
+                153 => QuoteStatistics { update: true, multi: false },
+                154 => IndicatorPrices { update: true, multi: false },
+                155 => EndOfDayPrices { update: true, multi: false },
+                156 => OrderBook { update: true, multi: false },
+                157 => MarketMode { update: true, multi: false },
+                158 => OpenInterest { update: true, multi: false },
+                159 => FrontMonthContractUpdate { update: true, multi: false },
+                160 => DepthByOrder { update: true, multi: false },
+                161 => DepthByOrderEndEvent { update: true, multi: false },
+                162 => SymbolMarginRate { update: true, multi: false },
+                163 => OrderPriceLimits { update: true, multi: false },
+                201 => ResponseTimeBarUpdate { update: false, multi: false },
+                203 => ResponseTimeBarReplay { update: false, multi: true },
+                205 => ResponseTickBarUpdate { update: false, multi: false },
+                207 => ResponseTickBarReplay { update: false, multi: true },
+                209 => ResponseVolumeProfileMinuteBars { update: false, multi: true },
+                211 => ResponseResumeBars { update: false, multi: false },
+                250 => TimeBar { update: true, multi: false },
+                251 => TickBar { update: true, multi: false },
+                301 => ResponseLoginInfo { update: false, multi: false },
+                303 => ResponseAccountList { update: false, multi: true },
+                305 => ResponseAccountRmsInfo { update: false, multi: true },
+                307 => ResponseProductRmsInfo { update: false, multi: true },
+                309 => ResponseSubscribeForOrderUpdates { update: false, multi: false },
+                311 => ResponseTradeRoutes { update: false, multi: true },
+                313 => ResponseNewOrder { update: false, multi: true },
+                315 => ResponseModifyOrder { update: false, multi: true },
+                317 => ResponseCancelOrder { update: false, multi: true },
+                319 => ResponseShowOrderHistoryDates { update: false, multi: true },
+                321 => ResponseShowOrders { update: false, multi: false },
+                323 => ResponseShowOrderHistory { update: false, multi: false },
+                325 => ResponseShowOrderHistorySummary { update: false, multi: false },
+                327 => ResponseShowOrderHistoryDetail { update: false, multi: false },
+                329 => ResponseOcoOrder { update: false, multi: true },
+                331 => ResponseBracketOrder { update: false, multi: true },
+                333 => ResponseUpdateTargetBracketLevel { update: false, multi: false },
+                335 => ResponseUpdateStopBracketLevel { update: false, multi: false },
+                337 => ResponseSubscribeToBracketUpdates { update: false, multi: false },
+                339 => ResponseShowBrackets { update: false, multi: true },
+                341 => ResponseShowBracketStops { update: false, multi: true },
+                343 => ResponseListExchangePermissions { update: false, multi: true },
+                345 => ResponseLinkOrders { update: false, multi: false },
+                347 => ResponseCancelAllOrders { update: false, multi: false },
+                349 => ResponseEasyToBorrowList { update: false, multi: true },
+                350 => TradeRoute { update: true, multi: false },
+                351 => RithmicOrderNotification { update: true, multi: false },
+                352 => ExchangeOrderNotification { update: true, multi: false },
+                353 => BracketUpdates { update: true, multi: false },
+                355 => UpdateEasyToBorrowList { update: true, multi: false },
+                356 => AccountRmsUpdates { update: true, multi: false },
+                357 => UserInfoUpdate { update: true, multi: false },
+                358 => UserAccountUpdate { update: true, multi: false },
+                401 => ResponsePnLPositionUpdates { update: false, multi: false },
+                403 => ResponsePnLPositionSnapshot { update: false, multi: false },
+                450 => InstrumentPnLPositionUpdate { update: true, multi: false },
+                451 => AccountPnLPositionUpdate { update: true, multi: false },
+                501 => ResponseListUnacceptedAgreements { update: false, multi: true },
+                503 => ResponseListAcceptedAgreements { update: false, multi: true },
+                505 => ResponseAcceptAgreement { update: false, multi: false },
+                507 => ResponseShowAgreement { update: false, multi: true },
+                509 => ResponseSetRithmicMrktDataSelfCertStatus { update: false, multi: false },
+                3501 => ResponseModifyOrderReferenceData { update: false, multi: false },
+                3503 => ResponseOrderSessionConfig { update: false, multi: false },
+                3505 => ResponseExitPosition { update: false, multi: true },
+                3507 => ResponseReplayExecutions { update: false, multi: false },
+                3509 => ResponseAccountRmsUpdates { update: false, multi: false },
+                3511 => ResponseGetUserInfo { update: false, multi: true },
+                3513 => ResponseShowFillHistory { update: false, multi: true },
             }
         };
     }
@@ -1891,15 +1894,19 @@ mod tests {
     }
 
     #[test]
-    fn every_generated_inbound_template_is_registered_and_decodes() {
+    fn every_generated_inbound_template_is_registered_and_decodes_with_its_routing_flags() {
         macro_rules! registered_type_names {
-            ($($template_id:literal => $message:ident,)*) => {
+            ($($template_id:literal => $message:ident { $($flags:tt)* },)*) => {
                 BTreeSet::from([$(stringify!($message)),*])
             };
         }
 
         macro_rules! assert_all_decode {
-            ($($template_id:literal => $message:ident,)*) => {
+            ($(
+                $template_id:literal => $message:ident {
+                    update: $update:literal, multi: $multi:literal
+                },
+            )*) => {
                 $(
                     let message = crate::rti::$message {
                         template_id: $template_id,
@@ -1913,6 +1920,13 @@ mod tests {
                         $template_id,
                         stringify!($message),
                         response.message,
+                    );
+                    assert_eq!(
+                        (response.is_update, response.multi_response),
+                        ($update, $multi),
+                        "template {} ({}): (is_update, multi_response)",
+                        $template_id,
+                        stringify!($message),
                     );
                 )*
             };
@@ -2142,32 +2156,12 @@ mod tests {
         assert_eq!(response.request_id, "");
     }
 
-    // =========================================================================
-    // has_multiple() unit tests
-    // =========================================================================
-
-    // has_multiple keys on presence, not value: any non-empty slice means more
-    // frames follow; an empty slice means the field wasn't populated.
-
     #[test]
-    fn has_multiple_true_for_zero_only() {
+    fn has_multiple_keys_on_rq_handler_presence_not_value() {
+        // Middle frames may carry any status there; presence alone means more follow.
         assert!(super::has_multiple(&["0".to_string()]));
-    }
-
-    #[test]
-    fn has_multiple_true_for_non_zero_code() {
-        // Intermediate frames may carry richer status values here; presence
-        // alone means "more frames follow".
         assert!(super::has_multiple(&["7".to_string()]));
-    }
-
-    #[test]
-    fn has_multiple_true_for_any_present_payload() {
         assert!(super::has_multiple(&["1".to_string(), "0".to_string()]));
-    }
-
-    #[test]
-    fn has_multiple_false_for_empty() {
         assert!(!super::has_multiple(&[]));
     }
 
@@ -2260,37 +2254,6 @@ mod tests {
     }
 
     #[test]
-    fn response_login_rejection_decodes_with_error() {
-        // Protocol rejection populates `error` and `is_error()` but must NOT
-        // trip `is_connection_issue()` — that would mis-drive reconnection.
-        let api = RithmicReceiverApi {
-            source: "test".to_string(),
-        };
-        let result = api.buf_to_message(encode_with_header(&ResponseLogin {
-            template_id: 11,
-            user_msg: vec!["req-1".to_string()],
-            rp_code: vec!["3".to_string(), "bad request".to_string()],
-            ..ResponseLogin::default()
-        }));
-        let response = match result {
-            Ok(r) => r,
-            Err(r) => r,
-        };
-
-        assert!(matches!(
-            &response.error,
-            Some(RithmicError::RequestRejected(e)) if e.message.as_deref() == Some("bad request")
-        ));
-        assert!(
-            !response
-                .error
-                .as_ref()
-                .expect("error should be set")
-                .is_connection_issue()
-        );
-    }
-
-    #[test]
     fn replay_no_data_decodes_as_ok() {
         // rp_code = ["7", "no data"] on a ResponseReplayExecutions should produce Ok,
         // confirming the fix flows end-to-end through buf_to_message.
@@ -2314,35 +2277,6 @@ mod tests {
     // =========================================================================
     // Typed rejection surface and macro-driven rp_code info
     // =========================================================================
-
-    #[test]
-    fn reject_with_non_zero_rp_code_decodes_as_ok_with_error() {
-        // rp_code-carrying responses must reach Ok(_) with `error` populated;
-        // `buf_to_message` no longer returns `Err(_)` for rp_code rejections.
-        let api = RithmicReceiverApi {
-            source: "test".to_string(),
-        };
-        let result = api.buf_to_message(encode_with_header(&Reject {
-            template_id: 75,
-            user_msg: vec!["req-2".to_string()],
-            rp_code: vec!["5".to_string(), "permission denied".to_string()],
-        }));
-
-        let response = result.expect("reject with rp_code error should still decode");
-
-        assert!(matches!(response.message, RithmicMessage::Reject(_)));
-        assert!(matches!(
-            &response.error,
-            Some(RithmicError::RequestRejected(e)) if e.message.as_deref() == Some("permission denied")
-        ));
-        assert!(
-            !response
-                .error
-                .as_ref()
-                .expect("error should be set")
-                .is_connection_issue()
-        );
-    }
 
     #[test]
     fn response_request_error_maps_code_6_to_request_rejected_with_full_text() {

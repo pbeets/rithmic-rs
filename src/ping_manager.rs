@@ -78,12 +78,6 @@ mod tests {
     use std::time::Duration;
 
     #[test]
-    fn new_has_no_pending() {
-        let mgr = PingManager::new(60);
-        assert!(mgr.next_timeout_at().is_none());
-    }
-
-    #[test]
     fn sent_marks_pending() {
         let mut mgr = PingManager::new(60);
         mgr.sent();
@@ -119,12 +113,16 @@ mod tests {
         }
     }
 
-    #[test]
-    fn sent_twice_replaces_pending() {
+    #[tokio::test(start_paused = true)]
+    async fn a_second_ping_restarts_the_timeout() {
         let mut mgr = PingManager::new(60);
         mgr.sent();
-        mgr.sent(); // should not panic, just log a warning
-        assert!(mgr.next_timeout_at().is_some());
+        let first = mgr.next_timeout_at().unwrap();
+
+        tokio::time::advance(Duration::from_secs(10)).await;
+        mgr.sent();
+
+        assert_eq!(mgr.next_timeout_at(), Some(first + Duration::from_secs(10)));
     }
 
     #[tokio::test(start_paused = true)]

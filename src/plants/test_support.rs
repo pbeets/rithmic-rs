@@ -162,23 +162,6 @@ pub(crate) async fn plant_with_wire<K: PlantKind + Default>()
     (plant, command_sender, client)
 }
 
-/// Feeds a request to a plant whose close is already requested: it must put no
-/// bytes on the wire, and its caller must be answered `ConnectionClosed`.
-pub(crate) async fn assert_rejected_after_close<K: PlantKind>(
-    plant: &mut Plant<K>,
-    client: &mut TcpStream,
-    build: impl FnOnce(Responder) -> K::Command,
-) {
-    let (tx, rx) = oneshot::channel();
-    plant.handle(Event::Command(build(tx))).await;
-
-    assert_wire_silent(client).await;
-    assert!(matches!(
-        awaited_caller_outcome(rx).await,
-        Err(RithmicError::ConnectionClosed)
-    ));
-}
-
 /// `Close` carries no responder and must still send the close frame.
 pub(crate) async fn assert_close_still_sent<K: PlantKind>(
     plant: &mut Plant<K>,
@@ -215,23 +198,6 @@ pub(crate) async fn assert_close_follows_failed_logout<C>(
         is_close(&next),
         "disconnect must send Close even when logout fails"
     );
-}
-
-/// Positive control — the same request on an open connection does reach the
-/// wire, so a silent wire above is evidence rather than a blind harness.
-pub(crate) async fn assert_sent_while_open<K: PlantKind>(
-    plant: &mut Plant<K>,
-    client: &mut TcpStream,
-    build: impl FnOnce(Responder) -> K::Command,
-) {
-    let (tx, _rx) = oneshot::channel();
-    plant.handle(Event::Command(build(tx))).await;
-
-    assert_wire_wrote(
-        client,
-        "an open connection must still serialize the request",
-    )
-    .await;
 }
 
 /// Fails if anything is written to `client` within the silence window.

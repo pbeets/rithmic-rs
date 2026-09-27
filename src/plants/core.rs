@@ -7,7 +7,7 @@ use crate::{
     error::RithmicError,
     plants::{
         kind::{Cx, Outgoing, PlantCommand, PlantKind},
-        session::{Session, answer_waiters},
+        session::{Session, answer_requesters},
         tag::{Tag, answer_caller},
     },
     request_handler::{Reply, Responder, Resume, RithmicRequestHandler, Routed},
@@ -368,8 +368,8 @@ impl<K: PlantKind> PlantCore<K> {
     /// Start heartbeating, on the period the server asked for when it named
     /// one, and send what the plant loads before the login is done.
     fn login_accepted(&mut self, login: RithmicResponse) {
-        let (config, waiters) = match mem::replace(&mut self.session, Session::Connected) {
-            Session::LoggingIn { config, waiters } => (config, waiters),
+        let (config, requesters) = match mem::replace(&mut self.session, Session::Connected) {
+            Session::LoggingIn { config, requesters } => (config, requesters),
             // A close was requested while the login was on the wire.
             other => {
                 self.session = other;
@@ -390,7 +390,7 @@ impl<K: PlantKind> PlantCore<K> {
         self.session = Session::Preparing {
             config,
             login,
-            waiters,
+            requesters,
         };
 
         let mut cx = Cx::new(&mut self.sender_api);
@@ -401,13 +401,13 @@ impl<K: PlantKind> PlantCore<K> {
         self.check_ready();
     }
 
-    /// Answer every login waiter with a login that did not succeed, exactly as
+    /// Answer every login requester with a login that did not succeed, exactly as
     /// it came back, and return to `Connected` so a later login can try again.
     fn login_failed(&mut self, reply: Reply) {
         match mem::replace(&mut self.session, Session::Connected) {
-            Session::LoggingIn { waiters, .. } => answer_waiters(waiters, &reply),
+            Session::LoggingIn { requesters, .. } => answer_requesters(requesters, &reply),
             // A close was requested while the login was on the wire, and its
-            // waiters were answered then.
+            // requesters were answered then.
             other => self.session = other,
         }
     }
@@ -422,9 +422,9 @@ impl<K: PlantKind> PlantCore<K> {
             Session::Preparing {
                 config,
                 login,
-                waiters,
+                requesters,
             } => {
-                answer_waiters(waiters, &Ok(vec![login.clone()]));
+                answer_requesters(requesters, &Ok(vec![login.clone()]));
 
                 self.session = Session::Ready { config, login };
             }
@@ -534,15 +534,15 @@ impl<K: PlantKind> PlantCore<K> {
             Session::Connected => {}
             Session::LoggingIn {
                 config: current,
-                waiters,
+                requesters,
             }
             | Session::Preparing {
                 config: current,
-                waiters,
+                requesters,
                 ..
             } => {
                 if *current == config {
-                    waiters.push(response_sender);
+                    requesters.push(response_sender);
                 } else {
                     let _ = response_sender.send(Err(RithmicError::LoginConflict));
                 }
@@ -582,10 +582,10 @@ impl<K: PlantKind> PlantCore<K> {
 
         info!("{}: sending login request {}", K::SOURCE, id);
 
-        // Set before the send, so a failed write finds the waiter to answer.
+        // Set before the send, so a failed write finds the requester to answer.
         self.session = Session::LoggingIn {
             config,
-            waiters: vec![response_sender],
+            requesters: vec![response_sender],
         };
 
         self.register_and_send(login_buf, id, Tag::Login);
@@ -610,18 +610,20 @@ mod tests {
     use super::*;
     use crate::{
         plants::test_support::{self, Bare, answer, frame},
-        rti::{ForcedLogout, ResponseLogin, ResponseRithmicSystemInfo},
+        rti::{
+            ForcedLogout, ResponseLogin, ResponseRithmicSystemInfo, ResponseVolumeProfileMinuteBars,
+        },
     };
 
-    type Waiter = oneshot::Receiver<Reply>;
+    type ReplyRx = oneshot::Receiver<Reply>;
 
     fn bare() -> PlantCore<Bare> {
         test_support::plant_core()
     }
 
-    /// Queue a login with `config`, returning its waiter and what the core
-    /// asks the I/O loop to do.
-    fn login(core: &mut PlantCore<Bare>, config: LoginConfig) -> (Waiter, Vec<Effect>) {
+    /// Queue a login with `config`, returning its reply receiver and what the
+    /// core asks the I/O loop to do.
+    fn login(core: &mut PlantCore<Bare>, config: LoginConfig) -> (ReplyRx, Vec<Effect>) {
         let (tx, rx) = oneshot::channel();
         let effects = core.on_event(Event::Command(PlantCommand::Login {
             config,
@@ -631,9 +633,9 @@ mod tests {
         (rx, effects)
     }
 
-    /// A core whose login request is on the wire, with its waiter and the
-    /// request's id.
-    fn logging_in() -> (PlantCore<Bare>, Waiter, String) {
+    /// A core whose login request is on the wire, with its reply receiver and
+    /// the request's id.
+    fn logging_in() -> (PlantCore<Bare>, ReplyRx, String) {
         let mut core = bare();
         let (rx, effects) = login(&mut core, LoginConfig::default());
         let id = sent(&effects).remove(0);
@@ -681,8 +683,8 @@ mod tests {
         }
     }
 
-    /// Ask for the system info, returning its waiter and its request id.
-    fn system_info(core: &mut PlantCore<Bare>) -> (Waiter, String) {
+    /// Ask for the system info, returning its reply receiver and its request id.
+    fn system_info(core: &mut PlantCore<Bare>) -> (ReplyRx, String) {
         let (tx, rx) = oneshot::channel();
         let effects = core.on_event(Event::Command(PlantCommand::GetSystemInfo {
             response_sender: tx,
@@ -913,7 +915,7 @@ mod tests {
             (
                 Session::LoggingIn {
                     config: config.clone(),
-                    waiters: Vec::new(),
+                    requesters: Vec::new(),
                 },
                 false,
             ),
@@ -921,7 +923,7 @@ mod tests {
                 Session::Preparing {
                     config: config.clone(),
                     login: login.clone(),
-                    waiters: Vec::new(),
+                    requesters: Vec::new(),
                 },
                 true,
             ),
@@ -1025,43 +1027,81 @@ mod tests {
         assert_eq!(answer(&mut other), None);
     }
 
+    /// The broadcast goes out whether or not anything was pending.
     #[test]
     fn a_lost_connection_broadcasts_and_fails_every_pending_request() {
-        let mut core = bare();
-        let (mut rx, _) = system_info(&mut core);
+        for pending in [true, false] {
+            let mut core = bare();
+            let mut rx = pending.then(|| system_info(&mut core).0);
 
-        let effects = core.on_event(Event::ConnectionLost {
-            id: "",
-            error: RithmicError::ProtocolError("test error".to_string()),
-        });
+            let effects = core.on_event(Event::ConnectionLost {
+                id: "",
+                error: RithmicError::ProtocolError("test error".to_string()),
+            });
 
-        match effects.as_slice() {
-            [Effect::Broadcast(event), Effect::Stop] => {
-                assert!(matches!(event.message, RithmicMessage::ConnectionError));
-                assert!(matches!(
-                    &event.error,
-                    Some(RithmicError::ProtocolError(s)) if s == "test error"
-                ));
+            match effects.as_slice() {
+                [Effect::Broadcast(event), Effect::Stop] => {
+                    assert!(matches!(event.message, RithmicMessage::ConnectionError));
+                    assert!(matches!(
+                        &event.error,
+                        Some(RithmicError::ProtocolError(s)) if s == "test error"
+                    ));
+                }
+                other => panic!("expected a broadcast, then stop; got {other:?}"),
             }
-            other => panic!("expected a broadcast, then stop; got {other:?}"),
-        }
 
-        assert_eq!(answer(&mut rx), Some(Err(RithmicError::ConnectionClosed)));
+            if let Some(rx) = &mut rx {
+                assert_eq!(answer(rx), Some(Err(RithmicError::ConnectionClosed)));
+            }
+        }
     }
 
     #[test]
-    fn a_lost_connection_with_no_pending_requests_still_broadcasts() {
+    fn an_unanswered_ping_stops_and_broadcasts_heartbeat_timeout() {
         let mut core = bare();
+        let (mut rx, _) = system_info(&mut core);
 
-        let effects = core.on_event(Event::ConnectionLost {
-            id: "",
-            error: RithmicError::ProtocolError("no requests".to_string()),
-        });
+        let effects = core.on_event(Event::PingTimedOut);
 
-        assert!(matches!(
-            effects.as_slice(),
-            [Effect::Broadcast(event), Effect::Stop]
-                if matches!(event.message, RithmicMessage::ConnectionError)
-        ));
+        match effects.as_slice() {
+            [Effect::Broadcast(event), Effect::Stop] => {
+                assert!(matches!(event.message, RithmicMessage::HeartbeatTimeout));
+                assert_eq!(event.error, Some(RithmicError::HeartbeatTimeout));
+            }
+            other => panic!("expected a broadcast, then stop; got {other:?}"),
+        }
+        assert_eq!(answer(&mut rx), Some(Err(RithmicError::ConnectionClosed)));
+    }
+
+    /// After a close, an unanswered ping is how the plant gives up on the
+    /// server's close echo, so nothing is broadcast.
+    #[test]
+    fn an_unanswered_ping_while_closing_stops_without_a_broadcast() {
+        let mut core = bare();
+        let (mut rx, _) = system_info(&mut core);
+        core.session = Session::Closing;
+
+        let effects = core.on_event(Event::PingTimedOut);
+
+        assert!(matches!(effects.as_slice(), [Effect::Stop]));
+        assert_eq!(answer(&mut rx), Some(Err(RithmicError::ConnectionClosed)));
+    }
+
+    /// A replay whose caller left before its write was reported is still
+    /// held, but a truncation notice for it asks the venue for nothing.
+    #[test]
+    fn a_truncated_replay_whose_caller_left_before_its_write_was_reported_is_not_resumed() {
+        let mut core = bare();
+        drop(core.request_handler.register_test_replay("vp-1"));
+
+        let effects = core.on_event(Event::Frame(frame(&ResponseVolumeProfileMinuteBars {
+            template_id: 209,
+            user_msg: vec!["vp-1".to_string()],
+            request_key: Some("0".to_string()),
+            ..Default::default()
+        })));
+
+        assert!(sent(&effects).is_empty(), "no RequestResumeBars goes out");
+        assert!(!core.request_handler.resuming());
     }
 }

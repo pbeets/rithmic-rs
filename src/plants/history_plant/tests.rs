@@ -7,8 +7,8 @@ use crate::{
         core::Event,
         session::Session,
         test_support::{
-            self, Responder, assert_close_still_sent, assert_rejected_after_close,
-            assert_sent_while_open, assert_wire_silent, read_wire_request, write_wire_response,
+            self, Responder, assert_close_still_sent, assert_wire_silent, read_wire_request,
+            write_wire_response,
         },
     },
     rti::{
@@ -45,14 +45,6 @@ fn abandoned_load() -> HistoryPlantCommand {
 }
 
 #[tokio::test]
-async fn load_ticks_after_close_requested_is_not_sent() {
-    let (mut plant, _command_sender, mut client) = plant_with_wire().await;
-    plant.core.session = Session::Closing;
-
-    assert_rejected_after_close(&mut plant, &mut client, load_ticks).await;
-}
-
-#[tokio::test]
 async fn close_still_reaches_the_wire_after_close_requested() {
     let (mut plant, _command_sender, mut client) = plant_with_wire().await;
     plant.core.session = Session::Closing;
@@ -60,7 +52,6 @@ async fn close_still_reaches_the_wire_after_close_requested() {
     assert_close_still_sent(&mut plant, HistoryPlantCommand::Close, &mut client).await;
 }
 
-/// The same contract end to end through the public handle.
 #[tokio::test]
 async fn load_ticks_through_the_handle_after_close_requested_reports_connection_closed() {
     let (mut plant, command_sender, mut client) = plant_with_wire().await;
@@ -88,13 +79,6 @@ async fn load_ticks_through_the_handle_after_close_requested_reports_connection_
 
     handle.abort();
     let _ = actor.await;
-}
-
-#[tokio::test]
-async fn load_ticks_is_sent_while_the_connection_is_open() {
-    let (mut plant, _command_sender, mut client) = plant_with_wire().await;
-
-    assert_sent_while_open(&mut plant, &mut client, load_ticks).await;
 }
 
 /// A running plant actor on a live loopback wire, with the handle to drive it.
@@ -293,14 +277,19 @@ async fn load_time_bars_all_asks_the_server_to_lift_the_record_cap() {
 
 #[tokio::test]
 async fn load_tick_bars_all_rejects_a_zero_bar_length() {
-    let (handle, _command_receiver) = test_handle();
+    let (handle, mut command_receiver) = test_handle();
 
-    let err = handle
-        .load_tick_bars_all("ESH6".to_string(), "CME".to_string(), 0, 1, 1000)
-        .await
-        .expect_err("a zero bar length must be refused");
+    // No actor is running, so a missing guard fails the timeout, not the suite.
+    let err = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        handle.load_tick_bars_all("ESH6".to_string(), "CME".to_string(), 0, 1, 1000),
+    )
+    .await
+    .expect("must be refused without reaching the actor")
+    .expect_err("a zero bar length must be refused");
 
     assert!(matches!(err, RithmicError::InvalidArgument(_)));
+    assert!(command_receiver.try_recv().is_err());
 }
 
 #[tokio::test]

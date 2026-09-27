@@ -700,25 +700,24 @@ mod tests {
     }
 
     #[test]
-    fn test_rithmic_env_display() {
-        assert_eq!(RithmicEnv::Demo.to_string(), "demo");
-        assert_eq!(RithmicEnv::Live.to_string(), "live");
-        assert_eq!(RithmicEnv::Test.to_string(), "test");
-    }
-
-    #[test]
     fn test_rithmic_env_from_str() {
-        assert_eq!("demo".parse::<RithmicEnv>().unwrap(), RithmicEnv::Demo);
+        for (env, name) in [
+            (RithmicEnv::Demo, "demo"),
+            (RithmicEnv::Live, "live"),
+            (RithmicEnv::Test, "test"),
+        ] {
+            assert_eq!(env.to_string(), name);
+            assert_eq!(name.parse::<RithmicEnv>().unwrap(), env);
+        }
+
         assert_eq!(
             "development".parse::<RithmicEnv>().unwrap(),
             RithmicEnv::Demo
         );
-        assert_eq!("live".parse::<RithmicEnv>().unwrap(), RithmicEnv::Live);
         assert_eq!(
             "production".parse::<RithmicEnv>().unwrap(),
             RithmicEnv::Live
         );
-        assert_eq!("test".parse::<RithmicEnv>().unwrap(), RithmicEnv::Test);
 
         // Test invalid input
         let result = "invalid".parse::<RithmicEnv>();
@@ -874,35 +873,6 @@ mod tests {
     }
 
     #[test]
-    fn the_builder_leaves_the_retry_timeout_unset_by_default() {
-        let builder = RithmicConfig::builder(RithmicEnv::Demo)
-            .user("u")
-            .password("p")
-            .url("ws://localhost:9999")
-            .beta_url("ws://localhost:9998")
-            .app_name("a")
-            .app_version("1");
-
-        assert_eq!(builder.build().unwrap().retry_timeout, None);
-    }
-
-    #[test]
-    fn the_builder_records_the_retry_timeout() {
-        let config = RithmicConfig::builder(RithmicEnv::Demo)
-            .user("u")
-            .password("p")
-            .url("ws://localhost:9999")
-            .beta_url("ws://localhost:9998")
-            .app_name("a")
-            .app_version("1")
-            .retry_timeout(Duration::from_secs(30))
-            .build()
-            .unwrap();
-
-        assert_eq!(config.retry_timeout, Some(Duration::from_secs(30)));
-    }
-
-    #[test]
     fn test_from_env_demo_success() {
         temp_env::with_vars(demo_env_vars(), || {
             let config = RithmicConfig::from_env(RithmicEnv::Demo).unwrap();
@@ -926,6 +896,34 @@ mod tests {
             assert_eq!(config.system_name, "Rithmic 01");
             assert_eq!(config.env, RithmicEnv::Live);
         });
+    }
+
+    #[test]
+    fn from_env_reads_the_test_prefix_for_the_test_env() {
+        temp_env::with_vars(
+            vec![
+                ("RITHMIC_TEST_USER", Some("test_user")),
+                ("RITHMIC_TEST_PW", Some("test_password")),
+                ("RITHMIC_TEST_URL", Some("wss://test-test.example.com:443")),
+                (
+                    "RITHMIC_TEST_ALT_URL",
+                    Some("wss://test-test-alt.example.com:443"),
+                ),
+                ("RITHMIC_TEST_SYSTEM_NAME", None),
+                ("RITHMIC_APP_NAME", Some("test_app")),
+                ("RITHMIC_APP_VERSION", Some("1")),
+            ],
+            || {
+                let config = RithmicConfig::from_env(RithmicEnv::Test).unwrap();
+
+                assert_eq!(config.user, "test_user");
+                assert_eq!(config.password, "test_password");
+                assert_eq!(config.url, "wss://test-test.example.com:443");
+                assert_eq!(config.beta_url, "wss://test-test-alt.example.com:443");
+                assert_eq!(config.system_name, "Rithmic Test");
+                assert_eq!(config.env, RithmicEnv::Test);
+            },
+        );
     }
 
     #[test]
@@ -1032,54 +1030,24 @@ mod tests {
     }
 
     #[test]
-    fn test_builder_demo_defaults() {
-        let builder = RithmicConfigBuilder::new(RithmicEnv::Demo);
-        let config = builder
-            .user("test")
-            .password("test")
-            .url("wss://test.example.com:443")
-            .beta_url("wss://test-alt.example.com:443")
-            .app_name("test_app")
-            .app_version("1")
-            .build()
-            .unwrap();
+    fn the_builder_defaults_the_system_name_per_env() {
+        for (env, system_name) in [
+            (RithmicEnv::Demo, "Rithmic Paper Trading"),
+            (RithmicEnv::Live, "Rithmic 01"),
+            (RithmicEnv::Test, "Rithmic Test"),
+        ] {
+            let config = RithmicConfigBuilder::new(env)
+                .user("test")
+                .password("test")
+                .url("wss://test.example.com:443")
+                .beta_url("wss://test-alt.example.com:443")
+                .app_name("test_app")
+                .app_version("1")
+                .build()
+                .unwrap();
 
-        // Builder should set system_name default
-        assert_eq!(config.system_name, "Rithmic Paper Trading");
-    }
-
-    #[test]
-    fn test_builder_live_defaults() {
-        let builder = RithmicConfigBuilder::new(RithmicEnv::Live);
-        let config = builder
-            .user("test")
-            .password("test")
-            .url("wss://test.example.com:443")
-            .beta_url("wss://test-alt.example.com:443")
-            .app_name("test_app")
-            .app_version("1")
-            .build()
-            .unwrap();
-
-        // Builder should set system_name default
-        assert_eq!(config.system_name, "Rithmic 01");
-    }
-
-    #[test]
-    fn test_builder_test_defaults() {
-        let builder = RithmicConfigBuilder::new(RithmicEnv::Test);
-        let config = builder
-            .user("test")
-            .password("test")
-            .url("wss://test.example.com:443")
-            .beta_url("wss://test-alt.example.com:443")
-            .app_name("test_app")
-            .app_version("1")
-            .build()
-            .unwrap();
-
-        // Builder should set system_name default
-        assert_eq!(config.system_name, "Rithmic Test");
+            assert_eq!(config.system_name, system_name, "{env}");
+        }
     }
 
     #[test]

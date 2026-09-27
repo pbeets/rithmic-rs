@@ -73,6 +73,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   leaving it waiting.
 - `RithmicResponse::resume_key` is documented as the key the server's
   truncation notice carries.
+- `RithmicError::SendFailed` displays as "WebSocket send failed". It dropped
+  "or timed out": a timed-out write fails calls with `ConnectionClosed`.
 
 ## [3.1.0]
 

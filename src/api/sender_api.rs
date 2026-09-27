@@ -3426,32 +3426,19 @@ mod tests {
     }
 
     #[test]
-    fn typed_user_type_matches_the_numeric_value_it_replaced() {
-        // The three request modules that carry `user_type` all number Trader 3,
-        // which is what the previous shared constant sent. `response_login_info`
-        // numbers from Admin = 0 and is not interchangeable with them.
+    fn account_rms_info_without_a_scope_sends_the_trader_user_type() {
+        // Trader is 3 in the request modules; `response_login_info` numbers from
+        // Admin = 0, so the two enums are not interchangeable.
         let mut api = RithmicSenderApi::new(&test_config());
 
         let (buf, _) = api.request_account_rms_info(&default_account(), None);
         let request: RequestAccountRmsInfo = decode_request(&buf);
+
         assert_eq!(request.user_type, Some(3));
         assert_eq!(
             request.user_type,
             Some(request_account_rms_info::UserType::Trader as i32)
         );
-
-        let (buf, _) =
-            api.request_bracket_order(advanced_bracket(), &default_account(), None, "globex");
-        let request: RequestBracketOrder = decode_request(&buf);
-        assert_eq!(request.user_type, Some(3));
-
-        let (buf, _) = api.request_cancel_all_orders(
-            &RithmicCancelAllOrders::new().manual_or_auto(ManualOrAutoEntry::Auto),
-            &default_account(),
-            None,
-        );
-        let request: RequestCancelAllOrders = decode_request(&buf);
-        assert_eq!(request.user_type, Some(3));
     }
 
     /// `OrderSide` reaches the wire through three hand-written `From` impls, one
@@ -3502,25 +3489,29 @@ mod tests {
         }
     }
 
+    /// An exit the caller did not attribute is sent as `Auto` like every other
+    /// command, not left for the server to fill in.
     #[test]
-    fn exit_position_request_encodes_the_requested_placement() {
+    fn exit_position_request_always_states_the_placement() {
         let mut api = RithmicSenderApi::new(&test_config());
 
-        let (buf, _) = api.request_exit_position(
-            &RithmicExitPosition::new()
-                .symbol("ESM6")
-                .exchange("CME")
-                .manual_or_auto(ManualOrAutoEntry::Manual)
-                .build()
-                .expect("valid exit"),
-            &default_account(),
-        );
-        let request: RequestExitPosition = decode_request(&buf);
+        for (placement, expected) in [
+            (None, request_exit_position::OrderPlacement::Auto),
+            (
+                Some(ManualOrAutoEntry::Manual),
+                request_exit_position::OrderPlacement::Manual,
+            ),
+        ] {
+            let mut exit = RithmicExitPosition::new().symbol("ESM6").exchange("CME");
+            if let Some(placement) = placement {
+                exit = exit.manual_or_auto(placement);
+            }
+            let (buf, _) =
+                api.request_exit_position(&exit.build().expect("valid exit"), &default_account());
+            let request: RequestExitPosition = decode_request(&buf);
 
-        assert_eq!(
-            request.manual_or_auto,
-            Some(request_exit_position::OrderPlacement::Manual as i32)
-        );
+            assert_eq!(request.manual_or_auto, Some(expected as i32));
+        }
     }
 
     /// With neither symbol nor exchange, both fields stay off the wire — the
@@ -3586,28 +3577,6 @@ mod tests {
         let request: RequestModifyOrder = decode_request(&buf);
         assert_eq!(request.if_touched_symbol.as_deref(), Some("NQM6"));
         assert_eq!(request.if_touched_price, None);
-    }
-
-    /// The attribution is always stated. An exit the caller did not attribute is
-    /// `Auto` like every other command, not an omitted field the server fills in.
-    #[test]
-    fn exit_position_request_always_states_a_placement() {
-        let mut api = RithmicSenderApi::new(&test_config());
-
-        let (buf, _) = api.request_exit_position(
-            &RithmicExitPosition::new()
-                .symbol("ESM6")
-                .exchange("CME")
-                .build()
-                .expect("valid exit"),
-            &default_account(),
-        );
-        let request: RequestExitPosition = decode_request(&buf);
-
-        assert_eq!(
-            request.manual_or_auto,
-            Some(request_exit_position::OrderPlacement::Auto as i32)
-        );
     }
 
     #[test]
@@ -3777,5 +3746,220 @@ mod tests {
         assert_eq!(request.if_touched_condition, None);
         assert_eq!(request.if_touched_price_field, None);
         assert_eq!(request.if_touched_price, None);
+    }
+
+    /// Expected ids are the Reference Guide's template tables (0.89; 504 and 508
+    /// from the 0.84 guide), not the numbers the builders hard-code.
+    #[test]
+    fn every_request_builder_sends_its_documented_template_id() {
+        let mut api = RithmicSenderApi::new(&test_config());
+        let account = default_account();
+        let fills = FillHistoryRange::Ssboe {
+            start: 0,
+            finish: 1,
+        };
+        let oco = api
+            .request_oco_order(vec![], OcoCancelTiming::default(), &account)
+            .expect("an empty group encodes");
+
+        let requests = [
+            (
+                10,
+                api.request_login(
+                    "sys",
+                    SysInfraType::TickerPlant,
+                    "u",
+                    "p",
+                    &LoginConfig::default(),
+                ),
+            ),
+            (12, api.request_logout()),
+            (14, api.request_reference_data("ESM6", "CME")),
+            (16, api.request_rithmic_system_info()),
+            (18, api.request_heartbeat()),
+            (20, api.request_rithmic_system_gateway_info(None)),
+            (
+                100,
+                api.request_market_data_update(
+                    "ESM6",
+                    "CME",
+                    vec![UpdateBits::LastTrade],
+                    Request::Subscribe,
+                ),
+            ),
+            (
+                102,
+                api.request_get_instrument_by_underlying("ES", "CME", None),
+            ),
+            (
+                105,
+                api.request_market_data_update_by_underlying(
+                    "ES",
+                    "CME",
+                    None,
+                    vec![request_market_data_update_by_underlying::UpdateBits::LastTrade],
+                    request_market_data_update_by_underlying::Request::Subscribe,
+                ),
+            ),
+            (107, api.request_give_tick_size_type_table("t")),
+            (
+                109,
+                api.request_search_symbols("ES", None, None, None, None),
+            ),
+            (111, api.request_product_codes(None, None)),
+            (113, api.request_front_month_contract("ES", "CME", false)),
+            (115, api.request_depth_by_order_snapshot("ESM6", "CME")),
+            (
+                117,
+                api.request_depth_by_order_updates(
+                    "ESM6",
+                    "CME",
+                    request_depth_by_order_updates::Request::Subscribe,
+                ),
+            ),
+            (119, api.request_get_volume_at_price("ESM6", "CME")),
+            (121, api.request_auxilliary_reference_data("ESM6", "CME")),
+            (
+                200,
+                api.request_time_bar_update(
+                    "ESM6",
+                    "CME",
+                    request_time_bar_update::BarType::SecondBar,
+                    1,
+                    request_time_bar_update::Request::Subscribe,
+                ),
+            ),
+            (
+                202,
+                api.request_time_bar_replay(&TimeBarReplayRequest::default()),
+            ),
+            (
+                204,
+                api.request_tick_bar_update(
+                    "ESM6",
+                    "CME",
+                    request_tick_bar_update::BarType::TickBar,
+                    request_tick_bar_update::BarSubType::Regular,
+                    "1",
+                    request_tick_bar_update::Request::Subscribe,
+                ),
+            ),
+            (
+                206,
+                api.request_tick_bar_replay(&TickBarReplayRequest::default()),
+            ),
+            (
+                208,
+                api.request_volume_profile_minute_bars(&VolumeProfileMinuteBarsRequest::default()),
+            ),
+            (210, api.request_resume_bars("key")),
+            (300, api.request_login_info()),
+            (302, api.request_account_list(None)),
+            (304, api.request_account_rms_info(&account, None)),
+            (306, api.request_product_rms_info(&account)),
+            (308, api.request_subscribe_for_order_updates(&account)),
+            (310, api.request_trade_routes(false)),
+            (
+                312,
+                api.request_order(&RithmicOrder::default(), &account, "globex"),
+            ),
+            (
+                314,
+                api.request_modify_order(&RithmicModifyOrder::default(), &account),
+            ),
+            (
+                316,
+                api.request_cancel_order(&RithmicCancelOrder::default(), &account),
+            ),
+            (318, api.request_show_order_history_dates()),
+            (320, api.request_show_orders(&account)),
+            (322, api.request_show_order_history(None, &account)),
+            (
+                324,
+                api.request_show_order_history_summary("20260801", &account),
+            ),
+            (
+                326,
+                api.request_show_order_history_detail("b", "20260801", &account),
+            ),
+            (328, oco),
+            (
+                330,
+                api.request_bracket_order(RithmicBracketOrder::default(), &account, None, "globex"),
+            ),
+            (
+                332,
+                api.request_update_target_bracket_level(
+                    &RithmicBracketLevelAdjustment::default(),
+                    &account,
+                ),
+            ),
+            (
+                334,
+                api.request_update_stop_bracket_level(
+                    &RithmicBracketLevelAdjustment::default(),
+                    &account,
+                ),
+            ),
+            (336, api.request_subscribe_to_bracket_updates(&account)),
+            (338, api.request_show_brackets(&account)),
+            (340, api.request_show_bracket_stops(&account)),
+            (342, api.request_list_exchange_permissions("u")),
+            (
+                344,
+                api.request_link_orders(RithmicLinkOrders::default(), &account),
+            ),
+            (
+                346,
+                api.request_cancel_all_orders(&RithmicCancelAllOrders::default(), &account, None),
+            ),
+            (
+                348,
+                api.request_easy_to_borrow_list(EasyToBorrowRequest::Subscribe),
+            ),
+            (
+                400,
+                api.request_pnl_position_updates(
+                    request_pn_l_position_updates::Request::Subscribe,
+                    &account,
+                ),
+            ),
+            (402, api.request_pnl_position_snapshot(&account)),
+            (500, api.request_list_unaccepted_agreements()),
+            (502, api.request_list_accepted_agreements()),
+            (504, api.request_accept_agreement("a", None)),
+            (506, api.request_show_agreement("a")),
+            (
+                508,
+                api.request_set_rithmic_mrkt_data_self_cert_status("a", "c"),
+            ),
+            (
+                3500,
+                api.request_modify_order_reference_data(
+                    &RithmicModifyOrderReferenceData::default(),
+                    &account,
+                ),
+            ),
+            (3502, api.request_order_session_config(None)),
+            (
+                3504,
+                api.request_exit_position(&RithmicExitPosition::default(), &account),
+            ),
+            (3506, api.request_replay_executions(0, 1, &account)),
+            (
+                3508,
+                api.request_account_rms_updates(false, vec![], &account),
+            ),
+            (3510, api.request_get_user_info(None, &account)),
+            (3512, api.request_show_fill_history(fills, None, &account)),
+        ];
+
+        for (expected, (buf, _)) in requests {
+            let header: crate::rti::MessageType = decode_request(&buf);
+            assert_eq!(
+                header.template_id, expected,
+                "request expected as template {expected}"
+            );
+        }
     }
 }

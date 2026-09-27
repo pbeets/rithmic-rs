@@ -202,89 +202,23 @@ mod tests {
         ResponseVolumeProfileMinuteBars, messages::RithmicMessage,
     };
 
-    // =========================================================================
-    // classify_rp_code_error() unit tests
-    // =========================================================================
-
     #[test]
-    fn classify_rp_code_error_returns_none_for_empty_rp_code() {
-        assert_eq!(classify_rp_code_error(&[]), None);
-    }
-
-    #[test]
-    fn classify_rp_code_error_returns_none_for_zero_rp_code() {
+    fn classify_rp_code_error_reports_only_a_rejection_as_an_error() {
+        // The classifications themselves are pinned by the classify_rp_code tests.
         assert_eq!(classify_rp_code_error(&["0".to_string()]), None);
-    }
-
-    #[test]
-    fn classify_rp_code_error_returns_none_for_no_data_rp_code() {
-        // rp_code = ["7", "no data"] means "successful query, zero results" across all
-        // Rithmic list/replay/search responses — must not be treated as an error.
-        let rp_code = vec!["7".to_string(), "no data".to_string()];
-
-        assert_eq!(classify_rp_code_error(&rp_code), None);
-    }
-
-    #[test]
-    fn classify_rp_code_error_returns_none_for_no_data_case_insensitive() {
-        let rp_code = vec!["7".to_string(), "No Data".to_string()];
-
-        assert_eq!(classify_rp_code_error(&rp_code), None);
-    }
-
-    #[test]
-    fn classify_rp_code_error_returns_some_for_other_code_7_messages() {
-        // code "7" with a different message is still an error
-        let rp_code = vec!["7".to_string(), "permission denied".to_string()];
-
-        assert!(classify_rp_code_error(&rp_code).is_some());
-    }
-
-    #[test]
-    fn classify_rp_code_error_returns_request_rejected_for_code_7_with_error() {
-        let rp_code = vec!["7".to_string(), "permission denied".to_string()];
-
         assert_eq!(
-            classify_rp_code_error(&rp_code),
-            Some(RithmicError::RequestRejected(RithmicRequestError {
-                rp_code: rp_code.clone(),
-                code: Some("7".to_string()),
-                message: Some("permission denied".to_string()),
-            }))
+            classify_rp_code_error(&["7".to_string(), "no data".to_string()]),
+            None
         );
-    }
 
-    #[test]
-    fn classify_rp_code_error_returns_request_rejected_for_non_zero_non_7_code() {
         let rp_code = vec!["3".to_string(), "bad request".to_string()];
-
+        let RpCodeClassification::RequestRejected(err) = classify_rp_code(&rp_code) else {
+            panic!("expected a rejection");
+        };
         assert_eq!(
             classify_rp_code_error(&rp_code),
-            Some(RithmicError::RequestRejected(RithmicRequestError {
-                rp_code: rp_code.clone(),
-                code: Some("3".to_string()),
-                message: Some("bad request".to_string()),
-            }))
+            Some(RithmicError::RequestRejected(err))
         );
-    }
-
-    #[test]
-    fn single_element_rp_code_produces_request_rejected_with_none_message() {
-        // Single-element rp_codes (e.g. `["5"]`) must produce
-        // `RequestRejected` with `message: None` — NOT `Some("")`. The
-        // distinction matters for Display (renders as `[5]`, not `[5] `).
-        let rp_code = vec!["5".to_string()];
-
-        match classify_rp_code_error(&rp_code) {
-            Some(RithmicError::RequestRejected(err)) => {
-                assert!(
-                    err.message.is_none(),
-                    "expected message = None, got {:?}",
-                    err.message
-                );
-            }
-            other => panic!("expected Some(RequestRejected(..)), got {other:?}"),
-        }
     }
 
     // =========================================================================
