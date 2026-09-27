@@ -144,11 +144,6 @@ impl<T: RequestTag> RithmicRequestHandler<T> {
         }
 
         match response.message {
-            RithmicMessage::ResponseHeartbeat(_) => self
-                .handle_map
-                .remove(&response.request_id)
-                .map(|tag| Routed::Reply(tag, Ok(vec![response]))),
-
             RithmicMessage::ResponseResumeBars(_)
                 if self.resumes.contains_key(&response.request_id) =>
             {
@@ -450,8 +445,7 @@ mod tests {
     use crate::plants::tag::{Tag, answer_caller};
 
     use crate::rti::{
-        ResponseHeartbeat, ResponseLogin, ResponseReferenceData, ResponseResumeBars,
-        ResponseVolumeProfileMinuteBars,
+        ResponseLogin, ResponseReferenceData, ResponseResumeBars, ResponseVolumeProfileMinuteBars,
     };
 
     fn make_response(id: &str, message: RithmicMessage) -> RithmicResponse {
@@ -468,10 +462,6 @@ mod tests {
 
     fn login_message() -> RithmicMessage {
         RithmicMessage::ResponseLogin(ResponseLogin::default())
-    }
-
-    fn heartbeat_message() -> RithmicMessage {
-        RithmicMessage::ResponseHeartbeat(ResponseHeartbeat::default())
     }
 
     fn ref_data_message() -> RithmicMessage {
@@ -584,23 +574,6 @@ mod tests {
         resp.multi_response = true;
         resp.has_more = false;
         handler.route(resp);
-
-        let result = rx.try_recv().unwrap().unwrap();
-        assert_eq!(result.len(), 1);
-    }
-
-    // =========================================================================
-    // Heartbeat responses
-    // =========================================================================
-
-    #[test]
-    fn heartbeat_delivered_when_responder_registered() {
-        let mut handler = RithmicRequestHandler::<Tag>::new();
-        let (tx, mut rx) = oneshot::channel();
-
-        handler.register_request("hb".to_string(), Tag::Caller(tx));
-
-        handler.route(make_response("hb", heartbeat_message()));
 
         let result = rx.try_recv().unwrap().unwrap();
         assert_eq!(result.len(), 1);

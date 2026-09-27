@@ -1433,99 +1433,61 @@ mod tests {
         );
     }
 
-    /// Heartbeat success with a registered oneshot must resolve the oneshot
-    /// with the original `ResponseHeartbeat` frame and must NOT broadcast any
-    /// subscription update (no synthetic `HeartbeatTimeout`).
+    /// The core never registers its heartbeats, so a heartbeat reply must not
+    /// resolve a request that happens to share its id. Only a failed one is
+    /// broadcast, as `HeartbeatTimeout`.
     #[tokio::test]
-    async fn heartbeat_response_with_registered_oneshot_resolves_oneshot() {
+    async fn a_heartbeat_reply_resolves_no_request_and_only_a_failure_is_broadcast() {
         use crate::rti::ResponseHeartbeat;
         use prost::Message as _;
 
-        let reader = make_dormant_ws_reader().await;
-        let (mut plant, mut sub_rx) = make_test_plant(MockMessageSink::ready(), reader);
-        let mut rx = register_request(&mut plant, "hb-1");
+        for rp_code in [
+            vec![],
+            vec!["3".to_string(), "heartbeat rejected".to_string()],
+        ] {
+            let failed = !rp_code.is_empty();
+            let reader = make_dormant_ws_reader().await;
+            let (mut plant, mut sub_rx) = make_test_plant(MockMessageSink::ready(), reader);
+            let mut rx = register_request(&mut plant, "hb-1");
 
-        let resp = ResponseHeartbeat {
-            template_id: 19,
-            user_msg: vec!["hb-1".to_string()],
-            ..ResponseHeartbeat::default()
-        };
-        let mut payload = Vec::new();
-        resp.encode(&mut payload).unwrap();
-        let mut framed = (payload.len() as u32).to_be_bytes().to_vec();
-        framed.extend(payload);
+            let resp = ResponseHeartbeat {
+                template_id: 19,
+                user_msg: vec!["hb-1".to_string()],
+                rp_code,
+                ..ResponseHeartbeat::default()
+            };
+            let mut payload = Vec::new();
+            resp.encode(&mut payload).unwrap();
+            let mut framed = (payload.len() as u32).to_be_bytes().to_vec();
+            framed.extend(payload);
 
-        let stop = plant
-            .handle_rithmic_message(Ok(Message::Binary(framed.into())))
-            .await;
+            let stop = plant
+                .handle_rithmic_message(Ok(Message::Binary(framed.into())))
+                .await;
 
-        assert!(!stop, "healthy heartbeat must not stop the actor");
-        assert!(
-            sub_rx.try_recv().is_err(),
-            "healthy heartbeat must not broadcast any subscription update"
-        );
+            assert!(!stop, "a heartbeat reply must not stop the actor");
+            assert!(
+                matches!(rx.try_recv(), Err(oneshot::error::TryRecvError::Empty)),
+                "a heartbeat reply must not resolve a pending request"
+            );
 
-        let result = rx.try_recv().unwrap().unwrap();
-        assert_eq!(result.len(), 1);
-        assert!(matches!(
-            result[0].message,
-            RithmicMessage::ResponseHeartbeat(_)
-        ));
-        assert!(result[0].error.is_none());
-    }
-
-    /// Heartbeat with a populated `error` (e.g. rp_code rejection) must BOTH
-    /// broadcast a synthetic `HeartbeatTimeout` update AND resolve any
-    /// registered oneshot with the original `ResponseHeartbeat` frame.
-    #[tokio::test]
-    async fn heartbeat_response_error_broadcasts_timeout_and_resolves_oneshot() {
-        use crate::rti::ResponseHeartbeat;
-        use prost::Message as _;
-
-        let reader = make_dormant_ws_reader().await;
-        let (mut plant, mut sub_rx) = make_test_plant(MockMessageSink::ready(), reader);
-        let mut rx = register_request(&mut plant, "hb-err");
-
-        let resp = ResponseHeartbeat {
-            template_id: 19,
-            user_msg: vec!["hb-err".to_string()],
-            rp_code: vec!["3".to_string(), "heartbeat rejected".to_string()],
-            ..ResponseHeartbeat::default()
-        };
-        let mut payload = Vec::new();
-        resp.encode(&mut payload).unwrap();
-        let mut framed = (payload.len() as u32).to_be_bytes().to_vec();
-        framed.extend(payload);
-
-        let stop = plant
-            .handle_rithmic_message(Ok(Message::Binary(framed.into())))
-            .await;
-
-        assert!(!stop, "heartbeat rejection must not stop the actor");
-
-        // Synthetic HeartbeatTimeout broadcast on the subscription channel.
-        let broadcast_msg = sub_rx.try_recv().unwrap();
-        assert!(matches!(
-            broadcast_msg.message,
-            RithmicMessage::HeartbeatTimeout
-        ));
-        assert!(matches!(
-            &broadcast_msg.error,
-            Some(RithmicError::RequestRejected(e)) if e.message.as_deref() == Some("heartbeat rejected")
-        ));
-
-        // Oneshot still resolves with the original ResponseHeartbeat frame so
-        // callers awaiting a ping/heartbeat request don't hang.
-        let result = rx.try_recv().unwrap().unwrap();
-        assert_eq!(result.len(), 1);
-        assert!(matches!(
-            result[0].message,
-            RithmicMessage::ResponseHeartbeat(_)
-        ));
-        assert!(matches!(
-            &result[0].error,
-            Some(RithmicError::RequestRejected(e)) if e.message.as_deref() == Some("heartbeat rejected")
-        ));
+            if failed {
+                let broadcast_msg = sub_rx.try_recv().unwrap();
+                assert!(matches!(
+                    broadcast_msg.message,
+                    RithmicMessage::HeartbeatTimeout
+                ));
+                assert!(matches!(
+                    &broadcast_msg.error,
+                    Some(RithmicError::RequestRejected(e)) if e.message.as_deref() == Some("heartbeat rejected")
+                ));
+            } else {
+                assert!(
+                    sub_rx.try_recv().is_err(),
+                    "a healthy heartbeat must not be broadcast"
+                );
+            }
+        }
     }
 
     /// Multi-part request flow: an intermediate frame (has_more = true) is

@@ -330,11 +330,11 @@ impl<K: PlantKind> PlantCore<K> {
 
     /// Send a response where it belongs: updates to subscribers, replies to
     /// the request they answer. A frame that failed to decode takes the same
-    /// paths. Heartbeat replies never reach subscribers as they are.
+    /// paths. Heartbeat replies go nowhere, except that a failed one is
+    /// broadcast as `HeartbeatTimeout`.
     fn forward_response(&mut self, response: RithmicResponse) {
-        // Only a failed heartbeat is broadcast, as `HeartbeatTimeout`. The
-        // frame is still routed as a reply, though the core registers no
-        // request for its own heartbeats, so nothing is waiting on it.
+        // The core sends heartbeats without registering them, so no request
+        // is waiting on the reply.
         if matches!(response.message, RithmicMessage::ResponseHeartbeat(_)) {
             if response.error.is_some() {
                 self.effects.push(Effect::Broadcast(RithmicResponse {
@@ -347,8 +347,6 @@ impl<K: PlantKind> PlantCore<K> {
                     source: K::SOURCE.to_string(),
                 }));
             }
-
-            self.route_reply(response);
 
             return;
         }
