@@ -12,9 +12,8 @@
 //!
 //! Each plant is its own WebSocket connection with its own login.
 
-use tokio::sync::oneshot;
-
 use crate::{api::receiver_api::RithmicResponse, error::RithmicError};
+use tokio::sync::oneshot;
 
 pub(crate) mod actor;
 pub(crate) mod core;

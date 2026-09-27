@@ -1,9 +1,8 @@
 use super::{RequestResult, RequestTag, Resume, RithmicRequestHandler};
+use crate::{RithmicError, RithmicResponse, rti::messages::RithmicMessage};
 use std::collections::HashSet;
 use tokio::sync::oneshot;
 use tracing::info;
-
-use crate::{RithmicError, RithmicResponse, rti::messages::RithmicMessage};
 
 /// A history replay the plant is collecting for a caller.
 ///

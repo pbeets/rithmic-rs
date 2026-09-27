@@ -9,13 +9,12 @@
 #[path = "shared/common.rs"]
 mod common;
 
-use std::time::Duration;
+use tracing::{error, info, warn};
 
 use tokio::{
     sync::broadcast::{Receiver, error::RecvError},
-    time::{Instant, timeout, timeout_at},
+    time::{Duration, Instant, timeout, timeout_at},
 };
-use tracing::{error, info, warn};
 
 use rithmic_rs::{
     ConnectStrategy, OrderSide, OrderType, RithmicAccount, RithmicConfig, RithmicConfigBuilder,

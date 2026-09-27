@@ -7,13 +7,12 @@
 #[path = "shared/common.rs"]
 mod common;
 
-use std::time::Duration;
+use tracing::{info, warn};
 
 use tokio::{
     sync::broadcast::error::RecvError,
-    time::{Instant, timeout, timeout_at},
+    time::{Duration, Instant, timeout, timeout_at},
 };
-use tracing::{info, warn};
 
 use rithmic_rs::{
     ConnectStrategy, OrderSide, OrderType, RithmicAccount, RithmicCancelOrder, RithmicConfig,
@@ -130,14 +129,14 @@ async fn find_order(
             return Err(e);
         }
 
-        if let RithmicMessage::RithmicOrderNotification(n) = update.message
-            && n.user_tag.as_deref() == Some(user_tag)
-        {
-            info!(
-                "found it: status={:?} basket_id={:?}",
-                n.status, n.basket_id
-            );
-            return Ok(n.basket_id);
+        if let RithmicMessage::RithmicOrderNotification(n) = update.message {
+            if n.user_tag.as_deref() == Some(user_tag) {
+                info!(
+                    "found it: status={:?} basket_id={:?}",
+                    n.status, n.basket_id
+                );
+                return Ok(n.basket_id);
+            }
         }
     }
 }

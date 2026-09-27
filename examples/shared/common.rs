@@ -2,9 +2,8 @@
 
 #![allow(dead_code)]
 
-use std::{env, time::SystemTime};
-
 use rithmic_rs::{RithmicTickerPlantHandle, rti::messages::RithmicMessage};
+use std::{env, time::SystemTime};
 
 /// `EXCHANGE`, or `CME`.
 pub fn exchange() -> String {

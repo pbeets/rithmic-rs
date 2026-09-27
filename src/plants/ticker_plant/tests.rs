@@ -1,7 +1,7 @@
+use super::*;
 use prost::Message as _;
 use tokio::net::TcpStream;
 
-use super::*;
 use crate::{
     plants::{
         core::Event,

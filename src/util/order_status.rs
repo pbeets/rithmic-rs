@@ -2,7 +2,6 @@
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
-
 use std::{convert::Infallible, fmt, str::FromStr};
 
 /// Status string for open orders.

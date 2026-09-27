@@ -6,9 +6,8 @@
 #[path = "shared/common.rs"]
 mod common;
 
-use tracing::{info, warn};
-
 use rithmic_rs::{ConnectStrategy, RithmicConfig, RithmicEnv, RithmicHistoryPlant};
+use tracing::{info, warn};
 
 const ENV: RithmicEnv = RithmicEnv::Demo;
 

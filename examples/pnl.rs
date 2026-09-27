@@ -2,11 +2,12 @@
 //!
 //! Run with: cargo run --example pnl
 
+use tracing::{error, info, warn};
+
 use tokio::{
     sync::broadcast::error::RecvError,
     time::{Duration, Instant, timeout_at},
 };
-use tracing::{error, info, warn};
 
 use rithmic_rs::{
     ConnectStrategy, RithmicAccount, RithmicConfig, RithmicEnv, RithmicError, RithmicPnlPlant,

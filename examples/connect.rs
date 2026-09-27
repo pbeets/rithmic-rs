@@ -3,9 +3,8 @@
 //!
 //! Run with: cargo run --example connect
 
-use tracing::info;
-
 use rithmic_rs::{ConnectStrategy, RithmicConfig, RithmicEnv, RithmicTickerPlant};
+use tracing::info;
 
 const ENV: RithmicEnv = RithmicEnv::Demo;
 

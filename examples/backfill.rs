@@ -8,11 +8,7 @@
 #[path = "shared/common.rs"]
 mod common;
 
-use std::{
-    future::Future,
-    time::{Duration, Instant, SystemTime},
-};
-
+use std::time::{Duration, Instant, SystemTime};
 use tracing::info;
 
 use rithmic_rs::{

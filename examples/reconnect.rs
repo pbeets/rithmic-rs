@@ -8,13 +8,13 @@
 #[path = "shared/common.rs"]
 mod common;
 
+use tokio::{sync::broadcast::error::RecvError, time::sleep};
+use tracing::{error, info, warn};
+
 use std::{
     collections::HashSet,
     time::{Duration, Instant},
 };
-
-use tokio::{sync::broadcast::error::RecvError, time::sleep};
-use tracing::{error, info, warn};
 
 use rithmic_rs::{
     ConnectStrategy, RithmicConfig, RithmicEnv, RithmicError, RithmicTickerPlant,
