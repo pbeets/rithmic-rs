@@ -33,7 +33,7 @@ impl PendingReplay {
     }
 
     /// Whether the caller stopped waiting (it dropped its future).
-    fn abandoned(&self) -> bool {
+    fn caller_stopped_waiting(&self) -> bool {
         self.responder.is_closed()
     }
 
@@ -57,7 +57,7 @@ impl<T: RequestTag> RithmicRequestHandler<T> {
     /// Track a replay. Returns `false` if the caller stopped waiting while the
     /// request was queued, in which case nothing should be sent.
     pub(crate) fn register_replay(&mut self, id: String, replay: PendingReplay) -> bool {
-        if replay.abandoned() {
+        if replay.caller_stopped_waiting() {
             return false;
         }
 
@@ -80,7 +80,7 @@ impl<T: RequestTag> RithmicRequestHandler<T> {
         let abandoned = self
             .replay_map
             .get(id)
-            .is_some_and(PendingReplay::abandoned);
+            .is_some_and(PendingReplay::caller_stopped_waiting);
 
         if abandoned {
             self.release_abandoned_replays();
@@ -105,7 +105,7 @@ impl<T: RequestTag> RithmicRequestHandler<T> {
         let abandoned: Vec<_> = self
             .replay_map
             .iter()
-            .filter(|(_, replay)| replay.sent && replay.abandoned())
+            .filter(|(_, replay)| replay.sent && replay.caller_stopped_waiting())
             .map(|(id, _)| id.clone())
             .collect();
 

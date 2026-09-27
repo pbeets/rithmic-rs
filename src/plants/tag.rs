@@ -19,7 +19,7 @@ pub(crate) enum Tag<K = Infallible> {
 }
 
 impl<K> RequestTag for Tag<K> {
-    fn abandoned(&self) -> bool {
+    fn caller_stopped_waiting(&self) -> bool {
         match self {
             Tag::Caller(responder) => responder.is_closed(),
             // The plant acts on these replies whoever else stopped waiting.

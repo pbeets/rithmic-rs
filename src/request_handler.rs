@@ -32,9 +32,10 @@ pub(crate) type Responder = oneshot::Sender<Reply>;
 
 /// What the handler keeps for a request until its reply completes.
 pub(crate) trait RequestTag {
-    /// Whether nothing is waiting for the reply any more, so its parts need
-    /// not be kept.
-    fn abandoned(&self) -> bool;
+    /// Whether the caller waiting on the reply dropped its future, so the
+    /// reply's parts need not be kept. Never true for a request the plant sent
+    /// for itself.
+    fn caller_stopped_waiting(&self) -> bool;
 }
 
 /// Tells the plant to send `RequestResumeBars` with `key`, so the server
@@ -187,7 +188,7 @@ impl<T: RequestTag> RithmicRequestHandler<T> {
     fn collect_part(&mut self, response: RithmicResponse) {
         // Keep parts only while the caller is waiting; otherwise count them.
         match self.handle_map.get(&response.request_id) {
-            Some(tag) if !tag.abandoned() => {
+            Some(tag) if !tag.caller_stopped_waiting() => {
                 self.response_vec_map
                     .entry(response.request_id.clone())
                     .or_default()
