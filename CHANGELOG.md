@@ -34,6 +34,9 @@ No API breaks. Three behavior changes to check when upgrading:
 - Much quieter logs: per-frame `WARN`/`ERROR` dumps are now single `INFO`/`DEBUG` lines.
 - Examples share one layout, need only the plants they use, never block on a quiet
   market, and cancel the orders they place. Setup is in `examples/README.md`.
+- The request-timeout items deprecated in 3.1.0 (`DEFAULT_REQUEST_TIMEOUT`,
+  `RithmicError::RequestTimeout`, `request_timeout` on the config and builder)
+  stay deprecated and ignored. They will not be removed.
 
 ### Deprecated
 

@@ -16,8 +16,9 @@ mod replay;
 
 pub(crate) use replay::PendingReplay;
 
-/// No longer used. The library does not time out requests; wrap the call in
-/// [`tokio::time::timeout`] to set a deadline of your own. Removed in 4.0.0.
+/// Deprecated and has no effect: the library does not time out requests.
+/// Wrap the call in [`tokio::time::timeout`] to set a deadline of your own.
+/// Kept so existing code keeps compiling.
 #[deprecated(
     since = "3.1.0",
     note = "the library no longer times out requests; wrap the call in tokio::time::timeout"

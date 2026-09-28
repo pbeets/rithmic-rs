@@ -122,10 +122,11 @@ pub enum RithmicError {
     /// The plant answered with no response at all where one was expected. A
     /// defensive case; you should not see it.
     EmptyResponse,
-    /// No longer produced. The library does not time out requests; a caller
-    /// that wants a deadline wraps the call in [`tokio::time::timeout`], which
-    /// reports expiry through its own `Elapsed` rather than this variant.
-    /// Removed in 4.0.0.
+    /// Deprecated and has no effect: nothing returns it any more. The library
+    /// does not time out requests; a caller that wants a deadline wraps the
+    /// call in [`tokio::time::timeout`], which reports expiry through its own
+    /// `Elapsed` rather than this variant. Kept so existing code keeps
+    /// compiling.
     #[deprecated(
         since = "3.1.0",
         note = "the library no longer times out requests; wrap the call in tokio::time::timeout"

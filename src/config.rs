@@ -301,9 +301,9 @@ pub struct RithmicConfig {
     pub app_name: String,
     /// Application version string.
     pub app_version: String,
-    /// No longer used. The library does not time out requests; wrap the call
-    /// in [`tokio::time::timeout`] to set a deadline of your own. Still
-    /// readable so existing code keeps compiling; removed in 4.0.0.
+    /// Deprecated and has no effect: the library does not time out requests.
+    /// Wrap the call in [`tokio::time::timeout`] to set a deadline of your
+    /// own. Kept, and still readable, so existing code keeps compiling.
     #[deprecated(
         since = "3.1.0",
         note = "the library no longer times out requests; wrap the call in tokio::time::timeout"
@@ -586,9 +586,10 @@ impl RithmicConfigBuilder {
         self
     }
 
-    /// No longer used. The library does not time out requests; wrap the call
-    /// in [`tokio::time::timeout`] to set a deadline of your own. The value is
-    /// still recorded on the config and still ignored; removed in 4.0.0.
+    /// Deprecated and has no effect: the library does not time out requests.
+    /// Wrap the call in [`tokio::time::timeout`] to set a deadline of your
+    /// own. The value is still recorded on the config and still ignored. Kept
+    /// so existing code keeps compiling.
     #[deprecated(
         since = "3.1.0",
         note = "the library no longer times out requests; wrap the call in tokio::time::timeout"
