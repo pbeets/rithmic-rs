@@ -1,0 +1,5 @@
+# Whitespace-only commits for `git blame` to skip. GitHub reads this file;
+# locally: git config blame.ignoreRevsFile .git-blame-ignore-revs
+
+# Add blank lines around multi-line blocks in src (#117)
+76ba3489238aefc7ca1fcd2702679674104c6117
