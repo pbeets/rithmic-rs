@@ -73,3 +73,14 @@ jobs:
       - uses: obi1kenobi/cargo-semver-checks-action@v2
         with:
           feature-group: all-features
+
+  # Fails on RustSec vulnerability and unmaintained advisories against any
+  # dependency, and on licenses that deny.toml does not allow.
+  deny:
+    name: Dependencies
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check advisories licenses
