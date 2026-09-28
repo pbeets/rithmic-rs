@@ -27,6 +27,9 @@ No API breaks. Three behavior changes to check when upgrading:
 - `load_time_bar_replay()` and `load_tick_bar_replay()`, which take a full
   request struct.
 - `examples/backfill.rs`: backfill large windows and check you got all of them.
+- `RithmicError::LoginConflict`, returned by a `login()` whose `LoginConfig`
+  differs from the one the plant logged in with.
+- `Eq` for `LoginConfig`.
 
 ### Changed
 
@@ -41,6 +44,8 @@ No API breaks. Three behavior changes to check when upgrading:
   stay deprecated and ignored. They will not be removed.
 - A malformed `RITHMIC_REQUEST_TIMEOUT_SECS` is now logged as a warning and
   ignored instead of failing `RithmicConfig::from_env()`.
+- `RithmicError::SendFailed` displays as "WebSocket send failed", without "or
+  timed out": a write that times out fails pending calls with `ConnectionClosed`.
 
 ### Deprecated
 
@@ -1238,6 +1243,8 @@ Previous stable release. See git history for earlier changes.
 
 ## Version History Summary
 
+- **3.2.0**: Truncated history replays resume automatically, one login per connection with `LoginConflict`, `subscribe_all()` on the order and PnL plants, configurable subscription capacity and connect retry timeout, request-struct replay loaders, `resume_bars()` deprecated
+- **3.1.0**: The library no longer times out requests; `request_timeout` and `RequestTimeout` deprecated
 - **3.0.0** (2026-08-09): Breaking changes - order commands built with `new()` + setters, crate-owned enums replace fourteen generated re-exports, every order call takes a command struct, prices are `Option<f64>`, seven handle methods renamed, required `request_timeout`; orders route off the exchange's published trade route, uncapped replay loaders, protos at 0.89.0.0
 - **2.0.0**: Breaking changes - typed `RithmicError::RequestRejected`/`ProtocolError` replace `ServerError`, `RithmicResponse::rp_code_error` removed, `RithmicAccount` split from `RithmicConfig`, account-scoped `get_handle()`, `SubscriptionFilter`; advanced bracket orders, semantic ticker subscriptions, bounded WebSocket sends
 - **1.0.0**: Breaking changes - typed `RithmicError` enum, prost 0.14, async-trait removed, `LoginConfig` for advanced login, `await_shutdown()`, non_exhaustive annotations, MSRV 1.85
