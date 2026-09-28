@@ -671,6 +671,11 @@ impl RithmicConfigBuilder {
     /// of 10,000 becomes 16,384 slots, about 22 MB per plant. Lower the
     /// capacity to save memory when you run many plants.
     ///
+    /// The memory grows with the capacity, so set it to what your consumer
+    /// needs. A capacity too large to allocate fails in the plant's
+    /// `connect`: the process aborts or is killed for lack of memory, or
+    /// panics for the very largest values.
+    ///
     /// A subscriber that falls more than `capacity` messages behind misses
     /// the oldest ones: its next `recv` returns
     /// [`RecvError::Lagged`](tokio::sync::broadcast::error::RecvError::Lagged)
