@@ -1128,7 +1128,7 @@ fn leg_on(exchange: &str, trade_route: Option<&str>) -> RithmicOcoOrderLeg {
 }
 
 /// Every order command must reach the wire on the route cached for its own
-/// exchange — a route crossed between exchanges is an order the venue rejects.
+/// exchange — a route crossed between exchanges is an order the server rejects.
 #[tokio::test]
 async fn every_order_command_sends_the_route_cached_for_its_exchange() {
     let (mut plant, _sender, mut client) = plant_with_wire().await;

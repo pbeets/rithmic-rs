@@ -227,7 +227,7 @@ impl<T: RequestTag> RithmicRequestHandler<T> {
 
         let Some(error) = ack.error else {
             info!(
-                "request_id {}: the venue acknowledged the resume of request_id {}",
+                "request_id {}: the server acknowledged the resume of request_id {}",
                 ack.request_id, replay
             );
             return;
@@ -235,7 +235,7 @@ impl<T: RequestTag> RithmicRequestHandler<T> {
 
         if let Some(parts) = self.refuse_replay(replay.clone(), error.clone()) {
             warn!(
-                "request_id {}: the venue refused to resume request_id {} ({}); {} parts are \
+                "request_id {}: the server refused to resume request_id {} ({}); {} parts are \
                  incomplete",
                 ack.request_id, replay, error, parts
             );
@@ -334,7 +334,7 @@ impl<T: RequestTag> RithmicRequestHandler<T> {
 
         match self.late_continuations.remove(&response.request_id) {
             Some(parts) => info!(
-                "request_id {}: the venue kept streaming after nothing was waiting: {} more \
+                "request_id {}: the server kept streaming after nothing was waiting: {} more \
                  parts, then a final response with rp_code {:?}",
                 response.request_id, parts, rp_code
             ),
@@ -482,7 +482,7 @@ mod tests {
 
     /// The message the history plant answers template 208 with. An empty
     /// `rp_code` is what a data part carries; `["12", "output inhibited"]` is
-    /// what the venue ends an over-budget window with.
+    /// what the server ends an over-budget window with.
     fn volume_profile_message(rp_code: &[&str]) -> RithmicMessage {
         RithmicMessage::ResponseVolumeProfileMinuteBars(ResponseVolumeProfileMinuteBars {
             rp_code: rp_code.iter().map(|c| c.to_string()).collect(),
@@ -499,7 +499,7 @@ mod tests {
         })
     }
 
-    /// A part that carries replay data: a marker is what the venue sets on a
+    /// A part that carries replay data: a marker is what the server sets on a
     /// volume-profile frame that does.
     fn marker_part(id: &str) -> RithmicResponse {
         part(
@@ -511,7 +511,7 @@ mod tests {
         )
     }
 
-    /// A data part of a multi-part reply: `has_more` is set, so the venue is
+    /// A data part of a multi-part reply: `has_more` is set, so the server is
     /// saying more is coming.
     fn part(id: &str, message: RithmicMessage) -> RithmicResponse {
         let mut response = make_response(id, message);
@@ -797,7 +797,7 @@ mod tests {
     }
 
     // =========================================================================
-    // The venue continues after its own end marker
+    // The server continues after its own end marker
     //
     // Observed 2026-09-12 on RequestVolumeProfileMinuteBars (template 208): the
     // history plant sent thousands of parts, then a dataless end marker, then
@@ -919,9 +919,9 @@ mod tests {
     // =========================================================================
 
     /// The caller gave up mid-reply — its own deadline elapsed and it dropped
-    /// its receiver — while the venue is still streaming. The next part frees the responder and the parts held for
-    /// nobody, says so once, and the rest of the reply is counted as a late
-    /// continuation like any other.
+    /// its receiver — while the server is still streaming. The next part frees
+    /// the responder and the parts held for nobody, says so once, and the rest
+    /// of the reply is counted as a late continuation like any other.
     #[test]
     fn a_caller_that_stopped_waiting_mid_reply_frees_the_buffer_and_counts_the_rest_as_late() {
         let mut handler = RithmicRequestHandler::<Tag>::new();
@@ -964,7 +964,7 @@ mod tests {
 
     /// The caller gave up and the very next frame is the terminal: the
     /// reply has nowhere to go, and that is said in one line with the frame
-    /// count and the venue's code — never as a dump of every frame.
+    /// count and the server's code — never as a dump of every frame.
     #[test]
     fn a_reply_for_a_caller_that_stopped_waiting_is_one_line_not_a_dump() {
         let mut handler = RithmicRequestHandler::<Tag>::new();
@@ -1031,10 +1031,10 @@ mod tests {
     // Truncated replays
     // =========================================================================
 
-    /// The venue closes an over-budget replay with a truncation notice while
+    /// The server closes an over-budget replay with a truncation notice while
     /// the caller is waiting: the caller keeps waiting, the parts stay, the
     /// plant is told to resume with the key, the acknowledgement is consumed,
-    /// the continuation joins the parts, and the venue's real end marker
+    /// the continuation joins the parts, and the server's real end marker
     /// resolves the whole reply — without the notice in it.
     #[test]
     fn a_truncation_notice_keeps_the_caller_waiting_and_asks_to_resume() {
@@ -1055,7 +1055,7 @@ mod tests {
         );
         assert!(
             logged.contains(
-                "request_id 7: the venue truncated this reply after 2 parts (request_key \"0\"); \
+                "request_id 7: the server truncated this reply after 2 parts (request_key \"0\"); \
                  asking it to resume"
             ),
             "{logged}"
@@ -1095,8 +1095,8 @@ mod tests {
         assert!(handler.replay_map.is_empty());
     }
 
-    /// A resume key the venue repeats without intervening data is not asked
-    /// for again; data for the reply re-arms it, because the venue reuses a
+    /// A resume key the server repeats without intervening data is not asked
+    /// for again; data for the reply re-arms it, because the server reuses a
     /// key across cuts of the same replay.
     #[test]
     fn a_repeated_resume_key_without_new_data_is_not_asked_for_again() {
@@ -1125,7 +1125,7 @@ mod tests {
                 request_id: "7".to_string(),
                 key: "0".to_string(),
             }),
-            "data re-arms the key the venue reuses"
+            "data re-arms the key the server reuses"
         );
 
         handler.route(terminal("7", volume_profile_message(&["0"])));
@@ -1140,7 +1140,7 @@ mod tests {
         assert!(handler.resumes.is_empty());
     }
 
-    /// The venue can acknowledge a resume twice: the first acknowledgement
+    /// The server can acknowledge a resume twice: the first acknowledgement
     /// consumes the correlation, so the second finds no caller. One line at
     /// INFO, not an error for a reply nobody is missing.
     #[test]
@@ -1190,7 +1190,7 @@ mod tests {
         assert!(handler.resumes.is_empty());
     }
 
-    /// A venue that refuses the resume ends the wait: the caller gets the
+    /// When the server refuses the resume, the wait ends: the caller gets the
     /// refusal as an error, never the prefix as a successful complete reply.
     #[test]
     fn a_refused_resume_never_reports_a_complete_prefix() {
@@ -1228,7 +1228,7 @@ mod tests {
 
     /// A truncation notice for a caller that stopped waiting is not resumed:
     /// nobody would get the continuation. The replay is released, that is said
-    /// once, and what the venue still sends for the id is counted.
+    /// once, and what the server still sends for the id is counted.
     #[test]
     fn a_truncation_notice_for_a_caller_that_stopped_waiting_is_counted_not_resumed() {
         let mut handler = RithmicRequestHandler::<Tag>::new();

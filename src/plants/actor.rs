@@ -719,7 +719,7 @@ mod tests {
 
     /// A truncation notice for a pending replay puts `RequestResumeBars`
     /// on the wire with the notice's key, the caller keeps waiting, and the
-    /// venue's real end marker resolves the reply.
+    /// server's real end marker resolves the reply.
     #[tokio::test]
     async fn a_truncation_notice_sends_a_resume_request_on_the_wire() {
         use crate::rti::{RequestResumeBars, ResponseVolumeProfileMinuteBars};

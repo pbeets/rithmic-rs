@@ -1583,7 +1583,7 @@ impl RithmicOrderPlantHandle {
     }
 
     /// The route an order for `exchange` would go out on right now, without sending
-    /// anything. Call it after [`login`](Self::login) to check your venues are routable.
+    /// anything. Call it after [`login`](Self::login) to check your exchanges are routable.
     ///
     /// # Arguments
     /// * `exchange` - The exchange to look up, as it appears on your orders

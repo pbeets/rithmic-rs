@@ -463,8 +463,8 @@ impl<K: PlantKind> PlantCore<K> {
         }
     }
 
-    /// Continue a replay the venue truncated: send `RequestResumeBars` with
-    /// the key its notice carried. The venue acknowledges on the resume's own
+    /// Continue a replay the server truncated: send `RequestResumeBars` with
+    /// the key its notice carried. The server acknowledges on the resume's own
     /// id and streams the rest on the replay's id. The write is reported under
     /// the replay's id, so a failed write fails the replay's caller.
     fn resume_truncated_replay(&mut self, resume: Resume) {
@@ -1144,7 +1144,7 @@ mod tests {
     }
 
     /// A replay whose caller left before its write was reported is still
-    /// held, but a truncation notice for it asks the venue for nothing.
+    /// held, but a truncation notice for it asks the server for nothing.
     #[test]
     fn a_truncated_replay_whose_caller_left_before_its_write_was_reported_is_not_resumed() {
         let mut core = bare();
