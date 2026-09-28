@@ -171,6 +171,7 @@ impl<T: RequestTag> RithmicRequestHandler<T> {
 
         match self.handle_map.remove(&response.request_id) {
             Some(tag) => Some(Routed::Reply(tag, Ok(vec![response]))),
+
             None => {
                 self.report_unmatched_terminal(&response);
 
@@ -210,6 +211,7 @@ impl<T: RequestTag> RithmicRequestHandler<T> {
             .response_vec_map
             .remove(&response.request_id)
             .unwrap_or_default();
+
         reply.push(response);
 
         Some(Routed::Reply(tag, Ok(reply)))
@@ -260,10 +262,12 @@ impl<T: RequestTag> RithmicRequestHandler<T> {
     /// reply.
     fn release_abandoned(&mut self, request_id: &str) {
         self.handle_map.remove(request_id);
+
         let parts = self
             .response_vec_map
             .remove(request_id)
             .map_or(0, |p| p.len());
+
         self.expect_late_frames(request_id);
 
         info!(
@@ -284,6 +288,7 @@ impl<T: RequestTag> RithmicRequestHandler<T> {
                     request_id
                 );
             }
+
             Entry::Occupied(mut parts) => *parts.get_mut() += 1,
         }
     }
@@ -299,7 +304,9 @@ impl<T: RequestTag> RithmicRequestHandler<T> {
                 .or_insert(0);
             return;
         }
+
         let rp_code = response.rp_code().unwrap_or(&[]);
+
         if matches!(response.message, RithmicMessage::ResponseResumeBars(_)) {
             info!(
                 "request_id {}: a resume acknowledgement nothing is waiting on, rp_code {:?}",
@@ -307,12 +314,14 @@ impl<T: RequestTag> RithmicRequestHandler<T> {
             );
             return;
         }
+
         let replay_or_decode_failure = matches!(
             response.message,
             RithmicMessage::ResponseTimeBarReplay(_)
                 | RithmicMessage::ResponseTickBarReplay(_)
                 | RithmicMessage::ResponseVolumeProfileMinuteBars(_)
         ) || response.error.is_some();
+
         if rp_code.is_empty()
             && replay_or_decode_failure
             && self.late_continuations.contains_key(&response.request_id)
@@ -321,6 +330,7 @@ impl<T: RequestTag> RithmicRequestHandler<T> {
             // no evidence that the server stopped streaming this request.
             return;
         }
+
         match self.late_continuations.remove(&response.request_id) {
             Some(parts) => info!(
                 "request_id {}: the venue kept streaming after nothing was waiting: {} more \
@@ -366,6 +376,7 @@ impl RithmicRequestHandler<crate::plants::tag::Tag> {
 
                 None
             }
+
             Routed::Reply(tag, _) => panic!("these tests register only callers, got {tag:?}"),
             Routed::Resume(resume) => Some(resume),
         }
@@ -1014,6 +1025,7 @@ mod tests {
             RithmicMessage::ResponseLogin(_)
         ));
     }
+
     // =========================================================================
     // Truncated replays
     // =========================================================================

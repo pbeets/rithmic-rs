@@ -116,6 +116,7 @@ mod tests {
         // One of the pair alone is refused, as is an empty member.
         assert!(RithmicExitPosition::new().symbol("ESZ6").build().is_err());
         assert!(RithmicExitPosition::new().exchange("CME").build().is_err());
+
         assert!(
             RithmicExitPosition::new()
                 .symbol("")
@@ -123,6 +124,7 @@ mod tests {
                 .build()
                 .is_err()
         );
+
         assert!(
             RithmicExitPosition::new()
                 .symbol("ESZ6")

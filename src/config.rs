@@ -132,12 +132,15 @@ impl fmt::Display for ConfigError {
             ConfigError::MissingEnvVar(var) => {
                 write!(f, "Missing environment variable: {}", var)
             }
+
             ConfigError::InvalidEnvironment(env) => {
                 write!(f, "Invalid environment: {}", env)
             }
+
             ConfigError::InvalidValue { var, reason } => {
                 write!(f, "Invalid value for {}: {}", var, reason)
             }
+
             ConfigError::MissingField(field) => {
                 write!(f, "Missing required field: {}", field)
             }
@@ -410,16 +413,19 @@ impl RithmicConfig {
 
         let request_timeout = match env::var(REQUEST_TIMEOUT_VAR) {
             Err(env::VarError::NotPresent) => DEFAULT_REQUEST_TIMEOUT,
+
             Err(env::VarError::NotUnicode(_)) => {
                 return Err(ConfigError::InvalidValue {
                     var: REQUEST_TIMEOUT_VAR.to_string(),
                     reason: "expected whole seconds, got a non-unicode value".to_string(),
                 });
             }
+
             Ok(value) => match parse_whole_seconds(value.trim()) {
                 // Zero selects the default, consistent with the builder.
                 Some(0) => DEFAULT_REQUEST_TIMEOUT,
                 Some(secs) => Duration::from_secs(secs),
+
                 None => {
                     return Err(ConfigError::InvalidValue {
                         var: REQUEST_TIMEOUT_VAR.to_string(),
@@ -594,6 +600,7 @@ impl RithmicConfigBuilder {
         } else {
             request_timeout
         };
+
         self
     }
 

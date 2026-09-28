@@ -264,10 +264,13 @@ impl RithmicTickerPlant {
         strategy: ConnectStrategy,
     ) -> Result<RithmicTickerPlant, RithmicError> {
         let (req_tx, req_rx) = mpsc::channel::<TickerPlantCommand>(64);
+
         let capacity = config
             .subscription_capacity
             .unwrap_or(DEFAULT_SUBSCRIPTION_CAPACITY);
+
         let (sub_tx, _sub_rx) = broadcast::channel(capacity);
+
         let mut ticker_plant =
             Plant::new(TickerPlant, req_rx, sub_tx.clone(), config, strategy).await?;
 
@@ -321,9 +324,11 @@ impl PlantKind for TickerPlant {
         match command {
             TickerPlantCommand::Close => Ok(PlantCommand::Close),
             TickerPlantCommand::Abort => Ok(PlantCommand::Abort),
+
             TickerPlantCommand::GetSystemInfo { response_sender } => {
                 Ok(PlantCommand::GetSystemInfo { response_sender })
             }
+
             TickerPlantCommand::Login {
                 config,
                 response_sender,
@@ -331,9 +336,11 @@ impl PlantKind for TickerPlant {
                 config,
                 response_sender,
             }),
+
             TickerPlantCommand::Logout { response_sender } => {
                 Ok(PlantCommand::Logout { response_sender })
             }
+
             command => Err(command),
         }
     }
@@ -350,6 +357,7 @@ impl PlantKind for TickerPlant {
                 |api| api.request_market_data_update(&symbol, &exchange, fields, request_type),
                 response_sender,
             ),
+
             TickerPlantCommand::SubscribeOrderBook {
                 symbol,
                 exchange,
@@ -359,6 +367,7 @@ impl PlantKind for TickerPlant {
                 |api| api.request_depth_by_order_updates(&symbol, &exchange, request_type),
                 response_sender,
             ),
+
             TickerPlantCommand::RequestDepthByOrderSnapshot {
                 symbol,
                 exchange,
@@ -367,6 +376,7 @@ impl PlantKind for TickerPlant {
                 |api| api.request_depth_by_order_snapshot(&symbol, &exchange),
                 response_sender,
             ),
+
             TickerPlantCommand::SearchSymbols {
                 search_text,
                 exchange,
@@ -386,6 +396,7 @@ impl PlantKind for TickerPlant {
                 },
                 response_sender,
             ),
+
             TickerPlantCommand::ListExchangePermissions {
                 user,
                 response_sender,
@@ -393,6 +404,7 @@ impl PlantKind for TickerPlant {
                 |api| api.request_list_exchange_permissions(&user),
                 response_sender,
             ),
+
             TickerPlantCommand::GetInstrumentByUnderlying {
                 underlying_symbol,
                 exchange,
@@ -408,6 +420,7 @@ impl PlantKind for TickerPlant {
                 },
                 response_sender,
             ),
+
             TickerPlantCommand::SubscribeByUnderlying {
                 underlying_symbol,
                 exchange,
@@ -427,6 +440,7 @@ impl PlantKind for TickerPlant {
                 },
                 response_sender,
             ),
+
             TickerPlantCommand::GetTickSizeTypeTable {
                 tick_size_type,
                 response_sender,
@@ -434,6 +448,7 @@ impl PlantKind for TickerPlant {
                 |api| api.request_give_tick_size_type_table(&tick_size_type),
                 response_sender,
             ),
+
             TickerPlantCommand::GetProductCodes {
                 exchange,
                 give_toi_products_only,
@@ -442,6 +457,7 @@ impl PlantKind for TickerPlant {
                 |api| api.request_product_codes(exchange.as_deref(), give_toi_products_only),
                 response_sender,
             ),
+
             TickerPlantCommand::GetVolumeAtPrice {
                 symbol,
                 exchange,
@@ -450,6 +466,7 @@ impl PlantKind for TickerPlant {
                 |api| api.request_get_volume_at_price(&symbol, &exchange),
                 response_sender,
             ),
+
             TickerPlantCommand::GetAuxilliaryReferenceData {
                 symbol,
                 exchange,
@@ -458,6 +475,7 @@ impl PlantKind for TickerPlant {
                 |api| api.request_auxilliary_reference_data(&symbol, &exchange),
                 response_sender,
             ),
+
             TickerPlantCommand::GetReferenceData {
                 symbol,
                 exchange,
@@ -466,6 +484,7 @@ impl PlantKind for TickerPlant {
                 |api| api.request_reference_data(&symbol, &exchange),
                 response_sender,
             ),
+
             TickerPlantCommand::GetFrontMonthContract {
                 symbol,
                 exchange,
@@ -475,6 +494,7 @@ impl PlantKind for TickerPlant {
                 |api| api.request_front_month_contract(&symbol, &exchange, need_updates),
                 response_sender,
             ),
+
             TickerPlantCommand::GetSystemGatewayInfo {
                 system_name,
                 response_sender,
@@ -482,6 +502,7 @@ impl PlantKind for TickerPlant {
                 |api| api.request_rithmic_system_gateway_info(system_name.as_deref()),
                 response_sender,
             ),
+
             TickerPlantCommand::Close
             | TickerPlantCommand::Abort
             | TickerPlantCommand::GetSystemInfo { .. }

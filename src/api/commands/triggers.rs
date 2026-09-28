@@ -68,11 +68,13 @@ impl TrailingStop {
                 "trail_by_ticks must be at least 1".to_string(),
             ));
         }
+
         if self.trail_by_price_id < 1 {
             return Err(RithmicError::InvalidArgument(
                 "trail_by_price_id must be at least 1".to_string(),
             ));
         }
+
         Ok(self)
     }
 }
@@ -182,6 +184,7 @@ impl RithmicIfTouchedTrigger {
                     .to_string(),
             ));
         }
+
         Ok(self)
     }
 }
@@ -195,6 +198,7 @@ mod tests {
         assert!(TrailingStop::new().build().is_err());
         assert!(TrailingStop::new().trail_by_ticks(20).build().is_err());
         assert!(TrailingStop::new().trail_by_price_id(1).build().is_err());
+
         assert!(
             TrailingStop::new()
                 .trail_by_ticks(20)
@@ -210,6 +214,7 @@ mod tests {
             .symbol("NQM6")
             .exchange("CME")
             .price(18250.5);
+
         assert!(full.clone().build().is_ok());
 
         assert!(full.clone().symbol("").build().is_err());
@@ -221,6 +226,7 @@ mod tests {
             .build()
             .unwrap_err()
             .to_string();
+
         assert!(err.contains("requires a price"), "{err}");
     }
 }

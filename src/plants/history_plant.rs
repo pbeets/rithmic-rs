@@ -234,10 +234,13 @@ impl RithmicHistoryPlant {
         strategy: ConnectStrategy,
     ) -> Result<RithmicHistoryPlant, RithmicError> {
         let (req_tx, req_rx) = mpsc::channel::<HistoryPlantCommand>(32);
+
         let capacity = config
             .subscription_capacity
             .unwrap_or(DEFAULT_SUBSCRIPTION_CAPACITY);
+
         let (sub_tx, _sub_rx) = broadcast::channel::<RithmicResponse>(capacity);
+
         let mut history_plant =
             Plant::new(HistoryPlant, req_rx, sub_tx.clone(), config, strategy).await?;
 
@@ -291,9 +294,11 @@ impl PlantKind for HistoryPlant {
         match command {
             HistoryPlantCommand::Close => Ok(PlantCommand::Close),
             HistoryPlantCommand::Abort => Ok(PlantCommand::Abort),
+
             HistoryPlantCommand::GetSystemInfo { response_sender } => {
                 Ok(PlantCommand::GetSystemInfo { response_sender })
             }
+
             HistoryPlantCommand::Login {
                 config,
                 response_sender,
@@ -301,9 +306,11 @@ impl PlantKind for HistoryPlant {
                 config,
                 response_sender,
             }),
+
             HistoryPlantCommand::Logout { response_sender } => {
                 Ok(PlantCommand::Logout { response_sender })
             }
+
             command => Err(command),
         }
     }
@@ -321,10 +328,12 @@ impl PlantKind for HistoryPlant {
                 },
                 PendingReplay::new(response_sender),
             ),
+
             HistoryPlantCommand::ResumeBars {
                 request_key,
                 response_sender,
             } => cx.send_for(|api| api.request_resume_bars(&request_key), response_sender),
+
             HistoryPlantCommand::SubscribeTimeBarUpdates {
                 symbol,
                 exchange,
@@ -344,6 +353,7 @@ impl PlantKind for HistoryPlant {
                 },
                 response_sender,
             ),
+
             HistoryPlantCommand::SubscribeTickBarUpdates {
                 symbol,
                 exchange,
@@ -365,6 +375,7 @@ impl PlantKind for HistoryPlant {
                 },
                 response_sender,
             ),
+
             HistoryPlantCommand::Close
             | HistoryPlantCommand::Abort
             | HistoryPlantCommand::GetSystemInfo { .. }

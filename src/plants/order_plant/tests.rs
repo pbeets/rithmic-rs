@@ -137,6 +137,7 @@ async fn place_oco_order_forwards_two_or_more_legs() {
             assert_eq!(order.legs[2].user_tag, "c");
             // Dropping the command drops the responder, which unparks the call.
         }
+
         _ => panic!("expected PlaceOcoOrder to be queued"),
     }
 
@@ -156,6 +157,7 @@ async fn adjust_target_and_stop_forward_the_bracket_level() {
         let _ = handle
             .adjust_target(adjustment("basket-1", 16, Some(2)))
             .await;
+
         let _ = handle.adjust_stop(adjustment("basket-2", 8, None)).await;
     });
 
@@ -165,6 +167,7 @@ async fn adjust_target_and_stop_forward_the_bracket_level() {
             assert_eq!(adjustment.ticks, 16);
             assert_eq!(adjustment.level, Some(2));
         }
+
         _ => panic!("expected ModifyTarget to be queued"),
     }
 
@@ -174,6 +177,7 @@ async fn adjust_target_and_stop_forward_the_bracket_level() {
             assert_eq!(adjustment.ticks, 8);
             assert_eq!(adjustment.level, None);
         }
+
         _ => panic!("expected ModifyStop to be queued"),
     }
 
@@ -196,6 +200,7 @@ async fn place_order_through_the_handle_after_close_requested_reports_connection
     plant.core.session = Session::Closing;
 
     let account = test_account();
+
     let handle = RithmicOrderPlantHandle {
         account: Arc::clone(&account),
         sender: command_sender,
@@ -286,6 +291,7 @@ async fn read_request<M: prost::Message + Default>(
     expectation: &str,
 ) -> M {
     let payload = read_wire_request(client).await;
+
     let sent = crate::rti::MessageType::decode(&*payload)
         .expect("every request carries a template id")
         .template_id;
@@ -330,6 +336,7 @@ async fn read_post_login_requests(client: &mut TcpStream) -> PostLoginRequests {
         "the plant must fetch the login info that scopes get_account_list",
     )
     .await;
+
     let trade_routes = read_request(
         client,
         310,
@@ -463,6 +470,7 @@ async fn login_hands_the_trade_routes_it_read_to_the_plant() {
         Some(true),
         "a route the server changes later must at least reach subscribers"
     );
+
     assert_eq!(
         handle.trade_route_for("CME").await.unwrap(),
         "globex",
@@ -501,6 +509,7 @@ async fn login_succeeds_and_stays_unscoped_when_the_login_info_fails() {
         assert!(login.is_ok(), "a failed login info must not fail the login");
 
         let account_list = account_list_request(&handle, &mut client).await;
+
         assert_eq!(
             account_list.fcm_id, None,
             "a failed login info must not scope"
@@ -611,6 +620,7 @@ async fn disconnect_fails_a_login_in_flight_at_once() {
         });
 
         let request = read_login_request(&mut client).await;
+
         if reply_accepted {
             write_wire_response(&mut client, &login_reply(request.user_msg, &["0"])).await;
             read_post_login_requests(&mut client).await;
@@ -620,6 +630,7 @@ async fn disconnect_fails_a_login_in_flight_at_once() {
             let handle = handle.clone();
             async move { handle.disconnect().await }
         });
+
         let _: crate::rti::RequestLogout =
             read_request(&mut client, 12, "disconnect must send the logout").await;
 
@@ -642,6 +653,7 @@ async fn a_login_in_flight_fails_when_the_connection_ends() {
             let handle = handle.clone();
             async move { handle.login().await }
         });
+
         read_login_request(&mut client).await;
 
         if server_hangs_up {
@@ -668,6 +680,7 @@ async fn get_login_info_scopes_only_a_plant_without_a_scope() {
         reject(&mut client, &requests.login_info.user_msg).await;
         answer_trade_routes(&mut client, &requests.trade_routes, &[]).await;
     };
+
     let (login, ()) = tokio::join!(handle.login(), server);
     assert!(login.is_ok());
 
@@ -675,6 +688,7 @@ async fn get_login_info_scopes_only_a_plant_without_a_scope() {
         let server = async {
             let request: crate::rti::RequestLoginInfo =
                 read_request(&mut client, 300, "get_login_info must send its request").await;
+
             answer_login_info_with(&mut client, &request.user_msg, fcm_id).await;
         };
         let (info, ()) = tokio::join!(handle.get_login_info(), server);
@@ -683,6 +697,7 @@ async fn get_login_info_scopes_only_a_plant_without_a_scope() {
             RithmicMessage::ResponseLoginInfo(info) => {
                 assert_eq!(info.fcm_id.as_deref(), Some(fcm_id));
             }
+
             other => panic!("expected the login info, got {other:?}"),
         }
 
@@ -718,14 +733,17 @@ fn accepted_login(
     String,
 ) {
     let (response_sender, rx) = oneshot::channel();
+
     let effects = core.on_event(Event::Command(OrderPlantCommand::Login {
         config: LoginConfig::default(),
         response_sender,
     }));
+
     let login_id = sent_ids(&effects).remove(0);
 
     let effects = core.on_event(Event::Frame(frame(&login_reply(vec![login_id], &["0"]))));
     let ids = sent_ids(&effects);
+
     assert_eq!(
         ids.len(),
         2,
@@ -778,11 +796,13 @@ fn the_core_answers_a_login_once_the_login_info_and_trade_routes_are_answered() 
 
         let [route, end] = trade_route_frames(&trade_routes_id, "CME", "globex");
         let mut frames = vec![login_info_frame(&login_info_id, "FCM_LOGIN"), route, end];
+
         if !login_info_first {
             frames.rotate_left(1);
         }
 
         let last = frames.pop().unwrap();
+
         for frame in frames {
             core.on_event(Event::Frame(frame));
             assert_eq!(answer(&mut rx), None, "a load is still outstanding");
@@ -838,6 +858,7 @@ fn the_core_loads_the_scope_and_routes_for_a_login_nobody_waits_for() {
     drop(rx);
 
     core.on_event(Event::Frame(login_info_frame(&login_info_id, "FCM_LOGIN")));
+
     for part in trade_route_frames(&trade_routes_id, "CME", "globex") {
         core.on_event(Event::Frame(part));
     }
@@ -859,27 +880,34 @@ fn only_the_plant_writes_its_scope_and_routes() {
     let mut core = order_core();
     let (_rx, login_info_id, trade_routes_id) = accepted_login(&mut core);
     core.on_event(Event::Frame(login_info_frame(&login_info_id, "FCM_LOGIN")));
+
     for part in trade_route_frames(&trade_routes_id, "CME", "globex") {
         core.on_event(Event::Frame(part));
     }
 
     let (response_sender, mut info) = oneshot::channel();
+
     let effects = core.on_event(Event::Command(OrderPlantCommand::GetLoginInfo {
         response_sender,
     }));
+
     let id = sent_ids(&effects).remove(0);
     core.on_event(Event::Frame(login_info_frame(&id, "FCM_LATER")));
     assert!(matches!(answer(&mut info), Some(Ok(_))));
 
     let (response_sender, mut routes) = oneshot::channel();
+
     let effects = core.on_event(Event::Command(OrderPlantCommand::GetTradeRoutes {
         subscribe_for_updates: false,
         response_sender,
     }));
+
     let id = sent_ids(&effects).remove(0);
+
     for part in trade_route_frames(&id, "CME", "other") {
         core.on_event(Event::Frame(part));
     }
+
     assert!(matches!(answer(&mut routes), Some(Ok(_))));
 
     let scope = core.kind.login_scope.as_ref().unwrap();
@@ -898,6 +926,7 @@ fn only_the_plant_writes_its_scope_and_routes() {
             ..Default::default()
         }),
     )));
+
     assert!(effects.is_empty(), "applying a route update sends nothing");
     assert_eq!(
         core.kind.trade_routes.resolve(None, "CME").unwrap(),
@@ -1073,9 +1102,11 @@ fn bracket_order_on(exchange: &str, trade_route: Option<&str>) -> RithmicBracket
         .price_type(OrderType::Limit)
         .price(5000.0)
         .localid("advanced-1");
+
     if let Some(trade_route) = trade_route {
         order = order.trade_route(trade_route);
     }
+
     order.build().expect("valid bracket")
 }
 
@@ -1279,6 +1310,7 @@ async fn trade_route_for_answers_from_the_cache_without_sending() {
 
     for (exchange, expected) in [("CME", Some("globex")), ("CBOT", None)] {
         let (response_sender, rx) = oneshot::channel();
+
         plant
             .handle(Event::Command(OrderPlantCommand::TradeRouteFor {
                 exchange: exchange.to_string(),
@@ -1382,6 +1414,7 @@ async fn record_trade_route_forwards_the_update_to_the_actor() {
             assert_eq!(recorded.exchange.as_deref(), Some("CME"));
             assert_eq!(recorded.trade_route.as_deref(), Some("moved"));
         }
+
         _ => panic!("expected RecordTradeRouteUpdate to be queued"),
     }
 
@@ -1407,6 +1440,7 @@ async fn cancel_all_orders_encodes_auto_placement_by_default() {
     // an unconfigured command through the handle and then decodes what that
     // same command puts on the wire.
     let (handle, mut command_receiver) = test_handle();
+
     let call = tokio::spawn(async move {
         handle
             .cancel_all_orders(RithmicCancelAllOrders::default())
@@ -1424,17 +1458,20 @@ async fn cancel_all_orders_encodes_auto_placement_by_default() {
     else {
         panic!("expected CancelAllOrders to be queued");
     };
+
     assert_eq!(
         queued.manual_or_auto,
         ManualOrAutoEntry::Auto,
         "cancel_all_orders() must attribute to Auto like every other order call"
     );
+
     let queued = queued.clone();
 
     drop(command);
     let _ = call.await;
 
     let (mut plant, _sender, mut client) = plant_with_wire().await;
+
     let request: crate::rti::RequestCancelAllOrders =
         sent_request(&mut plant, &mut client, |response_sender| {
             OrderPlantCommand::CancelAllOrders {
@@ -1486,6 +1523,7 @@ async fn an_unset_price_is_omitted_on_the_wire() {
 #[tokio::test]
 async fn exit_position_encodes_auto_placement_by_default() {
     let (handle, mut command_receiver) = test_handle();
+
     let call = tokio::spawn(async move {
         handle
             .exit_position(
@@ -1509,17 +1547,20 @@ async fn exit_position_encodes_auto_placement_by_default() {
     else {
         panic!("expected ExitPosition to be queued");
     };
+
     assert_eq!(
         queued.manual_or_auto,
         ManualOrAutoEntry::Auto,
         "exit_position() must attribute to Auto like every other order call"
     );
+
     let queued = queued.clone();
 
     drop(command);
     let _ = call.await;
 
     let (mut plant, _sender, mut client) = plant_with_wire().await;
+
     let request: crate::rti::RequestExitPosition =
         sent_request(&mut plant, &mut client, |response_sender| {
             OrderPlantCommand::ExitPosition {
@@ -1540,17 +1581,21 @@ async fn exit_position_encodes_auto_placement_by_default() {
 async fn subscribe_all_retains_every_account() {
     let (sender, _rx) = mpsc::channel(4);
     let (subscription_sender, _) = broadcast::channel(4);
+
     let plant = RithmicOrderPlant {
         sender,
         subscription_sender,
         connection_handle: tokio::spawn(async {}),
     };
+
     let mut receiver = plant.subscribe_all();
+
     for account in ["account-a", "account-b"] {
         let update = crate::rti::AccountPnLPositionUpdate {
             account_id: Some(account.into()),
             ..Default::default()
         };
+
         plant
             .subscription_sender
             .send(RithmicResponse {
@@ -1563,12 +1608,15 @@ async fn subscribe_all_retains_every_account() {
                 error: None,
             })
             .unwrap();
+
         let RithmicMessage::AccountPnLPositionUpdate(update) =
             receiver.recv().await.unwrap().message
         else {
             panic!("missing account update")
         };
+
         assert_eq!(update.account_id.as_deref(), Some(account));
     }
+
     plant.connection_handle.await.unwrap();
 }

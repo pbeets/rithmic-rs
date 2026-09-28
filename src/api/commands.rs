@@ -63,6 +63,7 @@ pub(crate) fn validate_instrument(
             "quantity must be at least 1, got {quantity}"
         )));
     }
+
     Ok(())
 }
 

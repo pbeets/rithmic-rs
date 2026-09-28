@@ -96,6 +96,7 @@ impl InstrumentInfo {
                         precision += 1;
                     }
                 }
+
                 precision
             }
             _ => 2,

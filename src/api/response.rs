@@ -190,9 +190,11 @@ mod tests {
         let bbo = make_response(RithmicMessage::BestBidOffer(BestBidOffer::default()));
         let trade = make_response(RithmicMessage::LastTrade(LastTrade::default()));
         let depth = make_response(RithmicMessage::DepthByOrder(DepthByOrder::default()));
+
         let depth_end = make_response(RithmicMessage::DepthByOrderEndEvent(
             DepthByOrderEndEvent::default(),
         ));
+
         let orderbook = make_response(RithmicMessage::OrderBook(OrderBook::default()));
 
         assert!(bbo.is_market_data());
@@ -211,9 +213,11 @@ mod tests {
         let rithmic_notif = make_response(RithmicMessage::RithmicOrderNotification(
             RithmicOrderNotification::default(),
         ));
+
         let exchange_notif = make_response(RithmicMessage::ExchangeOrderNotification(
             ExchangeOrderNotification::default(),
         ));
+
         let bracket = make_response(RithmicMessage::BracketUpdates(BracketUpdates::default()));
 
         assert!(rithmic_notif.is_order_update());
@@ -230,6 +234,7 @@ mod tests {
         let account_pnl = make_response(RithmicMessage::AccountPnLPositionUpdate(
             AccountPnLPositionUpdate::default(),
         ));
+
         let instrument_pnl = make_response(RithmicMessage::InstrumentPnLPositionUpdate(
             InstrumentPnLPositionUpdate::default(),
         ));

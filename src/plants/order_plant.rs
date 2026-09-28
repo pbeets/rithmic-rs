@@ -372,10 +372,13 @@ impl RithmicOrderPlant {
         strategy: ConnectStrategy,
     ) -> Result<RithmicOrderPlant, RithmicError> {
         let (req_tx, req_rx) = mpsc::channel::<OrderPlantCommand>(64);
+
         let capacity = config
             .subscription_capacity
             .unwrap_or(DEFAULT_SUBSCRIPTION_CAPACITY);
+
         let (sub_tx, _sub_rx) = broadcast::channel(capacity);
+
         let mut order_plant = Plant::new(
             OrderPlant::default(),
             req_rx,
@@ -495,6 +498,7 @@ impl OrderPlant {
             0 => {
                 error!("order_plant: no trade routes published, orders will fail with NoTradeRoute")
             }
+
             loaded => info!("order_plant: {} trade routes loaded", loaded),
         }
     }
@@ -511,9 +515,11 @@ impl PlantKind for OrderPlant {
         match command {
             OrderPlantCommand::Close => Ok(PlantCommand::Close),
             OrderPlantCommand::Abort => Ok(PlantCommand::Abort),
+
             OrderPlantCommand::GetSystemInfo { response_sender } => {
                 Ok(PlantCommand::GetSystemInfo { response_sender })
             }
+
             OrderPlantCommand::Login {
                 config,
                 response_sender,
@@ -521,9 +527,11 @@ impl PlantKind for OrderPlant {
                 config,
                 response_sender,
             }),
+
             OrderPlantCommand::Logout { response_sender } => {
                 Ok(PlantCommand::Logout { response_sender })
             }
+
             command => Err(command),
         }
     }
@@ -539,6 +547,7 @@ impl PlantKind for OrderPlant {
             |api| api.request_login_info(),
             OrderTag::LoginInfo { caller: None },
         );
+
         cx.send(|api| api.request_trade_routes(true), OrderTag::TradeRoutes);
     }
 
@@ -560,6 +569,7 @@ impl PlantKind for OrderPlant {
                     response_sender,
                 );
             }
+
             OrderPlantCommand::SubscribeOrderUpdates {
                 account,
                 response_sender,
@@ -567,6 +577,7 @@ impl PlantKind for OrderPlant {
                 |api| api.request_subscribe_for_order_updates(&account),
                 response_sender,
             ),
+
             OrderPlantCommand::SubscribeBracketUpdates {
                 account,
                 response_sender,
@@ -574,6 +585,7 @@ impl PlantKind for OrderPlant {
                 |api| api.request_subscribe_to_bracket_updates(&account),
                 response_sender,
             ),
+
             OrderPlantCommand::PlaceBracketOrder {
                 bracket_order,
                 account,
@@ -602,6 +614,7 @@ impl PlantKind for OrderPlant {
                     response_sender,
                 );
             }
+
             OrderPlantCommand::ModifyOrder {
                 order,
                 account,
@@ -610,6 +623,7 @@ impl PlantKind for OrderPlant {
                 |api| api.request_modify_order(&order, &account),
                 response_sender,
             ),
+
             OrderPlantCommand::CancelOrder {
                 order,
                 account,
@@ -618,6 +632,7 @@ impl PlantKind for OrderPlant {
                 |api| api.request_cancel_order(&order, &account),
                 response_sender,
             ),
+
             OrderPlantCommand::ModifyStop {
                 adjustment,
                 account,
@@ -626,6 +641,7 @@ impl PlantKind for OrderPlant {
                 |api| api.request_update_stop_bracket_level(&adjustment, &account),
                 response_sender,
             ),
+
             OrderPlantCommand::ModifyTarget {
                 adjustment,
                 account,
@@ -634,10 +650,12 @@ impl PlantKind for OrderPlant {
                 |api| api.request_update_target_bracket_level(&adjustment, &account),
                 response_sender,
             ),
+
             OrderPlantCommand::ShowOrders {
                 account,
                 response_sender,
             } => cx.send_for(|api| api.request_show_orders(&account), response_sender),
+
             OrderPlantCommand::CancelAllOrders {
                 command,
                 account,
@@ -646,6 +664,7 @@ impl PlantKind for OrderPlant {
                 |api| api.request_cancel_all_orders(&command, &account, self.login_scope.as_ref()),
                 response_sender,
             ),
+
             OrderPlantCommand::GetAccountRmsInfo {
                 account,
                 response_sender,
@@ -653,6 +672,7 @@ impl PlantKind for OrderPlant {
                 |api| api.request_account_rms_info(&account, self.login_scope.as_ref()),
                 response_sender,
             ),
+
             OrderPlantCommand::GetProductRmsInfo {
                 account,
                 response_sender,
@@ -660,6 +680,7 @@ impl PlantKind for OrderPlant {
                 |api| api.request_product_rms_info(&account),
                 response_sender,
             ),
+
             OrderPlantCommand::GetTradeRoutes {
                 subscribe_for_updates,
                 response_sender,
@@ -667,19 +688,23 @@ impl PlantKind for OrderPlant {
                 |api| api.request_trade_routes(subscribe_for_updates),
                 response_sender,
             ),
+
             OrderPlantCommand::RecordTradeRouteUpdate(update) => {
                 self.trade_routes.record_update(&update);
             }
+
             OrderPlantCommand::TradeRouteFor {
                 exchange,
                 response_sender,
             } => {
                 let _ = response_sender.send(self.trade_routes.resolve(None, &exchange));
             }
+
             OrderPlantCommand::ShowOrderHistoryDates { response_sender } => cx.send_for(
                 |api| api.request_show_order_history_dates(),
                 response_sender,
             ),
+
             OrderPlantCommand::ShowOrderHistorySummary {
                 date,
                 account,
@@ -688,6 +713,7 @@ impl PlantKind for OrderPlant {
                 |api| api.request_show_order_history_summary(&date, &account),
                 response_sender,
             ),
+
             OrderPlantCommand::ShowOrderHistoryDetail {
                 basket_id,
                 date,
@@ -697,6 +723,7 @@ impl PlantKind for OrderPlant {
                 |api| api.request_show_order_history_detail(&basket_id, &date, &account),
                 response_sender,
             ),
+
             OrderPlantCommand::ShowOrderHistory {
                 basket_id,
                 account,
@@ -705,6 +732,7 @@ impl PlantKind for OrderPlant {
                 |api| api.request_show_order_history(basket_id.as_deref(), &account),
                 response_sender,
             ),
+
             OrderPlantCommand::PlaceOrder {
                 order,
                 account,
@@ -726,6 +754,7 @@ impl PlantKind for OrderPlant {
                     response_sender,
                 );
             }
+
             OrderPlantCommand::PlaceOcoOrder {
                 order,
                 account,
@@ -746,10 +775,12 @@ impl PlantKind for OrderPlant {
                     response_sender,
                 );
             }
+
             OrderPlantCommand::ShowBrackets {
                 account,
                 response_sender,
             } => cx.send_for(|api| api.request_show_brackets(&account), response_sender),
+
             OrderPlantCommand::ShowBracketStops {
                 account,
                 response_sender,
@@ -757,6 +788,7 @@ impl PlantKind for OrderPlant {
                 |api| api.request_show_bracket_stops(&account),
                 response_sender,
             ),
+
             OrderPlantCommand::ExitPosition {
                 command,
                 account,
@@ -765,6 +797,7 @@ impl PlantKind for OrderPlant {
                 |api| api.request_exit_position(&command, &account),
                 response_sender,
             ),
+
             OrderPlantCommand::LinkOrders {
                 command,
                 account,
@@ -773,6 +806,7 @@ impl PlantKind for OrderPlant {
                 |api| api.request_link_orders(command, &account),
                 response_sender,
             ),
+
             OrderPlantCommand::GetEasyToBorrowList {
                 request_type,
                 response_sender,
@@ -780,6 +814,7 @@ impl PlantKind for OrderPlant {
                 |api| api.request_easy_to_borrow_list(request_type),
                 response_sender,
             ),
+
             OrderPlantCommand::ModifyOrderReferenceData {
                 command,
                 account,
@@ -788,6 +823,7 @@ impl PlantKind for OrderPlant {
                 |api| api.request_modify_order_reference_data(&command, &account),
                 response_sender,
             ),
+
             OrderPlantCommand::GetOrderSessionConfig {
                 should_defer_request,
                 response_sender,
@@ -795,6 +831,7 @@ impl PlantKind for OrderPlant {
                 |api| api.request_order_session_config(should_defer_request),
                 response_sender,
             ),
+
             OrderPlantCommand::ReplayExecutions {
                 start_index_sec,
                 finish_index_sec,
@@ -804,6 +841,7 @@ impl PlantKind for OrderPlant {
                 |api| api.request_replay_executions(start_index_sec, finish_index_sec, &account),
                 response_sender,
             ),
+
             OrderPlantCommand::GetUserInfo {
                 user,
                 account,
@@ -812,6 +850,7 @@ impl PlantKind for OrderPlant {
                 |api| api.request_get_user_info(user.as_deref(), &account),
                 response_sender,
             ),
+
             OrderPlantCommand::ShowFillHistory {
                 range,
                 max_record_count,
@@ -821,6 +860,7 @@ impl PlantKind for OrderPlant {
                 |api| api.request_show_fill_history(range, max_record_count, &account),
                 response_sender,
             ),
+
             OrderPlantCommand::SubscribeAccountRmsUpdates {
                 subscribe,
                 update_bits,
@@ -830,20 +870,24 @@ impl PlantKind for OrderPlant {
                 |api| api.request_account_rms_updates(subscribe, update_bits, &account),
                 response_sender,
             ),
+
             OrderPlantCommand::GetLoginInfo { response_sender } => cx.send(
                 |api| api.request_login_info(),
                 OrderTag::LoginInfo {
                     caller: Some(response_sender),
                 },
             ),
+
             OrderPlantCommand::ListUnacceptedAgreements { response_sender } => cx.send_for(
                 |api| api.request_list_unaccepted_agreements(),
                 response_sender,
             ),
+
             OrderPlantCommand::ListAcceptedAgreements { response_sender } => cx.send_for(
                 |api| api.request_list_accepted_agreements(),
                 response_sender,
             ),
+
             OrderPlantCommand::AcceptAgreement {
                 agreement_id,
                 market_data_usage_capacity,
@@ -857,6 +901,7 @@ impl PlantKind for OrderPlant {
                 },
                 response_sender,
             ),
+
             OrderPlantCommand::ShowAgreement {
                 agreement_id,
                 response_sender,
@@ -864,6 +909,7 @@ impl PlantKind for OrderPlant {
                 |api| api.request_show_agreement(&agreement_id),
                 response_sender,
             ),
+
             OrderPlantCommand::SetRithmicMrktDataSelfCertStatus {
                 agreement_id,
                 market_data_usage_capacity,
@@ -877,6 +923,7 @@ impl PlantKind for OrderPlant {
                 },
                 response_sender,
             ),
+
             OrderPlantCommand::ListExchangePermissions {
                 user,
                 response_sender,
@@ -884,6 +931,7 @@ impl PlantKind for OrderPlant {
                 |api| api.request_list_exchange_permissions(&user),
                 response_sender,
             ),
+
             OrderPlantCommand::Close
             | OrderPlantCommand::Abort
             | OrderPlantCommand::GetSystemInfo { .. }
@@ -904,6 +952,7 @@ impl PlantKind for OrderPlant {
 
                 match caller {
                     Some(caller) => answer_caller(caller, reply),
+
                     None => {
                         self.loading_login_info = false;
 
@@ -916,10 +965,12 @@ impl PlantKind for OrderPlant {
                                     );
                                 }
                             }
+
                             Ok(None) => warn!(
                                 "order_plant: login info unavailable, account list will be unscoped: {:?}",
                                 RithmicError::EmptyResponse
                             ),
+
                             Err(err) => warn!(
                                 "order_plant: login info unavailable, account list will be unscoped: {:?}",
                                 err
@@ -928,6 +979,7 @@ impl PlantKind for OrderPlant {
                     }
                 }
             }
+
             OrderTag::TradeRoutes => {
                 self.loading_trade_routes = false;
 
@@ -942,6 +994,7 @@ impl PlantKind for OrderPlant {
 
                         self.record_trade_routes(&responses);
                     }
+
                     Err(err) => error!(
                         "order_plant: trade routes unavailable, orders will fail: {}",
                         err

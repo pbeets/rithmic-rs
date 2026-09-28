@@ -137,17 +137,20 @@ impl<K: PlantKind> PlantCore<K> {
             Event::Command(command) => self.on_command(command),
             Event::Frame(response) => self.on_frame(response),
             Event::HeartbeatDue => self.heartbeat(),
+
             Event::PingDue => {
                 if !self.close_requested() {
                     self.effects.push(Effect::Ping);
                 }
             }
+
             Event::PingTimedOut => self.on_ping_timeout(),
             Event::CloseReceived => self.on_close_received(),
             Event::StreamEnded => self.on_stream_ended(),
             Event::Sent(id) => self.request_handler.mark_sent(&id),
             Event::SendFailed(id) => self.on_send_failed(&id),
             Event::SendTimedOut(id) => self.on_send_timed_out(&id),
+
             Event::ConnectionLost { id, error } => {
                 self.fail_connection_and_drain(id, error);
                 self.effects.push(Effect::Stop);
@@ -183,15 +186,18 @@ impl<K: PlantKind> PlantCore<K> {
         match command {
             Ok(PlantCommand::Close) => self.close(),
             Ok(PlantCommand::Abort) => self.abort(),
+
             Ok(PlantCommand::GetSystemInfo { response_sender }) => {
                 let (buf, id) = self.sender_api.request_rithmic_system_info();
                 self.register_and_send(buf, id, Tag::Caller(response_sender));
             }
+
             Ok(PlantCommand::Login {
                 config,
                 response_sender,
             }) => self.login(config, response_sender),
             Ok(PlantCommand::Logout { response_sender }) => self.logout(response_sender),
+
             Err(command) => {
                 let mut cx = Cx::new(&mut self.sender_api);
                 self.kind.on_command(command, &mut cx);
@@ -207,6 +213,7 @@ impl<K: PlantKind> PlantCore<K> {
         for request in outgoing {
             match request {
                 Outgoing::Request { buf, id, tag } => self.register_and_send(buf, id, tag),
+
                 Outgoing::Replay { buf, id, replay } => {
                     // Nothing is sent for a replay whose caller stopped
                     // waiting while it was queued.
@@ -265,6 +272,7 @@ impl<K: PlantKind> PlantCore<K> {
         match tag {
             Tag::Caller(responder) => answer_caller(responder, reply),
             Tag::Login => self.login_failed(reply),
+
             Tag::Kind(tag) => {
                 self.kind.on_reply(tag, reply);
                 self.check_ready();
@@ -391,6 +399,7 @@ impl<K: PlantKind> PlantCore<K> {
     fn login_accepted(&mut self, login: RithmicResponse) {
         let (config, requesters) = match mem::replace(&mut self.session, Session::Connected) {
             Session::LoggingIn { config, requesters } => (config, requesters),
+
             // A close was requested while the login was on the wire.
             other => {
                 self.session = other;
@@ -449,6 +458,7 @@ impl<K: PlantKind> PlantCore<K> {
 
                 self.session = Session::Ready { config, login };
             }
+
             other => self.session = other,
         }
     }
@@ -551,6 +561,7 @@ impl<K: PlantKind> PlantCore<K> {
     fn login(&mut self, config: LoginConfig, response_sender: Responder) {
         match &mut self.session {
             Session::Connected => {}
+
             Session::LoggingIn {
                 config: current,
                 requesters,
@@ -568,6 +579,7 @@ impl<K: PlantKind> PlantCore<K> {
 
                 return;
             }
+
             Session::Ready {
                 config: current,
                 login,
@@ -577,10 +589,12 @@ impl<K: PlantKind> PlantCore<K> {
                 } else {
                     Err(RithmicError::LoginConflict)
                 };
+
                 let _ = response_sender.send(reply);
 
                 return;
             }
+
             // `on_command` drops every login once a close is requested, so
             // this never runs. It answers anyway rather than panic the actor.
             Session::Closing | Session::Closed => {
@@ -644,6 +658,7 @@ mod tests {
     /// core asks the I/O loop to do.
     fn login(core: &mut PlantCore<Bare>, config: LoginConfig) -> (ReplyRx, Vec<Effect>) {
         let (tx, rx) = oneshot::channel();
+
         let effects = core.on_event(Event::Command(PlantCommand::Login {
             config,
             response_sender: tx,
@@ -705,6 +720,7 @@ mod tests {
     /// Ask for the system info, returning its reply receiver and its request id.
     fn system_info(core: &mut PlantCore<Bare>) -> (ReplyRx, String) {
         let (tx, rx) = oneshot::channel();
+
         let effects = core.on_event(Event::Command(PlantCommand::GetSystemInfo {
             response_sender: tx,
         }));
@@ -719,6 +735,7 @@ mod tests {
         let effects = core.on_event(Event::Frame(login_reply(&id, &["0"])));
 
         assert!(matches!(core.session, Session::Ready { .. }));
+
         assert!(matches!(
             effects.as_slice(),
             [Effect::SetHeartbeat(period)] if *period == Duration::from_secs(30)
@@ -738,6 +755,7 @@ mod tests {
         assert!(effects.is_empty(), "no heartbeat period is adopted");
 
         let reply = answer(&mut rx).unwrap().unwrap();
+
         assert!(
             reply[0].error.is_some(),
             "the caller still gets the rejection"
@@ -754,10 +772,12 @@ mod tests {
         let effects = core.on_event(Event::Frame(login_reply(&id, &["0"])));
 
         assert!(matches!(core.session, Session::Ready { .. }));
+
         assert!(matches!(
             effects.as_slice(),
             [Effect::SetHeartbeat(period)] if *period == Duration::from_secs(30)
         ));
+
         assert!(heartbeats(&core.on_event(Event::HeartbeatDue)));
     }
 
@@ -770,6 +790,7 @@ mod tests {
         let effects = core.on_event(Event::Frame(login_reply("login-1", &["0"])));
 
         assert!(matches!(core.session, Session::Connected));
+
         assert!(
             effects.is_empty(),
             "a reply is not an update, and adopts no heartbeat period"
@@ -782,6 +803,7 @@ mod tests {
     fn one_login_request_answers_every_login_with_the_same_config() {
         let (mut core, mut first, id) = logging_in();
         let (mut second, effects) = login(&mut core, LoginConfig::default());
+
         assert!(
             effects.is_empty(),
             "a login in progress is joined, not repeated"
@@ -808,6 +830,7 @@ mod tests {
 
         let (mut in_progress, effects) = login(&mut core, other_config());
         assert!(effects.is_empty());
+
         assert_eq!(
             answer(&mut in_progress),
             Some(Err(RithmicError::LoginConflict))
@@ -851,7 +874,9 @@ mod tests {
                 "abort" => Event::Command(PlantCommand::Abort),
                 _ => Event::StreamEnded,
             };
+
             let effects = core.on_event(event);
+
             assert_eq!(
                 stops(&effects),
                 matches!(close, "abort" | "stream end"),
@@ -866,6 +891,7 @@ mod tests {
 
             // The reply that arrives anyway must not reopen the session.
             core.on_event(Event::Frame(login_reply(&id, &["0"])));
+
             assert!(
                 core.close_requested(),
                 "{close} must keep the session closed"
@@ -914,6 +940,7 @@ mod tests {
                 },
                 _ => Event::Frame(frame(&ForcedLogout { template_id: 77 })),
             };
+
             core.on_event(event);
 
             let reply = answer(&mut rx).unwrap_or_else(|| panic!("{path} must answer the login"));
@@ -929,6 +956,7 @@ mod tests {
         let Session::Ready { config, login } = test_support::logged_in_session() else {
             unreachable!("a logged-in session is ready");
         };
+
         let sessions = [
             (Session::Connected, false),
             (
@@ -969,6 +997,7 @@ mod tests {
     #[test]
     fn a_logout_closes_the_session_before_it_is_sent() {
         let mut core = bare();
+
         assert!(
             !core.close_requested(),
             "a fresh core has no close requested"
@@ -988,19 +1017,23 @@ mod tests {
     fn after_a_logout_only_the_close_goes_out() {
         let mut core = bare();
         core.session = test_support::logged_in_session();
+
         core.on_event(Event::Command(PlantCommand::Logout {
             response_sender: oneshot::channel().0,
         }));
 
         let (tx, mut info) = oneshot::channel();
+
         let effects = core.on_event(Event::Command(PlantCommand::GetSystemInfo {
             response_sender: tx,
         }));
+
         assert!(effects.is_empty());
         assert_eq!(answer(&mut info), Some(Err(RithmicError::ConnectionClosed)));
 
         let (mut relogin, effects) = login(&mut core, LoginConfig::default());
         assert!(effects.is_empty());
+
         assert_eq!(
             answer(&mut relogin),
             Some(Err(RithmicError::ConnectionClosed))
@@ -1061,11 +1094,13 @@ mod tests {
             match effects.as_slice() {
                 [Effect::Broadcast(event), Effect::Stop] => {
                     assert!(matches!(event.message, RithmicMessage::ConnectionError));
+
                     assert!(matches!(
                         &event.error,
                         Some(RithmicError::ProtocolError(s)) if s == "test error"
                     ));
                 }
+
                 other => panic!("expected a broadcast, then stop; got {other:?}"),
             }
 
@@ -1087,8 +1122,10 @@ mod tests {
                 assert!(matches!(event.message, RithmicMessage::HeartbeatTimeout));
                 assert_eq!(event.error, Some(RithmicError::HeartbeatTimeout));
             }
+
             other => panic!("expected a broadcast, then stop; got {other:?}"),
         }
+
         assert_eq!(answer(&mut rx), Some(Err(RithmicError::ConnectionClosed)));
     }
 

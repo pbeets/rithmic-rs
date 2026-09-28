@@ -240,6 +240,7 @@ impl RithmicModifyOrderReferenceData {
                 "a retag requires the basket_id of the order it retags".to_string(),
             ));
         }
+
         Ok(())
     }
 
@@ -276,6 +277,7 @@ mod tests {
         // Neither a trigger nor a price to stand in for it.
         assert!(modify(OrderType::StopMarket).build().is_err());
         assert!(modify(OrderType::StopMarket).price(5000.0).build().is_ok());
+
         assert!(
             modify(OrderType::StopMarket)
                 .trigger_price(5000.0)
@@ -290,9 +292,11 @@ mod tests {
                 .build()
                 .is_err()
         );
+
         assert!(modify(OrderType::StopLimit).price(5000.0).build().is_ok());
 
         assert!(modify(OrderType::MarketIfTouched).build().is_err());
+
         assert!(
             modify(OrderType::LimitIfTouched)
                 .price(5000.0)
@@ -300,6 +304,7 @@ mod tests {
                 .is_ok()
         );
     }
+
     #[test]
     fn a_modify_requires_the_basket_id_and_instrument() {
         assert!(modify(OrderType::Market).id("").build().is_err());
@@ -310,6 +315,7 @@ mod tests {
     #[test]
     fn a_retag_requires_the_basket_id_but_takes_an_empty_tag() {
         assert!(RithmicModifyOrderReferenceData::new().build().is_err());
+
         assert!(
             RithmicModifyOrderReferenceData::new()
                 .basket_id("b")

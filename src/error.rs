@@ -42,6 +42,7 @@ impl fmt::Display for RithmicRequestError {
                     _ => write!(f, "[{code}]"),
                 }
             }
+
             _ => write!(f, "{}", message.unwrap_or_default()),
         }
     }
@@ -206,6 +207,7 @@ impl fmt::Display for RithmicError {
             RithmicError::SendFailed => write!(f, "WebSocket send failed"),
             RithmicError::EmptyResponse => write!(f, "empty response"),
             RithmicError::RequestTimeout => write!(f, "request timed out"),
+
             RithmicError::RequestRejected(err) => {
                 let detail = err.to_string();
 
@@ -215,8 +217,10 @@ impl fmt::Display for RithmicError {
                     write!(f, "request rejected: {detail}")
                 }
             }
+
             RithmicError::ProtocolError(msg) => write!(f, "protocol error: {msg}"),
             RithmicError::InvalidArgument(msg) => write!(f, "invalid argument: {msg}"),
+
             RithmicError::NoTradeRoute { exchange, cached } => {
                 write!(
                     f,
@@ -226,6 +230,7 @@ impl fmt::Display for RithmicError {
 
                 match cached.is_empty() {
                     true => write!(f, "; no routes cached"),
+
                     false => {
                         let cached: Vec<String> =
                             cached.iter().map(|key| sanitize_for_display(key)).collect();
@@ -234,10 +239,13 @@ impl fmt::Display for RithmicError {
                     }
                 }
             }
+
             RithmicError::HeartbeatTimeout => write!(f, "heartbeat timeout"),
+
             RithmicError::ForcedLogout(reason) => {
                 write!(f, "forced logout: {}", sanitize_for_display(reason))
             }
+
             RithmicError::LoginConflict => {
                 write!(
                     f,

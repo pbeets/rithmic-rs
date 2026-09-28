@@ -99,11 +99,14 @@ impl TradeRouteCache {
                     true
                 }
             }
+
             Some(held) if held.is_default != Some(true) && entry.is_default == Some(true) => {
                 *held = entry;
                 true
             }
+
             Some(_) => false,
+
             None => {
                 self.routes.insert(exchange.to_string(), entry);
                 true
@@ -216,9 +219,11 @@ mod tests {
             .price(5000.0)
             .duration(TimeInForce::Day)
             .user_tag("leg");
+
         if let Some(trade_route) = trade_route {
             leg = leg.trade_route(trade_route);
         }
+
         leg.build().expect("valid leg")
     }
 
@@ -410,10 +415,12 @@ mod tests {
             cache.record(Some("CME"), Some("globex"), Some(true)),
             "new detail for the route we hold is a change"
         );
+
         assert!(
             !cache.record(Some("CME"), Some("globex"), Some(true)),
             "the same frame again is not, so it must not be logged again"
         );
+
         assert_eq!(routed(&cache, "CME").as_deref(), Some("globex"));
     }
 

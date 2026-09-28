@@ -118,6 +118,7 @@ impl UnknownTemplateMessage {
     /// digits; empty input yields an empty payload.
     pub fn from_payload_hex(template_id: i32, hex: &str) -> Option<Self> {
         let hex = hex.trim();
+
         let hex = hex
             .strip_prefix("0x")
             .or(hex.strip_prefix("0X"))
@@ -297,6 +298,7 @@ mod tests {
             UnknownTemplateMessage::from_payload_hex(UNKNOWN_TEMPLATE_ID, "abc"),
             None
         );
+
         assert_eq!(
             UnknownTemplateMessage::from_payload_hex(UNKNOWN_TEMPLATE_ID, "zz"),
             None
@@ -316,6 +318,7 @@ mod tests {
             rendered.starts_with("template_id=999999 (52 bytes) "),
             "{rendered}"
         );
+
         assert!(rendered.ends_with("…+20B"), "{rendered}");
         assert_eq!(frame.payload_hex().len(), 104);
     }

@@ -364,6 +364,7 @@ mod tests {
         let ok = leg(OrderType::Market);
 
         assert!(RithmicOcoOrder::default().validate().is_ok());
+
         assert!(
             RithmicOcoOrder {
                 legs: vec![ok.clone()],
@@ -374,6 +375,7 @@ mod tests {
         );
 
         let bad = leg(OrderType::Limit);
+
         assert!(
             RithmicOcoOrder {
                 legs: vec![ok, bad],

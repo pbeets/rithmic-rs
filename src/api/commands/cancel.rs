@@ -60,6 +60,7 @@ impl RithmicCancelOrder {
                 "a cancel requires the basket_id of the order it cancels".to_string(),
             ));
         }
+
         Ok(())
     }
 

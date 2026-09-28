@@ -85,6 +85,7 @@ impl FromStr for OrderStatus {
             EXPIRED => Self::Expired,
             _ => Self::Unknown,
         };
+
         Ok(status)
     }
 }
@@ -101,6 +102,7 @@ impl fmt::Display for OrderStatus {
             Self::Expired => EXPIRED,
             Self::Unknown => "unknown",
         };
+
         write!(f, "{}", s)
     }
 }
@@ -122,6 +124,7 @@ mod tests {
             "complete".parse::<OrderStatus>().unwrap(),
             OrderStatus::Complete
         );
+
         assert_eq!(
             "filled".parse::<OrderStatus>().unwrap(),
             OrderStatus::Complete
@@ -131,6 +134,7 @@ mod tests {
             "cancelled".parse::<OrderStatus>().unwrap(),
             OrderStatus::Cancelled
         );
+
         assert_eq!(
             "canceled".parse::<OrderStatus>().unwrap(),
             OrderStatus::Cancelled
@@ -140,6 +144,7 @@ mod tests {
             "partial".parse::<OrderStatus>().unwrap(),
             OrderStatus::Partial
         );
+
         assert_eq!(
             "partially_filled".parse::<OrderStatus>().unwrap(),
             OrderStatus::Partial
@@ -173,6 +178,7 @@ mod tests {
     #[test]
     fn test_unknown_status() {
         assert_eq!("".parse::<OrderStatus>().unwrap(), OrderStatus::Unknown);
+
         assert_eq!(
             "foobar".parse::<OrderStatus>().unwrap(),
             OrderStatus::Unknown

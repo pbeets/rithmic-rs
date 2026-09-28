@@ -172,11 +172,13 @@ where
                 Effect::Send { id, frame } => Some(self.send_request(id, frame).await),
                 Effect::Heartbeat(frame) => self.send_heartbeat(frame).await,
                 Effect::Ping => self.send_ping().await,
+
                 Effect::SetHeartbeat(period) => {
                     self.interval = get_heartbeat_interval(Some(period.as_secs()));
 
                     None
                 }
+
                 Effect::Forward(response) => {
                     // Updates arrive many times a second: with nobody
                     // listening, say so briefly instead of dumping each one.
@@ -189,16 +191,19 @@ where
 
                     None
                 }
+
                 Effect::Broadcast(response) => {
                     let _ = self.subscription_sender.send(response);
 
                     None
                 }
+
                 Effect::SendClose => {
                     self.send_close_best_effort().await;
 
                     None
                 }
+
                 Effect::Stop => {
                     stop = true;
 
@@ -233,6 +238,7 @@ where
         .await
         {
             Ok(()) => Event::Sent(id),
+
             Err(WebSocketSendError::Transport(error)) => {
                 error!(
                     "{}: WebSocket send failed for request {}: {}",
@@ -241,6 +247,7 @@ where
 
                 Event::SendFailed(id)
             }
+
             Err(WebSocketSendError::Timeout) => {
                 error!(
                     "{}: WebSocket send timed out for request {} — sink poisoned",
@@ -287,11 +294,13 @@ where
 
                 None
             }
+
             Err(WebSocketSendError::Transport(error)) => {
                 error!(
                     "{}: WebSocket ping send failed — connection dead: {}",
                     self.rithmic_receiver_api.source, error
                 );
+
                 // Dead link: surface as HeartbeatTimeout so reconnect callers
                 // see the same signal as a true ping timeout.
                 Some(Event::ConnectionLost {
@@ -299,6 +308,7 @@ where
                     error: RithmicError::HeartbeatTimeout,
                 })
             }
+
             Err(WebSocketSendError::Timeout) => {
                 error!(
                     "{}: WebSocket ping send timed out",
@@ -324,11 +334,13 @@ where
         .await
         {
             Ok(()) => None,
+
             Err(WebSocketSendError::Transport(error)) => {
                 error!(
                     "{}: heartbeat send failed — connection dead: {}",
                     self.rithmic_receiver_api.source, error
                 );
+
                 // Dead link: surface as HeartbeatTimeout (same signal as a
                 // true heartbeat timeout).
                 Some(Event::ConnectionLost {
@@ -336,6 +348,7 @@ where
                     error: RithmicError::HeartbeatTimeout,
                 })
             }
+
             Err(WebSocketSendError::Timeout) => {
                 error!(
                     "{}: heartbeat send timed out",
@@ -382,13 +395,16 @@ where
 
                 self.handle(Event::CloseReceived).await
             }
+
             Ok(Message::Pong(_)) => {
                 self.ping_manager.received();
 
                 false
             }
+
             Ok(Message::Binary(data)) => match self.rithmic_receiver_api.buf_to_message(data) {
                 Ok(response) => self.handle(Event::Frame(response)).await,
+
                 Err(err_response) => {
                     error!(
                         "{}: decode failure: {:?}",
@@ -398,6 +414,7 @@ where
                     self.handle(Event::Frame(err_response)).await
                 }
             },
+
             Ok(Message::Ping(data)) => {
                 // Answer with a Pong carrying the same payload. With a split
                 // stream, tungstenite only flushes its own pong when the sink
@@ -410,6 +427,7 @@ where
                 .await
                 {
                     Ok(()) => false,
+
                     Err(e) => {
                         // A ConnectionError, not HeartbeatTimeout: a pong answers
                         // the server's ping, not ours. Both pass
@@ -429,6 +447,7 @@ where
                     }
                 }
             }
+
             Err(
                 e @ (Error::ConnectionClosed
                 | Error::AlreadyClosed
@@ -449,6 +468,7 @@ where
                 })
                 .await
             }
+
             Err(Error::Io(ref io_err)) => {
                 error!(
                     "{}: I/O error: {}",
@@ -464,6 +484,7 @@ where
                 })
                 .await
             }
+
             Err(e) => {
                 error!(
                     "{}: unhandled WebSocket error, closing: {}",
@@ -476,6 +497,7 @@ where
                 })
                 .await
             }
+
             Ok(_) => {
                 warn!(
                     "{}: received unhandled message type",
@@ -678,10 +700,12 @@ mod tests {
         id: &str,
     ) -> oneshot::Receiver<Result<Vec<RithmicResponse>, RithmicError>> {
         let (tx, rx) = oneshot::channel();
+
         plant
             .core
             .request_handler
             .register_request(id.to_string(), Tag::Caller(tx));
+
         rx
     }
 
@@ -720,6 +744,7 @@ mod tests {
             marker: Some(1_788_732_060),
             ..Default::default()
         };
+
         plant
             .handle_rithmic_message(Ok(Message::Binary(frame_of(&part).into())))
             .await;
@@ -730,19 +755,23 @@ mod tests {
             request_key: Some("0".to_string()),
             ..Default::default()
         };
+
         plant
             .handle_rithmic_message(Ok(Message::Binary(frame_of(&notice).into())))
             .await;
 
         assert!(rx.try_recv().is_err(), "the caller keeps waiting");
+
         let sent = plant
             .rithmic_sender
             .sent_messages
             .last()
             .expect("the resume request was sent");
+
         let Message::Binary(bytes) = sent else {
             panic!("a binary frame was expected, got {sent:?}");
         };
+
         let resume = RequestResumeBars::decode(&bytes[4..]).unwrap();
         assert_eq!(resume.template_id, 210);
         assert_eq!(resume.request_key.as_deref(), Some("0"));
@@ -753,16 +782,19 @@ mod tests {
             rp_code: vec!["0".to_string()],
             ..Default::default()
         };
+
         plant
             .handle_rithmic_message(Ok(Message::Binary(frame_of(&end).into())))
             .await;
 
         let reply = rx.try_recv().unwrap().unwrap();
+
         assert_eq!(
             reply.len(),
             2,
             "the part and the end marker; the notice is not delivered"
         );
+
         assert!(!reply[0].is_truncated() && !reply[1].is_truncated());
     }
 
@@ -850,6 +882,7 @@ mod tests {
         plant.perform(vec![send("failed")]).await;
 
         assert_eq!(rx.try_recv().unwrap(), Err(RithmicError::SendFailed));
+
         assert!(
             !plant.core.request_handler.expects_late_frames("failed"),
             "the server never saw a write that failed"
@@ -891,6 +924,7 @@ mod tests {
             start.elapsed() < std::time::Duration::from_secs(2 * SEND_TIMEOUT_SECS),
             "only the first write may wait out the timeout"
         );
+
         assert_eq!(rx1.try_recv().unwrap(), Err(RithmicError::ConnectionClosed));
         assert_eq!(rx2.try_recv().unwrap(), Err(RithmicError::ConnectionClosed));
 
@@ -912,6 +946,7 @@ mod tests {
             !stop,
             "send_ping should return false when close is requested"
         );
+
         assert!(
             plant.ping_manager.next_timeout_at().is_none(),
             "no ping should have been registered"
@@ -925,6 +960,7 @@ mod tests {
         let stop = plant.handle(Event::PingDue).await;
 
         assert!(!stop, "send_ping should return false on success");
+
         assert!(
             plant.ping_manager.next_timeout_at().is_some(),
             "ping_manager should track the pending ping"
@@ -939,11 +975,13 @@ mod tests {
 
         assert!(stop, "send_ping should return true on transport error");
         let broadcast_msg = sub_rx.try_recv().unwrap();
+
         assert!(
             matches!(broadcast_msg.message, RithmicMessage::HeartbeatTimeout),
             "ping send transport failure should surface as HeartbeatTimeout, got {:?}",
             broadcast_msg.message
         );
+
         // Still satisfies is_connection_issue() for reconnect-driving callers.
         assert!(
             broadcast_msg
@@ -966,6 +1004,7 @@ mod tests {
 
         assert!(stop, "send_ping should return true on timeout");
         let broadcast_msg = sub_rx.try_recv().unwrap();
+
         assert!(matches!(
             broadcast_msg.message,
             RithmicMessage::HeartbeatTimeout
@@ -984,13 +1023,16 @@ mod tests {
         for _ in 0..10 {
             let stop = match plant.next_event().await {
                 SelectResult::HeartbeatFired => plant.handle(Event::HeartbeatDue).await,
+
                 SelectResult::PingFired => {
                     let stop = plant.handle(Event::PingDue).await;
+
                     // The server answers every ping.
                     let pong = Ok(Message::Pong(vec![].into()));
 
                     plant.handle_rithmic_message(pong).await || stop
                 }
+
                 SelectResult::PingTimeout => plant.handle(Event::PingTimedOut).await,
                 _ => panic!("only timers fire: no command is sent and the peer is silent"),
             };
@@ -1010,11 +1052,13 @@ mod tests {
 
         assert!(stop, "send_heartbeat should return true on transport error");
         let broadcast_msg = sub_rx.try_recv().unwrap();
+
         assert!(
             matches!(broadcast_msg.message, RithmicMessage::HeartbeatTimeout),
             "heartbeat send transport failure should surface as HeartbeatTimeout, got {:?}",
             broadcast_msg.message
         );
+
         // Still satisfies is_connection_issue() for reconnect-driving callers.
         assert!(
             broadcast_msg
@@ -1039,6 +1083,7 @@ mod tests {
 
         assert!(stop, "send_heartbeat should return true on timeout");
         let broadcast_msg = sub_rx.try_recv().unwrap();
+
         assert!(matches!(
             broadcast_msg.message,
             RithmicMessage::HeartbeatTimeout
@@ -1053,6 +1098,7 @@ mod tests {
         let stop = plant.handle(Event::Command(PlantCommand::Close)).await;
 
         assert!(!stop, "the loop waits for the server's close echo");
+
         assert!(matches!(
             plant.rithmic_sender.sent_messages.as_slice(),
             [Message::Close(None)]
@@ -1087,6 +1133,7 @@ mod tests {
         // Oneshot drained with ConnectionClosed
         let result = rx1.try_recv().unwrap();
         assert!(matches!(result, Err(RithmicError::ConnectionClosed)));
+
         // Broadcast should be EMPTY (silent drain)
         assert!(
             sub_rx.try_recv().is_err(),
@@ -1109,6 +1156,7 @@ mod tests {
         assert!(matches!(result, Err(RithmicError::ConnectionClosed)));
         // Broadcast should contain ConnectionError
         let broadcast_msg = sub_rx.try_recv().unwrap();
+
         assert!(matches!(
             broadcast_msg.message,
             RithmicMessage::ConnectionError
@@ -1129,6 +1177,7 @@ mod tests {
             .await;
 
         assert!(!stop, "pong should not stop the actor");
+
         assert!(
             plant.ping_manager.next_timeout_at().is_none(),
             "ping_manager should be cleared after pong"
@@ -1161,6 +1210,7 @@ mod tests {
 
         assert!(stop, "ping with failing sink should stop actor");
         let broadcast_msg = sub_rx.try_recv().unwrap();
+
         assert!(matches!(
             broadcast_msg.message,
             RithmicMessage::ConnectionError
@@ -1178,6 +1228,7 @@ mod tests {
 
         assert!(stop, "ConnectionClosed error should stop actor");
         let broadcast_msg = sub_rx.try_recv().unwrap();
+
         assert!(matches!(
             broadcast_msg.message,
             RithmicMessage::ConnectionError
@@ -1225,12 +1276,14 @@ mod tests {
         let (stop, error, reply) = read_error(Error::Io(io)).await;
 
         assert!(stop);
+
         assert_eq!(
             error,
             Some(RithmicError::ConnectionFailed(
                 "WebSocket I/O error: reset by peer".to_string()
             ))
         );
+
         assert_eq!(reply, Err(RithmicError::ConnectionClosed));
     }
 
@@ -1241,11 +1294,13 @@ mod tests {
         let (stop, error, reply) = read_error(unexpected).await;
 
         assert!(stop);
+
         assert!(
             matches!(&error, Some(RithmicError::ConnectionFailed(message))
                 if message.starts_with("WebSocket error: ")),
             "got {error:?}"
         );
+
         assert_eq!(reply, Err(RithmicError::ConnectionClosed));
     }
 
@@ -1267,6 +1322,7 @@ mod tests {
             rp_code: vec!["3".to_string(), "some rejection".to_string()],
             ..ResponseLogin::default()
         };
+
         let mut payload = Vec::new();
         resp.encode(&mut payload).unwrap();
         let mut framed = (payload.len() as u32).to_be_bytes().to_vec();
@@ -1280,6 +1336,7 @@ mod tests {
             .await;
 
         assert!(!stop, "protocol rejection must not stop the actor");
+
         assert!(
             sub_rx.try_recv().is_err(),
             "protocol rejection must not broadcast a connection issue"
@@ -1287,6 +1344,7 @@ mod tests {
 
         let result = rx1.try_recv().unwrap().unwrap();
         assert_eq!(result.len(), 1);
+
         assert!(matches!(
             &result[0].error,
             Some(RithmicError::RequestRejected(e)) if e.message.as_deref() == Some("some rejection")
@@ -1307,10 +1365,12 @@ mod tests {
 
         assert!(stop, "a stream end should stop the actor");
         let broadcast_msg = sub_rx.try_recv().unwrap();
+
         assert!(matches!(
             broadcast_msg.message,
             RithmicMessage::ConnectionError
         ));
+
         let result = rx1.try_recv().unwrap();
         assert!(matches!(result, Err(RithmicError::ConnectionClosed)));
     }
@@ -1340,6 +1400,7 @@ mod tests {
             .await;
 
         assert!(stop, "forced logout must stop the actor loop");
+
         assert!(
             matches!(plant.core.session, Session::Closed),
             "forced logout must close the session"
@@ -1351,11 +1412,13 @@ mod tests {
         assert!(matches!(result, Err(RithmicError::ConnectionClosed)));
 
         let frame_event = sub_rx.try_recv().unwrap();
+
         assert!(
             matches!(frame_event.message, RithmicMessage::ForcedLogout(_)),
             "the ForcedLogout frame must arrive first, got {:?}",
             frame_event.message
         );
+
         assert!(
             frame_event
                 .error
@@ -1368,6 +1431,7 @@ mod tests {
         let lifecycle_event = sub_rx
             .try_recv()
             .expect("forced logout must emit the actor-lifecycle event every stopping path emits");
+
         assert!(
             matches!(lifecycle_event.message, RithmicMessage::ConnectionError),
             "the lifecycle event must follow the frame, got {:?}",
@@ -1386,6 +1450,7 @@ mod tests {
             user_msg: vec![user_msg.to_string()],
             ..RequestHeartbeat::default()
         };
+
         let mut payload = Vec::new();
         req.encode(&mut payload).unwrap();
         let mut framed = (payload.len() as u32).to_be_bytes().to_vec();
@@ -1411,21 +1476,25 @@ mod tests {
             .await;
 
         assert!(!stop, "a heartbeat frame must not stop the actor");
+
         assert!(
             matches!(rx.try_recv(), Err(oneshot::error::TryRecvError::Empty)),
             "an inbound heartbeat must not resolve a pending request"
         );
 
         let broadcast_msg = sub_rx.try_recv().unwrap();
+
         assert!(
             matches!(broadcast_msg.message, RithmicMessage::RequestHeartbeat(_)),
             "the frame must reach subscribers as RequestHeartbeat, got {:?}",
             broadcast_msg.message
         );
+
         assert!(
             broadcast_msg.request_id.is_empty(),
             "the server's token must not be surfaced as a request id"
         );
+
         assert!(
             plant.rithmic_sender.sent_messages.is_empty(),
             "an inbound heartbeat must not be answered, got {:?}",
@@ -1456,6 +1525,7 @@ mod tests {
                 rp_code,
                 ..ResponseHeartbeat::default()
             };
+
             let mut payload = Vec::new();
             resp.encode(&mut payload).unwrap();
             let mut framed = (payload.len() as u32).to_be_bytes().to_vec();
@@ -1466,6 +1536,7 @@ mod tests {
                 .await;
 
             assert!(!stop, "a heartbeat reply must not stop the actor");
+
             assert!(
                 matches!(rx.try_recv(), Err(oneshot::error::TryRecvError::Empty)),
                 "a heartbeat reply must not resolve a pending request"
@@ -1473,10 +1544,12 @@ mod tests {
 
             if failed {
                 let broadcast_msg = sub_rx.try_recv().unwrap();
+
                 assert!(matches!(
                     broadcast_msg.message,
                     RithmicMessage::HeartbeatTimeout
                 ));
+
                 assert!(matches!(
                     &broadcast_msg.error,
                     Some(RithmicError::RequestRejected(e)) if e.message.as_deref() == Some("heartbeat rejected")
@@ -1511,6 +1584,7 @@ mod tests {
             rq_handler_rp_code: vec!["0".to_string()],
             ..ResponseSearchSymbols::default()
         };
+
         let mut payload = Vec::new();
         intermediate.encode(&mut payload).unwrap();
         let mut framed = (payload.len() as u32).to_be_bytes().to_vec();
@@ -1520,6 +1594,7 @@ mod tests {
             .handle_rithmic_message(Ok(Message::Binary(framed.into())))
             .await;
         assert!(!stop);
+
         assert!(
             sub_rx.try_recv().is_err(),
             "intermediate multi-response frame must not broadcast"
@@ -1533,6 +1608,7 @@ mod tests {
             rp_code: vec!["5".to_string(), "bad".to_string()],
             ..ResponseSearchSymbols::default()
         };
+
         let mut payload = Vec::new();
         terminal.encode(&mut payload).unwrap();
         let mut framed = (payload.len() as u32).to_be_bytes().to_vec();
@@ -1542,6 +1618,7 @@ mod tests {
             .handle_rithmic_message(Ok(Message::Binary(framed.into())))
             .await;
         assert!(!stop);
+
         assert!(
             sub_rx.try_recv().is_err(),
             "terminal multi-response rejection must not broadcast"
@@ -1550,6 +1627,7 @@ mod tests {
         let result = rx.try_recv().unwrap().unwrap();
         assert_eq!(result.len(), 2, "both accumulated frames must be flushed");
         assert!(result[0].error.is_none());
+
         assert!(matches!(
             &result[1].error,
             Some(RithmicError::RequestRejected(e)) if e.message.as_deref() == Some("bad")
@@ -1578,6 +1656,7 @@ mod tests {
             user_msg: vec![],
             rp_code: vec!["5".to_string(), "permission denied".to_string()],
         };
+
         let mut payload = Vec::new();
         reject.encode(&mut payload).unwrap();
         let mut framed = (payload.len() as u32).to_be_bytes().to_vec();
@@ -1588,10 +1667,12 @@ mod tests {
             .await;
 
         assert!(!stop, "an unsolicited reject must not stop the actor");
+
         assert!(
             sub_rx.try_recv().is_err(),
             "an unsolicited reject must not reach the subscription channel"
         );
+
         assert!(
             rx.try_recv().is_err(),
             "an unsolicited reject must not reach the request handler"
@@ -1632,6 +1713,7 @@ mod tests {
 
         assert!(matches!(broadcast_msg.message, RithmicMessage::Unknown));
         assert_eq!(broadcast_msg.request_id, "");
+
         assert!(matches!(
             &broadcast_msg.error,
             Some(RithmicError::ProtocolError(_))
@@ -1651,6 +1733,7 @@ mod tests {
             user_msg: vec!["req-1".to_string()],
             template_version: Some(1),
         };
+
         let mut payload = Vec::new();
         body.encode(&mut payload).unwrap();
         let mut framed = (payload.len() as u32).to_be_bytes().to_vec();
@@ -1661,6 +1744,7 @@ mod tests {
             .await;
 
         assert!(!stop, "a decode failure must not stop the actor");
+
         assert!(
             sub_rx.try_recv().is_err(),
             "a correlated decode failure must not broadcast"
@@ -1674,6 +1758,7 @@ mod tests {
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].request_id, "req-1");
         assert!(matches!(result[0].message, RithmicMessage::Unknown));
+
         assert!(matches!(
             &result[0].error,
             Some(RithmicError::ProtocolError(_))
@@ -1698,6 +1783,7 @@ mod tests {
             .retry_timeout(std::time::Duration::from_secs(3))
             .build()
             .unwrap();
+
         let (subscription_sender, _) = broadcast::channel(4);
         let (_, request_receiver) = mpsc::channel(1);
 

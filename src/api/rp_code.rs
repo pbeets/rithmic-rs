@@ -204,12 +204,14 @@ mod tests {
     fn classify_rp_code_error_reports_only_a_rejection_as_an_error() {
         // The classifications themselves are pinned by the classify_rp_code tests.
         assert_eq!(classify_rp_code_error(&["0".to_string()]), None);
+
         assert_eq!(
             classify_rp_code_error(&["7".to_string(), "no data".to_string()]),
             None
         );
 
         let rp_code = vec!["3".to_string(), "bad request".to_string()];
+
         let RpCodeClassification::RequestRejected(err) = classify_rp_code(&rp_code) else {
             panic!("expected a rejection");
         };
@@ -244,6 +246,7 @@ mod tests {
             classify_rp_code(&["0".to_string(), "ok".to_string()]),
             RpCodeClassification::Success
         );
+
         assert_eq!(
             classify_rp_code(&["0".to_string(), String::new()]),
             RpCodeClassification::Success
@@ -362,6 +365,7 @@ mod tests {
             classify_rp_code(&["0".to_string()]),
             RpCodeClassification::Success
         );
+
         assert_eq!(
             reject_error(&["0".to_string()]),
             RithmicError::RequestRejected(RithmicRequestError {
@@ -382,6 +386,7 @@ mod tests {
             classify_rp_code(&rp_code),
             RpCodeClassification::KnownBenignEmpty
         );
+
         assert_eq!(
             reject_error(&rp_code),
             RithmicError::RequestRejected(RithmicRequestError {
@@ -436,11 +441,13 @@ mod tests {
             fn response_rp_code_info_covers_every_listed_variant() {
                 $(
                     let msg = RithmicMessage::$variant($variant::default());
+
                     let (name, rp_code) = response_rp_code_info(&msg)
                         .unwrap_or_else(|| panic!(
                             "response_rp_code_info returned None for listed variant {}",
                             stringify!($variant),
                         ));
+
                     assert_eq!(name, stringify!($variant));
                     assert!(rp_code.is_empty(), "default rp_code should be empty");
                 )*

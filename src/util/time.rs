@@ -38,10 +38,13 @@ pub fn rithmic_to_unix_nanos(ssboe: i32, usecs: i32) -> u64 {
 pub fn rithmic_to_unix_nanos_precise(ssboe: i32, usecs: i32, nsecs: Option<i32>) -> u64 {
     debug_assert!(ssboe >= 0, "ssboe must be non-negative, got {}", ssboe);
     debug_assert!(usecs >= 0, "usecs must be non-negative, got {}", usecs);
+
     if let Some(ns) = nsecs {
         debug_assert!(ns >= 0, "nsecs must be non-negative, got {}", ns);
     }
+
     let base = (ssboe as u64 * 1_000_000_000) + (usecs as u64 * 1_000);
+
     match nsecs {
         Some(ns) => base + (ns as u64),
         None => base,
@@ -57,6 +60,7 @@ mod tests {
         assert_eq!(rithmic_to_unix_nanos(1, 0), 1_000_000_000);
         assert_eq!(rithmic_to_unix_nanos(1, 1), 1_000_001_000);
         assert_eq!(rithmic_to_unix_nanos(1, 999999), 1_999_999_000);
+
         assert_eq!(
             rithmic_to_unix_nanos(1_704_067_200, 500_000),
             1_704_067_200_500_000_000
