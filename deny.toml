@@ -1,0 +1,18 @@
+# cargo-deny configuration. CI runs `cargo deny check advisories licenses`.
+# https://embarkstudios.github.io/cargo-deny/checks/cfg.html
+
+[advisories]
+# Vulnerable and unmaintained crates anywhere in the tree fail the check.
+# Unsound advisories fail it only when they affect a direct dependency,
+# which is cargo-deny's default. Yanked versions warn.
+ignore = []
+
+[licenses]
+# The licenses the dependency tree needs, dev-dependencies included. A crate
+# that offers a choice, such as "MIT OR Apache-2.0", needs only one of them
+# listed here.
+allow = [
+    "Apache-2.0",
+    "MIT",
+    "Unicode-3.0",
+]

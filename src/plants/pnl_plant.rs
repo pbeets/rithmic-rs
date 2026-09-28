@@ -61,11 +61,12 @@ pub(crate) enum PnlPlantCommand {
 /// # Example
 ///
 /// ```no_run
+/// use tokio::time::{sleep, Duration};
+///
 /// use rithmic_rs::{
 ///     RithmicAccount, RithmicConfig, RithmicEnv, ConnectStrategy, RithmicPnlPlant,
 ///     rti::messages::RithmicMessage,
 /// };
-/// use tokio::time::{sleep, Duration};
 ///
 /// #[tokio::main]
 /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -74,7 +75,8 @@ pub(crate) enum PnlPlantCommand {
 ///     let account = RithmicAccount::from_env(RithmicEnv::Demo)?;
 ///
 ///     // Step 2: Connect to the PnL plant
-///     let pnl_plant = RithmicPnlPlant::connect(&config, ConnectStrategy::Retry).await?;
+///     let pnl_plant =
+///         RithmicPnlPlant::connect(&config, ConnectStrategy::Retry).await?;
 ///
 ///     // Step 3: Get a handle to interact with the plant
 ///     let mut handle = pnl_plant.get_handle(&account);
@@ -98,6 +100,7 @@ pub(crate) enum PnlPlantCommand {
 ///                     _ => {}
 ///                 }
 ///             },
+///
 ///             Err(e) => println!("Error receiving update: {}", e),
 ///         }
 ///     }
@@ -139,9 +142,11 @@ impl RithmicPnlPlant {
         strategy: ConnectStrategy,
     ) -> Result<RithmicPnlPlant, RithmicError> {
         let (req_tx, req_rx) = mpsc::channel::<PnlPlantCommand>(64);
+
         let capacity = config
             .subscription_capacity
             .unwrap_or(DEFAULT_SUBSCRIPTION_CAPACITY);
+
         let (sub_tx, _sub_rx) = broadcast::channel(capacity);
         let mut pnl_plant = Plant::new(PnlPlant, req_rx, sub_tx.clone(), config, strategy).await?;
 
@@ -211,9 +216,11 @@ impl PlantKind for PnlPlant {
         match command {
             PnlPlantCommand::Close => Ok(PlantCommand::Close),
             PnlPlantCommand::Abort => Ok(PlantCommand::Abort),
+
             PnlPlantCommand::GetSystemInfo { response_sender } => {
                 Ok(PlantCommand::GetSystemInfo { response_sender })
             }
+
             PnlPlantCommand::Login {
                 config,
                 response_sender,
@@ -221,9 +228,11 @@ impl PlantKind for PnlPlant {
                 config,
                 response_sender,
             }),
+
             PnlPlantCommand::Logout { response_sender } => {
                 Ok(PlantCommand::Logout { response_sender })
             }
+
             command => Err(command),
         }
     }
@@ -242,6 +251,7 @@ impl PlantKind for PnlPlant {
                 },
                 response_sender,
             ),
+
             PnlPlantCommand::GetPnlPositionSnapshot {
                 account,
                 response_sender,
@@ -249,6 +259,7 @@ impl PlantKind for PnlPlant {
                 |api| api.request_pnl_position_snapshot(&account),
                 response_sender,
             ),
+
             PnlPlantCommand::UnsubscribePnlUpdates {
                 account,
                 response_sender,
@@ -261,6 +272,7 @@ impl PlantKind for PnlPlant {
                 },
                 response_sender,
             ),
+
             PnlPlantCommand::Close
             | PnlPlantCommand::Abort
             | PnlPlantCommand::GetSystemInfo { .. }

@@ -22,6 +22,7 @@ use crate::{
 ///
 /// ```
 /// use rithmic_rs::{OrderSide, OrderType, RithmicOrder};
+///
 /// # fn main() -> Result<(), rithmic_rs::RithmicError> {
 /// let order = RithmicOrder::new()
 ///     .symbol("ESZ6")
@@ -43,6 +44,7 @@ use crate::{
 ///
 /// ```
 /// use rithmic_rs::{OrderSide, OrderType, RithmicOrder};
+///
 /// # fn main() -> Result<(), rithmic_rs::RithmicError> {
 /// let order = RithmicOrder::new()
 ///     .symbol("ESZ6")
@@ -62,6 +64,7 @@ use crate::{
 ///
 /// ```
 /// use rithmic_rs::{OrderSide, OrderType, RithmicOrder};
+///
 /// # fn main() -> Result<(), rithmic_rs::RithmicError> {
 /// let order = RithmicOrder::new()
 ///     .symbol("ESZ6")
@@ -386,6 +389,7 @@ mod tests {
         assert_eq!(order.cancel_at_ssboe, Some(36000));
         assert_eq!(order.cancel_at_usecs, Some(250));
     }
+
     #[test]
     fn an_order_requires_its_identity() {
         assert!(order().symbol("").price(5000.0).build().is_err());

@@ -165,12 +165,15 @@ impl FromStr for OrderType {
             "LIMIT" | "LMT" => Ok(Self::Limit),
             "STOPMARKET" | "STPMKT" | "STOP_MARKET" | "STOP-MARKET" => Ok(Self::StopMarket),
             "STOPLIMIT" | "STPLMT" | "STOP_LIMIT" | "STOP-LIMIT" => Ok(Self::StopLimit),
+
             "MARKETIFTOUCHED" | "MIT" | "MARKET_IF_TOUCHED" | "MARKET-IF-TOUCHED" => {
                 Ok(Self::MarketIfTouched)
             }
+
             "LIMITIFTOUCHED" | "LIT" | "LIMIT_IF_TOUCHED" | "LIMIT-IF-TOUCHED" => {
                 Ok(Self::LimitIfTouched)
             }
+
             _ => Err(ParseOrderTypeError(s.to_string())),
         }
     }
@@ -226,6 +229,7 @@ impl TryFrom<OrderType> for request_oco_order::PriceType {
             OrderType::Limit => Ok(Self::Limit),
             OrderType::StopMarket => Ok(Self::StopMarket),
             OrderType::StopLimit => Ok(Self::StopLimit),
+
             OrderType::MarketIfTouched | OrderType::LimitIfTouched => {
                 Err(RithmicError::InvalidArgument(format!(
                     "price_type {} is not available on an OCO leg",
@@ -291,12 +295,15 @@ impl FromStr for TimeInForce {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_uppercase().as_str() {
             "DAY" => Ok(Self::Day),
+
             "GTC" | "GOODTILLCANCELLED" | "GOOD_TILL_CANCELLED" | "GOOD-TILL-CANCELLED" => {
                 Ok(Self::Gtc)
             }
+
             "IOC" | "IMMEDIATEORCANCEL" | "IMMEDIATE_OR_CANCEL" | "IMMEDIATE-OR-CANCEL" => {
                 Ok(Self::Ioc)
             }
+
             "FOK" | "FILLORKILL" | "FILL_OR_KILL" | "FILL-OR-KILL" => Ok(Self::Fok),
             _ => Err(ParseTimeInForceError(s.to_string())),
         }
@@ -674,6 +681,7 @@ impl From<RmsUpdateBits> for request_account_rms_updates::UpdateBits {
 ///
 /// ```
 /// use rithmic_rs::VolumeProfileMinuteBarsRequest;
+///
 /// # fn main() -> Result<(), rithmic_rs::RithmicError> {
 /// let request = VolumeProfileMinuteBarsRequest::new()
 ///     .symbol("ESZ6")
@@ -774,6 +782,7 @@ impl VolumeProfileMinuteBarsRequest {
                 "bar_type_period must be at least 1".to_string(),
             ));
         }
+
         Ok(())
     }
 
@@ -818,6 +827,7 @@ fn validate_replay_window(
             "end_time_sec must not precede start_time_sec".to_string(),
         ));
     }
+
     Ok(())
 }
 
@@ -830,6 +840,7 @@ fn validate_replay_window(
 ///
 /// ```
 /// use rithmic_rs::TickBarReplayRequest;
+///
 /// # fn main() -> Result<(), rithmic_rs::RithmicError> {
 /// let request = TickBarReplayRequest::new()
 ///     .symbol("ESZ6")
@@ -966,6 +977,7 @@ impl TickBarReplayRequest {
 ///
 /// ```
 /// use rithmic_rs::{TimeBarReplayRequest, rti::request_time_bar_replay::BarType};
+///
 /// # fn main() -> Result<(), rithmic_rs::RithmicError> {
 /// let request = TimeBarReplayRequest::new()
 ///     .symbol("ESZ6")
@@ -1083,6 +1095,7 @@ impl TimeBarReplayRequest {
                 "bar_type_period must be at least 1".to_string(),
             ));
         }
+
         Ok(())
     }
 

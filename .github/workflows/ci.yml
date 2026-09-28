@@ -62,3 +62,42 @@ jobs:
       - run: cargo doc --no-deps --all-features
         env:
           RUSTDOCFLAGS: -D warnings
+
+  # Runs only on a pull request that changes the version in Cargo.toml, a
+  # release PR. It checks the new version against everything changed since
+  # the latest release on crates.io: a breaking change needs a major bump, a
+  # deprecation at least a minor one. Other pull requests skip it, so any
+  # change, breaking ones included, can collect on main until a release.
+  semver:
+    name: Semver
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Detect a version bump
+        id: bump
+        run: |
+          base=$(git show "origin/${GITHUB_BASE_REF}:Cargo.toml" | grep -m1 '^version = ')
+          head=$(grep -m1 '^version = ' Cargo.toml)
+          if [ "$base" != "$head" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "The version is unchanged, so the semver check is skipped."
+          fi
+      - uses: obi1kenobi/cargo-semver-checks-action@v2
+        if: steps.bump.outputs.changed == 'true'
+        with:
+          feature-group: all-features
+
+  # Fails on RustSec vulnerability and unmaintained advisories against any
+  # dependency, and on licenses that deny.toml does not allow.
+  deny:
+    name: Dependencies
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check advisories licenses

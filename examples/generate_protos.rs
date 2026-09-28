@@ -1,5 +1,5 @@
-/// Regenerates `src/rti.rs` from the `.proto` files in `src/raw-proto/`.
-/// Run via: `cargo run --example generate_protos && cargo fmt`
+//! Regenerates `src/rti.rs` from the `.proto` files in `src/raw-proto/`.
+//! Run via: `cargo run --example generate_protos && cargo fmt`
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let manifest_dir = std::path::PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").map_err(
         |_| "CARGO_MANIFEST_DIR not set — run this via `cargo run --example generate_protos`",

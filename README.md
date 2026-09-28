@@ -60,7 +60,10 @@ use rithmic_rs::{
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = RithmicConfig::from_env(RithmicEnv::Demo)?;
-    let plant = RithmicTickerPlant::connect(&config, ConnectStrategy::Retry).await?;
+
+    let plant =
+        RithmicTickerPlant::connect(&config, ConnectStrategy::Retry).await?;
+
     let mut handle = plant.get_handle();
 
     handle.login().await?;
@@ -68,8 +71,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     while let Ok(update) = handle.subscription_receiver.recv().await {
         match update.message {
-            RithmicMessage::LastTrade(t) => println!("trade {:?} @ {:?}", t.trade_size, t.trade_price),
-            RithmicMessage::BestBidOffer(q) => println!("bid {:?} ask {:?}", q.bid_price, q.ask_price),
+            RithmicMessage::LastTrade(t) => {
+                println!("trade {:?} @ {:?}", t.trade_size, t.trade_price);
+            }
+
+            RithmicMessage::BestBidOffer(q) => {
+                println!("bid {:?} ask {:?}", q.bid_price, q.ask_price);
+            }
+
             _ => {}
         }
     }
@@ -136,8 +145,8 @@ let front_month = handle.get_front_month_contract("ES", "CME", false).await?;
 
 ```rust
 use rithmic_rs::{
-    ConnectStrategy, OrderSide, OrderType, RithmicAccount, RithmicBracketOrder, RithmicConfig,
-    RithmicEnv, RithmicOrder, RithmicOrderPlant,
+    ConnectStrategy, OrderSide, OrderType, RithmicAccount, RithmicBracketOrder,
+    RithmicConfig, RithmicEnv, RithmicOrder, RithmicOrderPlant,
 };
 
 let config = RithmicConfig::from_env(RithmicEnv::Demo)?;
@@ -156,6 +165,7 @@ let order = RithmicOrder::new()
     .price_type(OrderType::Limit)
     .price(5000.0)
     .build()?;
+
 handle.place_order(order).await?;
 
 // Set quantity before target/stop: they size their legs from it.
@@ -169,6 +179,7 @@ let bracket = RithmicBracketOrder::new()
     .target(20)
     .stop(10)
     .build()?;
+
 handle.place_bracket_order(bracket).await?;
 ```
 
@@ -179,21 +190,38 @@ the [`RithmicOrderPlant` docs](https://docs.rs/rithmic-rs/latest/rithmic_rs/plan
 ### History Plant
 
 ```rust
-use rithmic_rs::{ConnectStrategy, RithmicConfig, RithmicEnv, RithmicHistoryPlant, TimeBarType};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use rithmic_rs::{
+    ConnectStrategy, RithmicConfig, RithmicEnv, RithmicHistoryPlant,
+    TimeBarType,
+};
 
 let config = RithmicConfig::from_env(RithmicEnv::Demo)?;
-let plant = RithmicHistoryPlant::connect(&config, ConnectStrategy::Retry).await?;
+
+let plant =
+    RithmicHistoryPlant::connect(&config, ConnectStrategy::Retry).await?;
+
 let handle = plant.get_handle();
+
 handle.login().await?;
 
 // Unix seconds as i32. Daily and weekly bars take YYYYMMDD dates instead.
-let end = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs() as i32;
+let end = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() as i32;
 let start = end - 3600;
-
 let (symbol, exchange) = ("ESZ6".to_string(), "CME".to_string());
+
 let bars = handle
-    .load_time_bars_all(symbol.clone(), exchange.clone(), TimeBarType::MinuteBar, 5, start, end)
+    .load_time_bars_all(
+        symbol.clone(),
+        exchange.clone(),
+        TimeBarType::MinuteBar,
+        5,
+        start,
+        end,
+    )
     .await?;
+
 let ticks = handle.load_ticks_all(symbol, exchange, start, end).await?;
 ```
 
@@ -214,6 +242,7 @@ let config = RithmicConfig::from_env(RithmicEnv::Demo)?;
 let account = RithmicAccount::from_env(RithmicEnv::Demo)?;
 let plant = RithmicPnlPlant::connect(&config, ConnectStrategy::Retry).await?;
 let handle = plant.get_handle(&account);
+
 handle.login().await?;
 
 // Both calls return only an acknowledgement; positions arrive on the receiver.
@@ -241,7 +270,11 @@ match handle.subscribe("ESZ6", "CME").await {
         Some(err) => eprintln!("rejected: {err}"),
         None => println!("subscribed"),
     },
-    Err(e) if e.is_connection_issue() => { /* reconnect, see examples/reconnect.rs */ }
+
+    Err(e) if e.is_connection_issue() => {
+        // reconnect, see examples/reconnect.rs
+    }
+
     Err(e) => eprintln!("{e}"),
 }
 ```

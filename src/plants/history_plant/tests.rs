@@ -58,6 +58,7 @@ async fn load_ticks_through_the_handle_after_close_requested_reports_connection_
     plant.core.session = Session::Closing;
 
     let subscription_sender = plant.subscription_sender.clone();
+
     let handle = RithmicHistoryPlantHandle {
         sender: command_sender,
         subscription_receiver: subscription_sender.subscribe(),
@@ -90,6 +91,7 @@ async fn running_plant_with_handle() -> (
     let (mut plant, command_sender, client) = plant_with_wire().await;
 
     let subscription_sender = plant.subscription_sender.clone();
+
     let handle = RithmicHistoryPlantHandle {
         sender: command_sender,
         subscription_receiver: subscription_sender.subscribe(),
@@ -165,6 +167,7 @@ async fn load_ticks_all_asks_the_server_to_lift_the_record_cap() {
     // One request only: resume_bars replaces paging, so there is nothing to
     // follow up.
     let (resume_bars, id) = read_tick_replay(&mut client).await;
+
     assert_eq!(
         resume_bars,
         Some(true),
@@ -187,6 +190,7 @@ async fn load_ticks_all_asks_the_server_to_lift_the_record_cap() {
             RithmicMessage::ResponseTickBarReplay(bar) if bar.data_bar_ssboe.len() == 2 => {
                 Some((bar.data_bar_ssboe[1], bar.data_bar_usecs[1]))
             }
+
             _ => None,
         })
         .collect();
@@ -212,12 +216,14 @@ async fn load_ticks_leaves_the_cap_in_place() {
     });
 
     let (resume_bars, id) = read_tick_replay(&mut client).await;
+
     assert_eq!(
         resume_bars, None,
         "the capped loader must not ask for the cap to be lifted"
     );
 
     write_wire_response(&mut client, &tick_page_end(&id)).await;
+
     loader
         .await
         .expect("the loader must not panic")
@@ -245,6 +251,7 @@ async fn load_time_bars_all_asks_the_server_to_lift_the_record_cap() {
 
     let request = RequestTimeBarReplay::decode(read_wire_request(&mut client).await.as_slice())
         .expect("the request must be a time bar replay");
+
     assert_eq!(request.template_id, 202);
     assert_eq!(
         request.resume_bars,
@@ -306,6 +313,7 @@ async fn load_tick_bar_replay_sends_the_request_as_given() {
             .start_time_sec(1)
             .end_time_sec(1000)
             .user_max_count(500);
+
         request.resume_bars = resume_bars;
 
         let loader = {
@@ -315,6 +323,7 @@ async fn load_tick_bar_replay_sends_the_request_as_given() {
 
         let sent = RequestTickBarReplay::decode(read_wire_request(&mut client).await.as_slice())
             .expect("the request must be a tick bar replay");
+
         assert_eq!(sent.template_id, 206);
         assert_eq!(sent.user_max_count, Some(500));
         assert_eq!(sent.resume_bars, resume_bars);
@@ -347,6 +356,7 @@ async fn load_time_bar_replay_sends_the_request_as_given() {
 
     let sent = RequestTimeBarReplay::decode(read_wire_request(&mut client).await.as_slice())
         .expect("the request must be a time bar replay");
+
     assert_eq!(sent.template_id, 202);
     assert_eq!(sent.user_max_count, Some(500));
     assert_eq!(sent.resume_bars, None);
@@ -477,6 +487,7 @@ async fn a_dropped_load_leaves_the_session_usable() {
                 .await
         })
     };
+
     let (resume_bars, original) = read_tick_replay(&mut client).await;
     assert_eq!(resume_bars, Some(true));
 
@@ -487,6 +498,7 @@ async fn a_dropped_load_leaves_the_session_usable() {
     // Late data and a late cut cannot revive the dropped replay or trigger a
     // continuation.
     write_wire_response(&mut client, &tick_at(&original, 200, 1)).await;
+
     write_wire_response(
         &mut client,
         &ResponseTickBarReplay {
@@ -497,6 +509,7 @@ async fn a_dropped_load_leaves_the_session_usable() {
         },
     )
     .await;
+
     write_wire_response(&mut client, &tick_page_end(&original)).await;
 
     // The next request uses the same plant, without logout or reconnect.
@@ -508,6 +521,7 @@ async fn a_dropped_load_leaves_the_session_usable() {
                 .await
         })
     };
+
     let (_, next_id) = read_tick_replay(&mut client).await;
     assert_ne!(original, next_id);
 
@@ -558,12 +572,15 @@ async fn load_time_bars_all_continues_a_cut_reply_on_the_original_request() {
                 .await
         })
     };
+
     let request =
         RequestTimeBarReplay::decode(read_wire_request(&mut client).await.as_slice()).unwrap();
+
     assert_eq!(request.resume_bars, Some(true));
     let id = &request.user_msg[0];
 
     write_wire_response(&mut client, &time_bar_at(id, 10)).await;
+
     write_wire_response(
         &mut client,
         &ResponseTimeBarReplay {
@@ -577,6 +594,7 @@ async fn load_time_bars_all_continues_a_cut_reply_on_the_original_request() {
 
     let resume =
         RequestResumeBars::decode(read_wire_request(&mut client).await.as_slice()).unwrap();
+
     assert_eq!(resume.template_id, 210);
     assert_eq!(resume.request_key.as_deref(), Some("first-cut"));
     assert_ne!(resume.user_msg[0], *id);
@@ -591,10 +609,12 @@ async fn load_time_bars_all_continues_a_cut_reply_on_the_original_request() {
         },
     )
     .await;
+
     write_wire_response(&mut client, &time_bar_at(id, 20)).await;
     write_wire_response(&mut client, &time_bar_replay_end(id)).await;
 
     let reply = reply_of(load).await.unwrap();
+
     assert_eq!(
         reply.len(),
         3,
@@ -630,9 +650,11 @@ async fn a_refused_continuation_fails_the_load() {
                 .await
         })
     };
+
     let request =
         RequestVolumeProfileMinuteBars::decode(read_wire_request(&mut client).await.as_slice())
             .unwrap();
+
     let id = &request.user_msg[0];
 
     write_wire_response(
@@ -646,6 +668,7 @@ async fn a_refused_continuation_fails_the_load() {
         },
     )
     .await;
+
     write_wire_response(
         &mut client,
         &ResponseVolumeProfileMinuteBars {
@@ -659,6 +682,7 @@ async fn a_refused_continuation_fails_the_load() {
 
     let resume =
         RequestResumeBars::decode(read_wire_request(&mut client).await.as_slice()).unwrap();
+
     write_wire_response(
         &mut client,
         &ResponseResumeBars {
@@ -703,9 +727,11 @@ async fn a_load_dropped_mid_replay_is_released_without_another_frame() {
         error: None,
         source: "test".into(),
     });
+
     for _ in 0..4 {
         handle.sender.try_send(abandoned_load()).unwrap();
     }
+
     drop(load);
 
     // One pass of the plant loop works through the queued commands and

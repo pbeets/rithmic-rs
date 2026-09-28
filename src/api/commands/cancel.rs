@@ -8,6 +8,7 @@ use crate::{error::RithmicError, types::ManualOrAutoEntry};
 ///
 /// ```
 /// use rithmic_rs::RithmicCancelOrder;
+///
 /// # fn main() -> Result<(), rithmic_rs::RithmicError> {
 /// // "123456" is the basket_id from the order notification.
 /// let cancel = RithmicCancelOrder::new().id("123456").build()?;
@@ -59,6 +60,7 @@ impl RithmicCancelOrder {
                 "a cancel requires the basket_id of the order it cancels".to_string(),
             ));
         }
+
         Ok(())
     }
 
@@ -78,8 +80,10 @@ impl RithmicCancelOrder {
 ///
 /// ```
 /// use rithmic_rs::{ManualOrAutoEntry, RithmicCancelAllOrders};
+///
 /// # fn main() -> Result<(), rithmic_rs::RithmicError> {
 /// let auto = RithmicCancelAllOrders::new().build()?;
+///
 /// let manual = RithmicCancelAllOrders::new()
 ///     .manual_or_auto(ManualOrAutoEntry::Manual)
 ///     .build()?;

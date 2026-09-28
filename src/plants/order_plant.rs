@@ -263,7 +263,8 @@ pub(crate) enum OrderPlantCommand {
 ///
 /// ```no_run
 /// use rithmic_rs::{
-///     RithmicAccount, RithmicConfig, RithmicEnv, ConnectStrategy, RithmicOrderPlant,
+///     RithmicAccount, RithmicConfig, RithmicEnv, ConnectStrategy,
+///     RithmicOrderPlant,
 ///     api::{OrderSide, OrderType, RithmicBracketOrder},
 ///     rti::messages::RithmicMessage,
 /// };
@@ -273,7 +274,9 @@ pub(crate) enum OrderPlantCommand {
 ///     let config = RithmicConfig::from_env(RithmicEnv::Demo)?;
 ///     let account = RithmicAccount::from_env(RithmicEnv::Demo)?;
 ///
-///     let order_plant = RithmicOrderPlant::connect(&config, ConnectStrategy::Retry).await?;
+///     let order_plant =
+///         RithmicOrderPlant::connect(&config, ConnectStrategy::Retry).await?;
+///
 ///     let mut handle = order_plant.get_handle(&account);
 ///
 ///     handle.login().await?;
@@ -281,18 +284,17 @@ pub(crate) enum OrderPlantCommand {
 ///     handle.subscribe_bracket_updates().await?;
 ///
 ///     // Place a bracket order
-///     let bracket_order =
-///         RithmicBracketOrder::new()
-///             .symbol("ESZ6")
-///             .exchange("CME")
-///             .quantity(1)
-///             .action(OrderSide::Buy)
-///             .price_type(OrderType::Limit)
-///             .price(4500.00)
-///             .target(8)
-///             .stop(4)
-///             .localid("order1")
-///             .build()?;
+///     let bracket_order = RithmicBracketOrder::new()
+///         .symbol("ESZ6")
+///         .exchange("CME")
+///         .quantity(1)
+///         .action(OrderSide::Buy)
+///         .price_type(OrderType::Limit)
+///         .price(4500.00)
+///         .target(8)
+///         .stop(4)
+///         .localid("order1")
+///         .build()?;
 ///
 ///     handle.place_bracket_order(bracket_order).await?;
 ///
@@ -303,10 +305,15 @@ pub(crate) enum OrderPlantCommand {
 ///                 // Check for errors on all messages
 ///                 if let Some(err) = &update.error {
 ///                     eprintln!("Error from {}: {}", update.source, err);
+///
 ///                     if err.is_connection_issue() {
-///                         eprintln!("Connection health issue - reconnection needed");
+///                         eprintln!(
+///                             "Connection health issue - reconnection needed"
+///                         );
+///
 ///                         break;
 ///                     }
+///
 ///                     continue;
 ///                 }
 ///
@@ -365,10 +372,13 @@ impl RithmicOrderPlant {
         strategy: ConnectStrategy,
     ) -> Result<RithmicOrderPlant, RithmicError> {
         let (req_tx, req_rx) = mpsc::channel::<OrderPlantCommand>(64);
+
         let capacity = config
             .subscription_capacity
             .unwrap_or(DEFAULT_SUBSCRIPTION_CAPACITY);
+
         let (sub_tx, _sub_rx) = broadcast::channel(capacity);
+
         let mut order_plant = Plant::new(
             OrderPlant::default(),
             req_rx,
@@ -488,6 +498,7 @@ impl OrderPlant {
             0 => {
                 error!("order_plant: no trade routes published, orders will fail with NoTradeRoute")
             }
+
             loaded => info!("order_plant: {} trade routes loaded", loaded),
         }
     }
@@ -504,9 +515,11 @@ impl PlantKind for OrderPlant {
         match command {
             OrderPlantCommand::Close => Ok(PlantCommand::Close),
             OrderPlantCommand::Abort => Ok(PlantCommand::Abort),
+
             OrderPlantCommand::GetSystemInfo { response_sender } => {
                 Ok(PlantCommand::GetSystemInfo { response_sender })
             }
+
             OrderPlantCommand::Login {
                 config,
                 response_sender,
@@ -514,9 +527,11 @@ impl PlantKind for OrderPlant {
                 config,
                 response_sender,
             }),
+
             OrderPlantCommand::Logout { response_sender } => {
                 Ok(PlantCommand::Logout { response_sender })
             }
+
             command => Err(command),
         }
     }
@@ -532,6 +547,7 @@ impl PlantKind for OrderPlant {
             |api| api.request_login_info(),
             OrderTag::LoginInfo { caller: None },
         );
+
         cx.send(|api| api.request_trade_routes(true), OrderTag::TradeRoutes);
     }
 
@@ -553,6 +569,7 @@ impl PlantKind for OrderPlant {
                     response_sender,
                 );
             }
+
             OrderPlantCommand::SubscribeOrderUpdates {
                 account,
                 response_sender,
@@ -560,6 +577,7 @@ impl PlantKind for OrderPlant {
                 |api| api.request_subscribe_for_order_updates(&account),
                 response_sender,
             ),
+
             OrderPlantCommand::SubscribeBracketUpdates {
                 account,
                 response_sender,
@@ -567,6 +585,7 @@ impl PlantKind for OrderPlant {
                 |api| api.request_subscribe_to_bracket_updates(&account),
                 response_sender,
             ),
+
             OrderPlantCommand::PlaceBracketOrder {
                 bracket_order,
                 account,
@@ -595,6 +614,7 @@ impl PlantKind for OrderPlant {
                     response_sender,
                 );
             }
+
             OrderPlantCommand::ModifyOrder {
                 order,
                 account,
@@ -603,6 +623,7 @@ impl PlantKind for OrderPlant {
                 |api| api.request_modify_order(&order, &account),
                 response_sender,
             ),
+
             OrderPlantCommand::CancelOrder {
                 order,
                 account,
@@ -611,6 +632,7 @@ impl PlantKind for OrderPlant {
                 |api| api.request_cancel_order(&order, &account),
                 response_sender,
             ),
+
             OrderPlantCommand::ModifyStop {
                 adjustment,
                 account,
@@ -619,6 +641,7 @@ impl PlantKind for OrderPlant {
                 |api| api.request_update_stop_bracket_level(&adjustment, &account),
                 response_sender,
             ),
+
             OrderPlantCommand::ModifyTarget {
                 adjustment,
                 account,
@@ -627,10 +650,12 @@ impl PlantKind for OrderPlant {
                 |api| api.request_update_target_bracket_level(&adjustment, &account),
                 response_sender,
             ),
+
             OrderPlantCommand::ShowOrders {
                 account,
                 response_sender,
             } => cx.send_for(|api| api.request_show_orders(&account), response_sender),
+
             OrderPlantCommand::CancelAllOrders {
                 command,
                 account,
@@ -639,6 +664,7 @@ impl PlantKind for OrderPlant {
                 |api| api.request_cancel_all_orders(&command, &account, self.login_scope.as_ref()),
                 response_sender,
             ),
+
             OrderPlantCommand::GetAccountRmsInfo {
                 account,
                 response_sender,
@@ -646,6 +672,7 @@ impl PlantKind for OrderPlant {
                 |api| api.request_account_rms_info(&account, self.login_scope.as_ref()),
                 response_sender,
             ),
+
             OrderPlantCommand::GetProductRmsInfo {
                 account,
                 response_sender,
@@ -653,6 +680,7 @@ impl PlantKind for OrderPlant {
                 |api| api.request_product_rms_info(&account),
                 response_sender,
             ),
+
             OrderPlantCommand::GetTradeRoutes {
                 subscribe_for_updates,
                 response_sender,
@@ -660,19 +688,23 @@ impl PlantKind for OrderPlant {
                 |api| api.request_trade_routes(subscribe_for_updates),
                 response_sender,
             ),
+
             OrderPlantCommand::RecordTradeRouteUpdate(update) => {
                 self.trade_routes.record_update(&update);
             }
+
             OrderPlantCommand::TradeRouteFor {
                 exchange,
                 response_sender,
             } => {
                 let _ = response_sender.send(self.trade_routes.resolve(None, &exchange));
             }
+
             OrderPlantCommand::ShowOrderHistoryDates { response_sender } => cx.send_for(
                 |api| api.request_show_order_history_dates(),
                 response_sender,
             ),
+
             OrderPlantCommand::ShowOrderHistorySummary {
                 date,
                 account,
@@ -681,6 +713,7 @@ impl PlantKind for OrderPlant {
                 |api| api.request_show_order_history_summary(&date, &account),
                 response_sender,
             ),
+
             OrderPlantCommand::ShowOrderHistoryDetail {
                 basket_id,
                 date,
@@ -690,6 +723,7 @@ impl PlantKind for OrderPlant {
                 |api| api.request_show_order_history_detail(&basket_id, &date, &account),
                 response_sender,
             ),
+
             OrderPlantCommand::ShowOrderHistory {
                 basket_id,
                 account,
@@ -698,6 +732,7 @@ impl PlantKind for OrderPlant {
                 |api| api.request_show_order_history(basket_id.as_deref(), &account),
                 response_sender,
             ),
+
             OrderPlantCommand::PlaceOrder {
                 order,
                 account,
@@ -719,6 +754,7 @@ impl PlantKind for OrderPlant {
                     response_sender,
                 );
             }
+
             OrderPlantCommand::PlaceOcoOrder {
                 order,
                 account,
@@ -739,10 +775,12 @@ impl PlantKind for OrderPlant {
                     response_sender,
                 );
             }
+
             OrderPlantCommand::ShowBrackets {
                 account,
                 response_sender,
             } => cx.send_for(|api| api.request_show_brackets(&account), response_sender),
+
             OrderPlantCommand::ShowBracketStops {
                 account,
                 response_sender,
@@ -750,6 +788,7 @@ impl PlantKind for OrderPlant {
                 |api| api.request_show_bracket_stops(&account),
                 response_sender,
             ),
+
             OrderPlantCommand::ExitPosition {
                 command,
                 account,
@@ -758,6 +797,7 @@ impl PlantKind for OrderPlant {
                 |api| api.request_exit_position(&command, &account),
                 response_sender,
             ),
+
             OrderPlantCommand::LinkOrders {
                 command,
                 account,
@@ -766,6 +806,7 @@ impl PlantKind for OrderPlant {
                 |api| api.request_link_orders(command, &account),
                 response_sender,
             ),
+
             OrderPlantCommand::GetEasyToBorrowList {
                 request_type,
                 response_sender,
@@ -773,6 +814,7 @@ impl PlantKind for OrderPlant {
                 |api| api.request_easy_to_borrow_list(request_type),
                 response_sender,
             ),
+
             OrderPlantCommand::ModifyOrderReferenceData {
                 command,
                 account,
@@ -781,6 +823,7 @@ impl PlantKind for OrderPlant {
                 |api| api.request_modify_order_reference_data(&command, &account),
                 response_sender,
             ),
+
             OrderPlantCommand::GetOrderSessionConfig {
                 should_defer_request,
                 response_sender,
@@ -788,6 +831,7 @@ impl PlantKind for OrderPlant {
                 |api| api.request_order_session_config(should_defer_request),
                 response_sender,
             ),
+
             OrderPlantCommand::ReplayExecutions {
                 start_index_sec,
                 finish_index_sec,
@@ -797,6 +841,7 @@ impl PlantKind for OrderPlant {
                 |api| api.request_replay_executions(start_index_sec, finish_index_sec, &account),
                 response_sender,
             ),
+
             OrderPlantCommand::GetUserInfo {
                 user,
                 account,
@@ -805,6 +850,7 @@ impl PlantKind for OrderPlant {
                 |api| api.request_get_user_info(user.as_deref(), &account),
                 response_sender,
             ),
+
             OrderPlantCommand::ShowFillHistory {
                 range,
                 max_record_count,
@@ -814,6 +860,7 @@ impl PlantKind for OrderPlant {
                 |api| api.request_show_fill_history(range, max_record_count, &account),
                 response_sender,
             ),
+
             OrderPlantCommand::SubscribeAccountRmsUpdates {
                 subscribe,
                 update_bits,
@@ -823,20 +870,24 @@ impl PlantKind for OrderPlant {
                 |api| api.request_account_rms_updates(subscribe, update_bits, &account),
                 response_sender,
             ),
+
             OrderPlantCommand::GetLoginInfo { response_sender } => cx.send(
                 |api| api.request_login_info(),
                 OrderTag::LoginInfo {
                     caller: Some(response_sender),
                 },
             ),
+
             OrderPlantCommand::ListUnacceptedAgreements { response_sender } => cx.send_for(
                 |api| api.request_list_unaccepted_agreements(),
                 response_sender,
             ),
+
             OrderPlantCommand::ListAcceptedAgreements { response_sender } => cx.send_for(
                 |api| api.request_list_accepted_agreements(),
                 response_sender,
             ),
+
             OrderPlantCommand::AcceptAgreement {
                 agreement_id,
                 market_data_usage_capacity,
@@ -850,6 +901,7 @@ impl PlantKind for OrderPlant {
                 },
                 response_sender,
             ),
+
             OrderPlantCommand::ShowAgreement {
                 agreement_id,
                 response_sender,
@@ -857,6 +909,7 @@ impl PlantKind for OrderPlant {
                 |api| api.request_show_agreement(&agreement_id),
                 response_sender,
             ),
+
             OrderPlantCommand::SetRithmicMrktDataSelfCertStatus {
                 agreement_id,
                 market_data_usage_capacity,
@@ -870,6 +923,7 @@ impl PlantKind for OrderPlant {
                 },
                 response_sender,
             ),
+
             OrderPlantCommand::ListExchangePermissions {
                 user,
                 response_sender,
@@ -877,6 +931,7 @@ impl PlantKind for OrderPlant {
                 |api| api.request_list_exchange_permissions(&user),
                 response_sender,
             ),
+
             OrderPlantCommand::Close
             | OrderPlantCommand::Abort
             | OrderPlantCommand::GetSystemInfo { .. }
@@ -897,6 +952,7 @@ impl PlantKind for OrderPlant {
 
                 match caller {
                     Some(caller) => answer_caller(caller, reply),
+
                     None => {
                         self.loading_login_info = false;
 
@@ -909,10 +965,12 @@ impl PlantKind for OrderPlant {
                                     );
                                 }
                             }
+
                             Ok(None) => warn!(
                                 "order_plant: login info unavailable, account list will be unscoped: {:?}",
                                 RithmicError::EmptyResponse
                             ),
+
                             Err(err) => warn!(
                                 "order_plant: login info unavailable, account list will be unscoped: {:?}",
                                 err
@@ -921,6 +979,7 @@ impl PlantKind for OrderPlant {
                     }
                 }
             }
+
             OrderTag::TradeRoutes => {
                 self.loading_trade_routes = false;
 
@@ -935,6 +994,7 @@ impl PlantKind for OrderPlant {
 
                         self.record_trade_routes(&responses);
                     }
+
                     Err(err) => error!(
                         "order_plant: trade routes unavailable, orders will fail: {}",
                         err
@@ -1152,12 +1212,16 @@ impl RithmicOrderPlantHandle {
     ///
     /// ```no_run
     /// # use rithmic_rs::{RithmicOrderPlantHandle, rti::messages::RithmicMessage};
-    /// # async fn example(handle: RithmicOrderPlantHandle) -> Result<(), Box<dyn std::error::Error>> {
+    /// # async fn example(
+    /// #     handle: RithmicOrderPlantHandle,
+    /// # ) -> Result<(), Box<dyn std::error::Error>> {
     /// handle.subscribe_order_updates().await?;
     /// let mut updates = handle.subscription_receiver.resubscribe();
     ///
     /// while let Ok(response) = updates.recv().await {
-    ///     if let RithmicMessage::ExchangeOrderNotification(order) = &response.message {
+    ///     if let RithmicMessage::ExchangeOrderNotification(order) =
+    ///         &response.message
+    ///     {
     ///         println!("{:?} filled {:?}", order.status, order.fill_size);
     ///     }
     /// }
@@ -1208,8 +1272,12 @@ impl RithmicOrderPlantHandle {
     /// each response.
     ///
     /// ```no_run
-    /// # use rithmic_rs::{OrderSide, OrderType, RithmicBracketOrder, RithmicOrderPlantHandle};
-    /// # async fn example(handle: RithmicOrderPlantHandle) -> Result<(), Box<dyn std::error::Error>> {
+    /// # use rithmic_rs::{
+    /// #     OrderSide, OrderType, RithmicBracketOrder, RithmicOrderPlantHandle,
+    /// # };
+    /// # async fn example(
+    /// #     handle: RithmicOrderPlantHandle,
+    /// # ) -> Result<(), Box<dyn std::error::Error>> {
     /// let order = RithmicBracketOrder::new()
     ///     .symbol("ESZ6")
     ///     .exchange("CME")
@@ -1289,7 +1357,9 @@ impl RithmicOrderPlantHandle {
     ///
     /// ```no_run
     /// # use rithmic_rs::{RithmicCancelOrder, RithmicOrderPlantHandle};
-    /// # async fn example(handle: RithmicOrderPlantHandle) -> Result<(), Box<dyn std::error::Error>> {
+    /// # async fn example(
+    /// #     handle: RithmicOrderPlantHandle,
+    /// # ) -> Result<(), Box<dyn std::error::Error>> {
     /// // "123456" is the basket_id from the order notification.
     /// let cancel = RithmicCancelOrder::new().id("123456").build()?;
     /// handle.cancel_order(cancel).await?;
@@ -1372,7 +1442,9 @@ impl RithmicOrderPlantHandle {
     ///
     /// ```no_run
     /// # use rithmic_rs::{rti::messages::RithmicMessage, RithmicOrderPlantHandle};
-    /// # async fn example(handle: RithmicOrderPlantHandle) -> Result<(), Box<dyn std::error::Error>> {
+    /// # async fn example(
+    /// #     handle: RithmicOrderPlantHandle,
+    /// # ) -> Result<(), Box<dyn std::error::Error>> {
     /// let mut updates = handle.subscription_receiver.resubscribe();
     /// handle.show_orders().await?;
     ///
@@ -1485,7 +1557,9 @@ impl RithmicOrderPlantHandle {
     ///
     /// ```no_run
     /// # use rithmic_rs::{RithmicOrderPlantHandle, rti::messages::RithmicMessage};
-    /// # async fn example(handle: RithmicOrderPlantHandle) -> Result<(), Box<dyn std::error::Error>> {
+    /// # async fn example(
+    /// #     handle: RithmicOrderPlantHandle,
+    /// # ) -> Result<(), Box<dyn std::error::Error>> {
     /// let mut updates = handle.subscription_receiver.resubscribe();
     ///
     /// while let Ok(response) = updates.recv().await {
@@ -1509,7 +1583,7 @@ impl RithmicOrderPlantHandle {
     }
 
     /// The route an order for `exchange` would go out on right now, without sending
-    /// anything. Call it after [`login`](Self::login) to check your venues are routable.
+    /// anything. Call it after [`login`](Self::login) to check your exchanges are routable.
     ///
     /// # Arguments
     /// * `exchange` - The exchange to look up, as it appears on your orders
@@ -1643,7 +1717,9 @@ impl RithmicOrderPlantHandle {
     ///
     /// ```no_run
     /// # use rithmic_rs::{OrderSide, OrderType, RithmicOrder, RithmicOrderPlantHandle};
-    /// # async fn example(handle: RithmicOrderPlantHandle) -> Result<(), Box<dyn std::error::Error>> {
+    /// # async fn example(
+    /// #     handle: RithmicOrderPlantHandle,
+    /// # ) -> Result<(), Box<dyn std::error::Error>> {
     /// let order = RithmicOrder::new()
     ///     .symbol("ESZ6")
     ///     .exchange("CME")
@@ -1691,8 +1767,13 @@ impl RithmicOrderPlantHandle {
     /// route for its own exchange, so a group can span exchanges.
     ///
     /// ```no_run
-    /// # use rithmic_rs::{OrderSide, OrderType, RithmicOcoOrder, RithmicOcoOrderLeg, RithmicOrderPlantHandle};
-    /// # async fn example(handle: RithmicOrderPlantHandle) -> Result<(), Box<dyn std::error::Error>> {
+    /// # use rithmic_rs::{
+    /// #     OrderSide, OrderType, RithmicOcoOrder, RithmicOcoOrderLeg,
+    /// #     RithmicOrderPlantHandle,
+    /// # };
+    /// # async fn example(
+    /// #     handle: RithmicOrderPlantHandle,
+    /// # ) -> Result<(), Box<dyn std::error::Error>> {
     /// let take_profit = RithmicOcoOrderLeg::new()
     ///     .symbol("ESZ6")
     ///     .exchange("CME")
@@ -1701,6 +1782,7 @@ impl RithmicOrderPlantHandle {
     ///     .price_type(OrderType::Limit)
     ///     .price(5020.0)
     ///     .build()?;
+    ///
     /// let stop_loss = RithmicOcoOrderLeg::new()
     ///     .symbol("ESZ6")
     ///     .exchange("CME")
@@ -1789,7 +1871,9 @@ impl RithmicOrderPlantHandle {
     ///
     /// ```no_run
     /// # use rithmic_rs::{RithmicExitPosition, RithmicOrderPlantHandle};
-    /// # async fn example(handle: RithmicOrderPlantHandle) -> Result<(), Box<dyn std::error::Error>> {
+    /// # async fn example(
+    /// #     handle: RithmicOrderPlantHandle,
+    /// # ) -> Result<(), Box<dyn std::error::Error>> {
     /// // One instrument.
     /// let one = RithmicExitPosition::new().symbol("ESZ6").exchange("CME").build()?;
     /// handle.exit_position(one).await?;

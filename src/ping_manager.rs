@@ -46,6 +46,7 @@ impl PingManager {
                 sleep_until(sent_at + self.timeout).await;
                 self.pending = None;
             }
+
             None => std::future::pending().await,
         }
     }

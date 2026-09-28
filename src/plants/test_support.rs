@@ -186,6 +186,7 @@ pub(crate) async fn assert_close_follows_failed_logout<C>(
         .recv()
         .await
         .expect("disconnect must queue a command");
+
     let responder = logout_responder(logout).expect("disconnect must queue Logout first");
     let _ = responder.send(Err(RithmicError::SendFailed));
 
@@ -224,6 +225,7 @@ pub(crate) async fn assert_wire_wrote(client: &mut TcpStream, expectation: &str)
 /// assert on the request itself rather than just on bytes having moved.
 pub(crate) async fn read_wire_request(client: &mut TcpStream) -> Vec<u8> {
     let mut header = [0u8; 2];
+
     tokio::time::timeout(WIRE_WRITE_TIMEOUT, client.read_exact(&mut header))
         .await
         .expect("timed out waiting for the request to reach the wire")
@@ -238,6 +240,7 @@ pub(crate) async fn read_wire_request(client: &mut TcpStream) -> Vec<u8> {
             client.read_exact(&mut extended).await.unwrap();
             u16::from_be_bytes(extended) as usize
         }
+
         127 => panic!("a request larger than 64 KiB is not something a plant sends"),
         len => len as usize,
     };
@@ -260,14 +263,18 @@ pub(crate) async fn write_wire_response(client: &mut TcpStream, message: &impl p
     body.extend(payload);
 
     let mut frame = vec![0x82];
+
     match body.len() {
         len if len < 126 => frame.push(0x80 | len as u8),
+
         len if len <= u16::MAX as usize => {
             frame.push(0x80 | 126);
             frame.extend((len as u16).to_be_bytes());
         }
+
         _ => panic!("a test response larger than 64 KiB is not something this helper frames"),
     }
+
     // An all-zero masking key, so the masked payload is the payload itself.
     frame.extend([0u8; 4]);
     frame.extend(body);

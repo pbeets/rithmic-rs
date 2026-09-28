@@ -11,11 +11,13 @@ use crate::{error::RithmicError, types::ManualOrAutoEntry};
 ///
 /// ```
 /// use rithmic_rs::RithmicExitPosition;
+///
 /// # fn main() -> Result<(), rithmic_rs::RithmicError> {
 /// let one = RithmicExitPosition::new()
 ///     .symbol("ESZ6")
 ///     .exchange("CME")
 ///     .build()?;
+///
 /// let all = RithmicExitPosition::new().build()?;
 /// # Ok(())
 /// # }
@@ -114,6 +116,7 @@ mod tests {
         // One of the pair alone is refused, as is an empty member.
         assert!(RithmicExitPosition::new().symbol("ESZ6").build().is_err());
         assert!(RithmicExitPosition::new().exchange("CME").build().is_err());
+
         assert!(
             RithmicExitPosition::new()
                 .symbol("")
@@ -121,6 +124,7 @@ mod tests {
                 .build()
                 .is_err()
         );
+
         assert!(
             RithmicExitPosition::new()
                 .symbol("ESZ6")

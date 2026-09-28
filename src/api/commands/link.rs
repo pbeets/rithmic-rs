@@ -11,6 +11,7 @@ use crate::error::RithmicError;
 ///
 /// ```
 /// use rithmic_rs::RithmicLinkOrders;
+///
 /// # fn main() -> Result<(), rithmic_rs::RithmicError> {
 /// let command = RithmicLinkOrders::new()
 ///     .basket_ids(["123456", "123457"])
@@ -60,6 +61,7 @@ impl RithmicLinkOrders {
                 "every basket_id to link must be non-empty".to_string(),
             ));
         }
+
         Ok(())
     }
 
@@ -77,18 +79,21 @@ mod tests {
     #[test]
     fn linking_requires_at_least_two_non_empty_basket_ids() {
         assert!(RithmicLinkOrders::new().build().is_err());
+
         assert!(
             RithmicLinkOrders::new()
                 .basket_id("123456")
                 .build()
                 .is_err()
         );
+
         assert!(
             RithmicLinkOrders::new()
                 .basket_ids(["123456", ""])
                 .build()
                 .is_err()
         );
+
         assert!(
             RithmicLinkOrders::new()
                 .basket_ids(["123456", "123457"])

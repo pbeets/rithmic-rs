@@ -34,3 +34,6 @@ prost-build = "0.14.3"
 temp-env = "0.3"
 tokio = { version = "1.50.0", features = ["test-util"] }
 tracing-subscriber = "0.3.23"
+
+[lints.rust]
+missing_docs = "warn"

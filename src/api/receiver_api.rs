@@ -2335,7 +2335,7 @@ mod tests {
 
     /// The three frames a per-price replay is made of, as decoded: a data
     /// part (`rq_handler_rp_code` present), the notice that closes a replay
-    /// the venue truncated (a `request_key`, no code at all), and the end
+    /// the server truncated (a `request_key`, no code at all), and the end
     /// marker of a complete replay (`rp_code` `["0"]`).
     #[test]
     fn a_replay_truncation_notice_resolves_the_reply_and_says_so() {

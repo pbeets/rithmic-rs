@@ -189,7 +189,7 @@ impl<T: RequestTag> RithmicRequestHandler<T> {
             }
 
             info!(
-                "request_id {}: the venue truncated this reply after {} parts (request_key {:?}); \
+                "request_id {}: the server truncated this reply after {} parts (request_key {:?}); \
                  asking it to resume",
                 id,
                 replay.responses.len(),
@@ -290,7 +290,7 @@ mod tests {
         handler.route(frame("original", Some(2), &[], None));
         let continued = handler
             .route(frame("original", None, &[], Some("0")))
-            .expect("the venue reuses the same key after another chunk of data");
+            .expect("the server reuses the same key after another chunk of data");
         assert_eq!(continued.request_id, "original");
         assert_eq!(continued.key, "0");
         assert!(

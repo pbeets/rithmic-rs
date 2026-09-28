@@ -32,6 +32,7 @@ impl SubscriptionFilter {
     pub async fn recv(&mut self) -> Result<RithmicResponse, broadcast::error::RecvError> {
         loop {
             let response = self.receiver.recv().await?;
+
             if self.should_forward(&response) {
                 return Ok(response);
             }
@@ -127,6 +128,7 @@ mod tests {
             .unwrap();
 
         let response = filter.recv().await.unwrap();
+
         match response.message {
             RithmicMessage::UserAccountUpdate(update) => {
                 assert_eq!(update.account_id.as_deref(), Some("ACCOUNT_A"));
@@ -170,6 +172,7 @@ mod tests {
                 },
             )))
             .unwrap();
+
         sender
             .send(response(RithmicMessage::ResponseAcceptAgreement(
                 ResponseAcceptAgreement::default(),
@@ -177,6 +180,7 @@ mod tests {
             .unwrap();
 
         let response = filter.recv().await.unwrap();
+
         assert!(matches!(
             response.message,
             RithmicMessage::ResponseAcceptAgreement(_)

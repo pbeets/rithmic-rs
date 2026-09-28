@@ -42,6 +42,7 @@ impl fmt::Display for RithmicRequestError {
                     _ => write!(f, "[{code}]"),
                 }
             }
+
             _ => write!(f, "{}", message.unwrap_or_default()),
         }
     }
@@ -121,10 +122,11 @@ pub enum RithmicError {
     /// The plant answered with no response at all where one was expected. A
     /// defensive case; you should not see it.
     EmptyResponse,
-    /// No longer produced. The library does not time out requests; a caller
-    /// that wants a deadline wraps the call in [`tokio::time::timeout`], which
-    /// reports expiry through its own `Elapsed` rather than this variant.
-    /// Removed in 4.0.0.
+    /// Deprecated and has no effect: nothing returns it any more. The library
+    /// does not time out requests; a caller that wants a deadline wraps the
+    /// call in [`tokio::time::timeout`], which reports expiry through its own
+    /// `Elapsed` rather than this variant. Kept so existing code keeps
+    /// compiling.
     #[deprecated(
         since = "3.1.0",
         note = "the library no longer times out requests; wrap the call in tokio::time::timeout"
@@ -206,6 +208,7 @@ impl fmt::Display for RithmicError {
             RithmicError::SendFailed => write!(f, "WebSocket send failed"),
             RithmicError::EmptyResponse => write!(f, "empty response"),
             RithmicError::RequestTimeout => write!(f, "request timed out"),
+
             RithmicError::RequestRejected(err) => {
                 let detail = err.to_string();
 
@@ -215,8 +218,10 @@ impl fmt::Display for RithmicError {
                     write!(f, "request rejected: {detail}")
                 }
             }
+
             RithmicError::ProtocolError(msg) => write!(f, "protocol error: {msg}"),
             RithmicError::InvalidArgument(msg) => write!(f, "invalid argument: {msg}"),
+
             RithmicError::NoTradeRoute { exchange, cached } => {
                 write!(
                     f,
@@ -226,6 +231,7 @@ impl fmt::Display for RithmicError {
 
                 match cached.is_empty() {
                     true => write!(f, "; no routes cached"),
+
                     false => {
                         let cached: Vec<String> =
                             cached.iter().map(|key| sanitize_for_display(key)).collect();
@@ -234,10 +240,13 @@ impl fmt::Display for RithmicError {
                     }
                 }
             }
+
             RithmicError::HeartbeatTimeout => write!(f, "heartbeat timeout"),
+
             RithmicError::ForcedLogout(reason) => {
                 write!(f, "forced logout: {}", sanitize_for_display(reason))
             }
+
             RithmicError::LoginConflict => {
                 write!(
                     f,

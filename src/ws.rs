@@ -207,6 +207,7 @@ async fn connect_with_retry(
                 info!("Successfully connected to {}", url);
                 return Ok(ws_stream);
             }
+
             Ok(Err(e)) => warn!("connect_async failed for {}: {:?}", url, e),
             Err(e) => warn!("connect_async to {} timed out: {:?}", url, e),
         }
@@ -256,6 +257,7 @@ pub(crate) async fn connect_with_strategy(
     match strategy {
         ConnectStrategy::Simple => connect(primary_url).await,
         ConnectStrategy::Retry => connect_with_retry(&[primary_url], deadline).await,
+
         ConnectStrategy::AlternateWithRetry => {
             connect_with_retry(&[primary_url, beta_url], deadline).await
         }

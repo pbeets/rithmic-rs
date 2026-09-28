@@ -25,6 +25,7 @@ use crate::{
 ///
 /// ```
 /// use rithmic_rs::{OrderSide, OrderType, RithmicBracketOrder};
+///
 /// # fn main() -> Result<(), rithmic_rs::RithmicError> {
 /// let order = RithmicBracketOrder::new()
 ///     .symbol("ESZ6")
@@ -45,6 +46,7 @@ use crate::{
 ///
 /// ```
 /// use rithmic_rs::{OrderSide, OrderType, RithmicBracketOrder};
+///
 /// # fn main() -> Result<(), rithmic_rs::RithmicError> {
 /// let order = RithmicBracketOrder::new()
 ///     .symbol("ESZ6")
@@ -158,6 +160,7 @@ pub struct RithmicBracketOrder {
 /// use rithmic_rs::RithmicBracketOrder;
 ///
 /// let sized = RithmicBracketOrder::new().quantity(2).target(8).stop(4);
+///
 /// let explicit = RithmicBracketOrder::new()
 ///     .targets([(1, 8), (1, 16)])
 ///     .stops([(2, 4)]);
@@ -504,6 +507,7 @@ impl RithmicBracketOrder {
 ///
 /// ```
 /// use rithmic_rs::RithmicBracketLevelAdjustment;
+///
 /// # fn main() -> Result<(), rithmic_rs::RithmicError> {
 /// // "123456" is the basket_id from the order notification.
 /// let adjustment = RithmicBracketLevelAdjustment::new()
@@ -560,6 +564,7 @@ impl RithmicBracketLevelAdjustment {
                 "an adjustment requires the basket_id of the bracket it adjusts".to_string(),
             ));
         }
+
         Ok(())
     }
 
@@ -664,6 +669,7 @@ mod tests {
         assert_eq!(sugar.stop_quantity, explicit.stop_quantity);
         assert_eq!(sugar.stop_ticks, explicit.stop_ticks);
         assert_eq!(sugar.bracket_type, explicit.bracket_type);
+
         assert_eq!(
             sugar.bracket_type,
             Some(BracketType::TargetAndStopStatic),
@@ -684,6 +690,7 @@ mod tests {
             .target(20)
             .build()
             .unwrap();
+
         assert_eq!(after.target_quantity, vec![3]);
 
         let before = RithmicBracketOrder::new()
@@ -693,6 +700,7 @@ mod tests {
             .target(20)
             .quantity(3)
             .build();
+
         assert!(
             before.is_err(),
             "quantity set after the leg cannot reach back and resize it, \
@@ -703,6 +711,7 @@ mod tests {
     #[test]
     fn the_bracket_derives_the_shape_from_the_legs() {
         let target_only = bracket(1, OrderType::Market).target(20).build().unwrap();
+
         assert_eq!(
             target_only.bracket_type,
             Some(BracketType::TargetOnlyStatic)
@@ -716,6 +725,7 @@ mod tests {
             .bracket_type(BracketType::StopOnly)
             .build()
             .unwrap();
+
         assert_eq!(explicit.bracket_type, Some(BracketType::StopOnly));
     }
 
@@ -728,6 +738,7 @@ mod tests {
             None
         );
     }
+
     #[test]
     fn an_adjustment_requires_the_basket_id() {
         assert!(
@@ -736,6 +747,7 @@ mod tests {
                 .build()
                 .is_err()
         );
+
         assert!(
             RithmicBracketLevelAdjustment::new()
                 .id("123456")

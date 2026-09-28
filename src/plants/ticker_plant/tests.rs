@@ -49,6 +49,7 @@ async fn subscribe_through_the_handle_after_close_requested_reports_connection_c
     plant.core.session = Session::Closing;
 
     let subscription_sender = plant.subscription_sender.clone();
+
     let handle = RithmicTickerPlantHandle {
         sender: command_sender,
         subscription_receiver: subscription_sender.subscribe(),
@@ -76,12 +77,14 @@ async fn subscribe_through_the_handle_after_close_requested_reports_connection_c
 #[tokio::test]
 async fn subscribe_sends_the_symbol_and_fields_while_the_connection_is_open() {
     let (mut plant, _command_sender, mut client) = plant_with_wire().await;
+
     plant
         .handle(Event::Command(subscribe(oneshot::channel().0)))
         .await;
 
     let request =
         RequestMarketDataUpdate::decode(read_wire_request(&mut client).await.as_slice()).unwrap();
+
     assert_eq!(request.template_id, 100);
     assert_eq!(request.symbol.as_deref(), Some("ESZ6"));
     assert_eq!(request.exchange.as_deref(), Some("CME"));
@@ -134,6 +137,7 @@ async fn a_login_whose_caller_stops_waiting_still_heartbeats() {
     plant.core.session = Session::Connected;
 
     let subscription_sender = plant.subscription_sender.clone();
+
     let handle = RithmicTickerPlantHandle {
         sender: command_sender,
         subscription_receiver: subscription_sender.subscribe(),
@@ -152,6 +156,7 @@ async fn a_login_whose_caller_stops_waiting_still_heartbeats() {
         }
         // The login future is dropped here, before the reply is written.
     };
+
     let request = RequestLogin::decode(request.as_slice()).unwrap();
     assert_eq!(request.template_id, 10);
 
@@ -169,6 +174,7 @@ async fn a_login_whose_caller_stops_waiting_still_heartbeats() {
 
     let heartbeat = RequestHeartbeat::decode(read_wire_request(&mut client).await.as_slice())
         .expect("the actor must heartbeat once logged in");
+
     assert_eq!(heartbeat.template_id, 18);
 
     handle.abort();
