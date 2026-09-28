@@ -64,7 +64,9 @@ jobs:
           RUSTDOCFLAGS: -D warnings
 
   # Compares the public API against the latest release on crates.io and
-  # fails when a change needs a bigger version bump than Cargo.toml has.
+  # fails on a breaking change. It checks as a minor release, because the
+  # version is only bumped when a release is cut, so a deprecation or other
+  # minor change waiting for release does not fail every PR.
   semver:
     name: Semver
     runs-on: ubuntu-latest
@@ -73,6 +75,7 @@ jobs:
       - uses: obi1kenobi/cargo-semver-checks-action@v2
         with:
           feature-group: all-features
+          release-type: minor
 
   # Fails on RustSec vulnerability and unmaintained advisories against any
   # dependency, and on licenses that deny.toml does not allow.
