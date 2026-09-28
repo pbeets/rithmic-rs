@@ -1,5 +1,3 @@
-#![warn(missing_docs)]
-
 //! # rithmic-rs
 //!
 //! `rithmic-rs` is a Rust client library for the Rithmic R | Protocol API.
