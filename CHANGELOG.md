@@ -29,7 +29,6 @@ No API breaks. Three behavior changes to check when upgrading:
 - `examples/backfill.rs`: backfill large windows and check you got all of them.
 - `RithmicError::LoginConflict`, returned by a `login()` whose `LoginConfig`
   differs from the one the plant logged in with.
-- `Eq` for `LoginConfig`.
 
 ### Changed
 
@@ -44,8 +43,6 @@ No API breaks. Three behavior changes to check when upgrading:
   stay deprecated and ignored. They will not be removed.
 - A malformed `RITHMIC_REQUEST_TIMEOUT_SECS` is now logged as a warning and
   ignored instead of failing `RithmicConfig::from_env()`.
-- `RithmicError::SendFailed` displays as "WebSocket send failed", without "or
-  timed out": a write that times out fails pending calls with `ConnectionClosed`.
 
 ### Deprecated
 
