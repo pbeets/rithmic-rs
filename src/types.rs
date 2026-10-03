@@ -1,4 +1,4 @@
-//! Order enums with serde support and protobuf conversions.
+//! Trading and agreement types with serde support and protobuf conversions.
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -18,6 +18,35 @@ use crate::{
 /// An alias for the generated `request_time_bar_replay::BarType`, under a name
 /// that reads better on [`TimeBarReplayRequest`].
 pub use crate::rti::request_time_bar_replay::BarType as TimeBarType;
+
+/// Market data usage capacity reported when accepting or self-certifying an agreement.
+/// Choose the capacity applicable to the user; there is no default.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[non_exhaustive]
+pub enum MarketDataUsageCapacity {
+    /// Professional market data user.
+    Professional,
+    /// Non-professional market data user.
+    #[cfg_attr(feature = "serde", serde(rename = "Non-Professional"))]
+    NonProfessional,
+}
+
+impl MarketDataUsageCapacity {
+    /// Exact spelling used by the generated agreement request's string field.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Professional => "Professional",
+            Self::NonProfessional => "Non-Professional",
+        }
+    }
+}
+
+impl fmt::Display for MarketDataUsageCapacity {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
 
 /// Buy or sell. Defaults to `Buy`.
 ///

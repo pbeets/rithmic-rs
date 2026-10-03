@@ -120,7 +120,8 @@
 //! events over a tokio [`broadcast`](tokio::sync::broadcast) channel. Every
 //! handle gets its own receiver on it.
 //!
-//! The channel holds 10,000 messages by default. The plant never waits for
+//! Trading plants' channels hold 10,000 messages by default; the optional
+//! repository plant holds 64 connection events. The plant never waits for
 //! you: if your receiver falls more than that far behind, it misses the
 //! oldest messages, and its next `recv` returns
 //! [`RecvError::Lagged(n)`](tokio::sync::broadcast::error::RecvError::Lagged)
@@ -134,8 +135,8 @@
 //! bound the loop with a timeout.
 //!
 //! The channel is allocated in full when the plant connects, about 22 MB at
-//! the default size. Raise the capacity for more headroom during bursts, or
-//! lower it to save memory:
+//! the trading plants' default size. Raise the capacity for more headroom during
+//! bursts, or lower it to save memory:
 //!
 //! ```no_run
 //! use rithmic_rs::{RithmicConfigBuilder, RithmicEnv};
@@ -298,9 +299,11 @@
 //! **TLS backend:** The crate uses `native-tls` (via `tokio-tungstenite`) for all
 //! WebSocket connections. There is currently no `rustls` option.
 //!
+//! The `serde` feature also covers [`MarketDataUsageCapacity`] for agreement requests.
+//!
 //! ## Module Organization
 //!
-//! - [`plants`]: Specialized clients for different data types (ticker, order, P&L, history)
+//! - [`plants`]: Specialized clients for ticker, order, P&L, history and agreements
 //! - [`config`]: Configuration API for connecting to Rithmic
 //! - [`error`]: Typed error enum for plant handle methods
 //! - [`api`]: Order command types, [`LoginConfig`] and [`RithmicResponse`], the wrapper every message arrives in
@@ -326,6 +329,7 @@ mod ping_manager;
 /// - [`order_plant`](plants::order_plant): Order entry and management
 /// - [`history_plant`](plants::history_plant): Historical tick and bar data
 /// - [`pnl_plant`](plants::pnl_plant): Position and P&L tracking
+/// - [`repository_plant`](plants::repository_plant): Optional first-use agreement signing
 ///
 /// Plants run as independent async tasks using the actor pattern, communicating
 /// via tokio channels. This allows running multiple plants concurrently and
@@ -343,7 +347,7 @@ mod request_handler;
 #[allow(missing_docs)]
 pub mod rti;
 
-/// High-level trading types with optional serde support.
+/// High-level trading and agreement types with optional serde support.
 pub mod types;
 
 /// Utility types for working with Rithmic data.
@@ -372,15 +376,17 @@ pub use plants::{
     history_plant::{RithmicHistoryPlant, RithmicHistoryPlantHandle},
     order_plant::{RithmicOrderPlant, RithmicOrderPlantHandle},
     pnl_plant::{RithmicPnlPlant, RithmicPnlPlantHandle},
+    repository_plant::{RithmicRepositoryPlant, RithmicRepositoryPlantHandle},
     subscription::SubscriptionFilter,
     ticker_plant::{RithmicTickerPlant, RithmicTickerPlantHandle},
 };
 
 pub use types::{
     BracketOperationType, BracketType, EasyToBorrowRequest, FillHistoryRange, ManualOrAutoEntry,
-    OrderCondition, OrderPriceField, OrderSide, OrderType, ParseOrderSideError,
-    ParseOrderTypeError, ParseTimeInForceError, RmsUpdateBits, TickBarReplayRequest,
-    TimeBarReplayRequest, TimeBarType, TimeInForce, VolumeProfileMinuteBarsRequest,
+    MarketDataUsageCapacity, OrderCondition, OrderPriceField, OrderSide, OrderType,
+    ParseOrderSideError, ParseOrderTypeError, ParseTimeInForceError, RmsUpdateBits,
+    TickBarReplayRequest, TimeBarReplayRequest, TimeBarType, TimeInForce,
+    VolumeProfileMinuteBarsRequest,
 };
 
 pub use util::{

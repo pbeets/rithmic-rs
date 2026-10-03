@@ -113,11 +113,13 @@ This library uses the actor pattern where each Rithmic service runs independentl
 - [**`RithmicOrderPlant`**](#order-plant) - Order entry and management
 - [**`RithmicHistoryPlant`**](#history-plant) - Historical tick and bar data
 - [**`RithmicPnlPlant`**](#pnl-plant) - Position and P&L tracking
+- [**`RithmicRepositoryPlant`**](#repository-plant) - Optional first-use agreement signing
 
 > [!NOTE]
 > Live updates arrive on each handle's `subscription_receiver`, which holds 10,000
-> messages by default. A reader that falls further behind misses messages and gets
-> `RecvError::Lagged`. Change the size with `subscription_capacity` on the config
+> messages by default (64 connection events for the repository plant). A reader
+> that falls further behind misses messages and gets `RecvError::Lagged`.
+> Change the size with `subscription_capacity` on the config
 > builder; the [crate docs](https://docs.rs/rithmic-rs/latest/rithmic_rs/#subscription-channels)
 > have details.
 
@@ -250,6 +252,42 @@ handle.get_pnl_position_snapshot().await?;
 handle.subscribe_pnl_updates().await?;
 ```
 
+### Repository Plant
+
+Connect `RithmicRepositoryPlant` when a new user needs to review and accept Rithmic
+agreements, then disconnect it. Trading plants never open this connection
+automatically. It uses the same `RithmicConfig` and needs no trading account IDs.
+
+```rust
+use rithmic_rs::{ConnectStrategy, RithmicRepositoryPlant};
+
+let plant = RithmicRepositoryPlant::connect(&config, ConnectStrategy::Simple).await?;
+let handle = plant.get_handle();
+handle.login().await?;
+let pending = handle.list_unaccepted_agreements().await?;
+// Match ResponseListUnacceptedAgreements to find IDs, then fetch each for review:
+let agreement = handle.show_agreement("agreement-id").await?;
+// After the user accepts, call accept_agreement(id, capacity).
+handle.disconnect().await?;
+plant.await_shutdown().await?;
+```
+
+`list_unaccepted_agreements`, `list_accepted_agreements` and `show_agreement` return
+every response frame, including the terminal reply. Check each frame's `error`.
+The generated `ResponseShowAgreement` contains optional `agreement` and
+`agreement_html` byte buffers, plus mandatory, status and acceptance metadata.
+The client preserves the bytes without assuming their encoding or file format.
+
+`accept_agreement(id, Option<MarketDataUsageCapacity>)` and
+`set_market_data_self_cert_status(id, MarketDataUsageCapacity)` perform explicit
+changes. Choose `Professional` or `NonProfessional` as applicable; `None` on
+acceptance omits capacity. These calls return the server's acknowledgement, with
+`error` set on refusal. Login never accepts agreements automatically.
+
+[`examples/repository_agreements.rs`](examples/repository_agreements.rs) lists
+pending agreements by default, saves agreement content for review, and provides
+explicit commands to accept or self-certify an agreement.
+
 ## Migrating from 2.x
 
 3.0 reworked the order API. [MIGRATING.md](MIGRATING.md) has before/after code for every change. The ones that matter most:
@@ -290,7 +328,7 @@ explain what to do about them.
 
 | Flag | Default | What it adds |
 |---|---|---|
-| `serde` | off | `Serialize`/`Deserialize` on the config types, the trading enums, every order command and the history request types — enough to persist and replay a command |
+| `serde` | off | `Serialize`/`Deserialize` on the config types, the trading and agreement enums, every order command and the history request types — enough to persist and replay a command |
 
 The crate uses `native-tls` (via `tokio-tungstenite`) for all WebSocket
 connections. There is no `rustls` option.

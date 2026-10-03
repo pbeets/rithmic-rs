@@ -48,6 +48,7 @@ from the repo root. Variables already set in your shell take precedence.
 | Example | Shows | Needs account IDs |
 |---|---|---|
 | [`connect.rs`](connect.rs) | Connect, log in, disconnect | |
+| [`repository_agreements.rs`](repository_agreements.rs) | Optional first-use agreements: list, review, explicitly accept or self-certify | |
 | [`ticker.rs`](ticker.rs) | Streaming quotes and trades for the front month | |
 | [`load_historical_bars.rs`](load_historical_bars.rs) | Time bar replay | |
 | [`load_historical_ticks.rs`](load_historical_ticks.rs) | Tick replay | |
@@ -65,16 +66,34 @@ below the market, and cancel them before they exit.
 [`generate_protos.rs`](generate_protos.rs) is a maintainer tool, not an example. It
 regenerates `src/rti.rs` from the `.proto` files and never connects.
 
+## First-use agreements
+
+The repository example opens only the repository plant. It lists pending agreements
+unless you pass a command. Review the saved content before accepting an agreement:
+
+```sh
+cargo run --example repository_agreements
+cargo run --example repository_agreements -- show AGREEMENT_ID ./agreements
+cargo run --example repository_agreements -- accept AGREEMENT_ID non-professional
+cargo run --example repository_agreements -- accepted
+```
+
+Use the market data capacity that applies to the user: `professional` or
+`non-professional`. Omit it on `accept` when it is not required. To set
+self-certification separately, use `certify AGREEMENT_ID CAPACITY`. Each command
+disconnects on completion; regular trading examples do not open this plant.
+
 ## Options
 
-Every example except `connect` and `pnl` picks its contract from these. Set them in
-`.env` or on the command line. The shared code is in [`shared/common.rs`](shared/common.rs).
+Every example except `connect`, `pnl` and `repository_agreements` picks its contract
+from these. Set them in `.env` or on the command line. The shared code is in
+[`shared/common.rs`](shared/common.rs).
 
 | Variable | Used by | Default |
 |---|---|---|
-| `SYMBOL` | all but `connect`, `pnl` | `ticker`, `error_handling`: the front month of `PRODUCT`. The rest: `ESZ6` |
+| `SYMBOL` | all but `connect`, `pnl`, `repository_agreements` | `ticker`, `error_handling`: the front month of `PRODUCT`. The rest: `ESZ6` |
 | `PRODUCT` | `ticker`, `error_handling` | `ES` (ignored when `SYMBOL` is set) |
-| `EXCHANGE` | all but `connect`, `pnl` | `CME` |
+| `EXCHANGE` | all but `connect`, `pnl`, `repository_agreements` | `CME` |
 | `START_TIME` | `load_historical_*`, `error_handling` | Midnight UTC on the last weekday before today |
 
 Only the ticker plant can look up a front month, so examples that don't use it

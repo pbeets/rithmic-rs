@@ -5,10 +5,11 @@
 //!
 //! This module contains implementations for each Rithmic API plant:
 //!
-//! - [`RithmicTickerPlant`](crate::RithmicTickerPlant): real-time market data and instrument reference data
-//! - [`RithmicOrderPlant`](crate::RithmicOrderPlant): order placement and management
-//! - [`RithmicPnlPlant`](crate::RithmicPnlPlant): positions and profit and loss
-//! - [`RithmicHistoryPlant`](crate::RithmicHistoryPlant): historical ticks and bars
+//! - [`RithmicTickerPlant`]: real-time market data and instrument reference data
+//! - [`RithmicOrderPlant`]: order placement and management
+//! - [`RithmicPnlPlant`]: positions and profit and loss
+//! - [`RithmicHistoryPlant`]: historical ticks and bars
+//! - [`RithmicRepositoryPlant`]: optional first-use agreement signing
 //!
 //! Each plant is its own WebSocket connection with its own login.
 
@@ -24,6 +25,8 @@ pub(crate) mod kind;
 pub mod order_plant;
 /// Position and P&L tracking
 pub mod pnl_plant;
+/// Optional agreement review, acceptance and market data self-certification
+pub mod repository_plant;
 pub(crate) mod session;
 /// Per-account filtering of the order and PnL plants' update streams
 pub mod subscription;

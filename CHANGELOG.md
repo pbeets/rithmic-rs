@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Optional `RithmicRepositoryPlant` and handle for listing, reviewing and accepting
+  agreements and setting market data self-certification. Uses the shared plant
+  actor and opens no connection until explicitly requested.
+- `MarketDataUsageCapacity` for Professional/Non-Professional agreement requests.
+- `examples/repository_agreements.rs` for first-use agreement onboarding.
+
 ## [3.2.0]
 
 No API breaks. Three behavior changes to check when upgrading:
