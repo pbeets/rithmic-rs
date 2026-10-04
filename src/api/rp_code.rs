@@ -5,9 +5,8 @@ use crate::{
 
 /// Classified outcome of a Rithmic `rp_code` tuple.
 ///
-/// `rp_code` is a protocol-level response code, not a transport signal. Any
-/// non-success classification here represents a request-level result and has
-/// no bearing on WebSocket/connection health.
+/// `rp_code` is a protocol-level response code. A non-success classification
+/// is a request-level result and says nothing about connection health.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum RpCodeClassification {
     /// Request succeeded: rp_code is empty or starts with `"0"`.
@@ -126,10 +125,9 @@ pub(crate) fn response_rp_code_slice(message: &RithmicMessage) -> Option<&[Strin
     response_rp_code_info(message).map(|(_, rp_code)| rp_code)
 }
 
-// Single extension point for benign `rp_code` normalizations. Any new mapping
-// MUST match exactly on both code AND message and ship with a captured-fixture
-// decode test. E.g. `["7", "an error occurred while parsing data."]` shares
-// code "7" but is a real error.
+// Where benign `rp_code` mappings live. Match on both code and message and add a
+// captured-fixture decode test: `["7", "an error occurred while parsing data."]`
+// shares code "7" but is a real error.
 pub(crate) fn classify_rp_code(rp_code: &[String]) -> RpCodeClassification {
     // `rp_code[0] == "0"` is success. Empty counts as success too: the data
     // frames of a multipart reply carry no rp_code and are classified as well.
@@ -144,9 +142,8 @@ pub(crate) fn classify_rp_code(rp_code: &[String]) -> RpCodeClassification {
     }
 
     let code = rp_code.first().cloned();
-    // `message` is strictly the second element, else `None`. Symmetric with
-    // `code`. Single-element rp_codes (e.g. `["5"]`) therefore produce
-    // `message = None`; consumers see no spurious empty string.
+    // `message` is the second element or `None`, so a single-element rp_code
+    // like `["5"]` gives `message = None`, never an empty string.
     let message = rp_code.get(1).cloned();
 
     RpCodeClassification::RequestRejected(RithmicRequestError {
@@ -323,10 +320,8 @@ mod tests {
 
     #[test]
     fn classify_rp_code_seven_parse_error_is_request_rejected_not_benign_empty() {
-        // Captured evidence: ResponseOrderSessionConfig can return
-        // rp_code = ["7", "an error occurred while parsing data."]. This shares
-        // the benign-empty code ("7") but is NOT a no-data marker. The
-        // classifier must match on both message and code.
+        // Captured from ResponseOrderSessionConfig: code "7" with a parse error
+        // message. It shares the benign-empty code but is not a no-data marker.
         let rp_code = vec![
             "7".to_string(),
             "an error occurred while parsing data.".to_string(),
@@ -431,10 +426,9 @@ mod tests {
         assert_eq!(rp_code, &["5".to_string(), "permission denied".to_string()]);
     }
 
-    // Symmetric with the `define_response_rp_code_info` expansion, driven off
-    // the same `rp_code_response_variants!` list, so removing a variant from
-    // the macro without updating this test is a compile error, and any listed
-    // variant whose inner proto lacks the expected shape fails the assertion.
+    // Mirrors `define_response_rp_code_info`, driven by the same variant list.
+    // A removed variant fails to compile; a variant with the wrong shape fails
+    // the assertion.
     macro_rules! define_rp_code_info_exhaustiveness_test {
         ($($variant:ident),* $(,)?) => {
             #[test]

@@ -208,7 +208,7 @@ impl RithmicAccount {
 }
 
 /// Login overrides. Every field left `None` keeps the default, so `login()` is
-/// the whole story unless you need one of these.
+/// enough unless you need one of these.
 ///
 /// A plant logs in once per connection. Calling `login_with_config` again with
 /// a different config returns [`RithmicError::LoginConflict`](crate::RithmicError::LoginConflict),

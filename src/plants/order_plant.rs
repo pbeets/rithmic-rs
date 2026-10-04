@@ -233,9 +233,8 @@ pub(crate) enum OrderPlantCommand {
 /// - **Forced logout events**: session terminated by the server
 /// - **Unexpected disconnects**: sent as `ConnectionError`
 ///
-/// **Note:** Heartbeat requests are sent automatically for protocol compliance,
-/// but successful responses are silently dropped. Only heartbeat errors from the server
-/// are forwarded as `HeartbeatTimeout` messages.
+/// Heartbeat requests are sent automatically. Successful responses are dropped,
+/// and only heartbeat errors from the server are forwarded as `HeartbeatTimeout`.
 ///
 /// # Example: Basic Usage
 ///

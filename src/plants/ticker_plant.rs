@@ -127,7 +127,7 @@ pub(crate) enum TickerPlantCommand {
 /// `subscribe_*` methods on [`RithmicTickerPlantHandle`].
 ///
 /// The plant runs on its own background task. [`connect`](Self::connect)
-/// only opens the connection; log in through a handle before anything else.
+/// opens the connection but does not log in. Log in through a handle first.
 ///
 /// # Connection health
 ///
@@ -892,10 +892,10 @@ impl RithmicTickerPlantHandle {
 
     /// Subscribe to level-1 order book summary updates for a specific symbol.
     ///
-    /// This uses `request_market_data_update` (proto 100) with `UpdateBits::OrderBook`
-    /// and delivers aggregated bid/ask summary ticks. It is distinct from
-    /// [`subscribe_depth_by_order_update`](Self::subscribe_depth_by_order_update), which uses
-    /// `request_depth_by_order_updates` (proto 104) for full depth-by-order streaming.
+    /// Sends `request_market_data_update` (proto 100) with `UpdateBits::OrderBook`
+    /// and delivers aggregated bid/ask summary ticks. For full depth-by-order, use
+    /// [`subscribe_depth_by_order_update`](Self::subscribe_depth_by_order_update)
+    /// (`request_depth_by_order_updates`, proto 104).
     ///
     /// # Arguments
     /// * `symbol` - The trading symbol (e.g., "ESZ6")
@@ -925,8 +925,8 @@ impl RithmicTickerPlantHandle {
     /// Unsubscribe from level-1 order book summary updates for a specific symbol.
     ///
     /// This reverses [`subscribe_order_book_summary`](Self::subscribe_order_book_summary).
-    /// Use [`unsubscribe_depth_by_order_update`](Self::unsubscribe_depth_by_order_update) to stop the
-    /// dedicated depth-by-order stream instead.
+    /// To stop the depth-by-order stream, use
+    /// [`unsubscribe_depth_by_order_update`](Self::unsubscribe_depth_by_order_update).
     ///
     /// # Arguments
     /// * `symbol` - The trading symbol (e.g., "ESZ6")

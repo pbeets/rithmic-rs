@@ -101,9 +101,9 @@ pub(crate) enum ReplayQuery {
 /// # }
 /// ```
 ///
-/// Three things to know about the shape of that `Vec`:
+/// The `Vec` has three quirks:
 ///
-/// - **The last entry is an end marker, not data.** Rithmic closes every replay
+/// - **The last entry is an end marker.** Rithmic closes every replay
 ///   with a response of the same message type that carries no bar, so
 ///   matching on the type does not skip it. Split it off with `split_last`, as
 ///   above. If the server ended the replay early, the call still returns `Ok`
@@ -574,15 +574,14 @@ impl RithmicHistoryPlantHandle {
     /// the result short. For a window that may hold more, use
     /// [`load_ticks_all`](Self::load_ticks_all).
     ///
-    /// # A quirk worth knowing
+    /// # First record's open time
     ///
     /// Rithmic stamps the **first** record's open time with the second you asked
     /// for, at microsecond 0, rather than the trade's own time. Since the request
     /// is second-granular, that open can read up to a second early. The close
     /// time (index 1 of `data_bar_ssboe` / `data_bar_usecs`) is always the real
     /// trade time, so prefer it if you are ordering or bucketing trades. The
-    /// crate passes the values through untouched; what to do about the open is
-    /// yours to decide.
+    /// crate passes the values through untouched.
     ///
     /// # Arguments
     /// * `symbol` - The trading symbol, e.g. `"ESZ6"`
@@ -735,7 +734,7 @@ impl RithmicHistoryPlantHandle {
     /// A very large window may get no reply at all, so wrap the call in a
     /// timeout of your own.
     ///
-    /// This is observed behaviour, not documented by Rithmic, and may change.
+    /// Rithmic does not document this. It was observed and may change.
     ///
     /// # Cost
     ///
@@ -1011,8 +1010,7 @@ impl RithmicHistoryPlantHandle {
     /// Load minute bars that break volume down by price.
     ///
     /// Each bar reports how much traded at each price during that minute, rather
-    /// than a single volume figure. This is useful for building a volume profile. Build
-    /// the `request` with [`VolumeProfileMinuteBarsRequest`].
+    /// than a single volume figure. Build the `request` with [`VolumeProfileMinuteBarsRequest`].
     ///
     /// # Returns
     /// One response per minute, followed by an end marker carrying no data.

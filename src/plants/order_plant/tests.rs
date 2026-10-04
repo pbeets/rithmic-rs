@@ -1517,9 +1517,9 @@ async fn an_unset_price_is_omitted_on_the_wire() {
 }
 
 /// The `Auto` attribution for an exit lives in the command's default, and the
-/// sender now always states a placement. So this drives an unconfigured command
-/// through the real handle and decodes the transmitted frame. Asserting on the
-/// builder alone could not detect the default moving.
+/// sender always states a placement. This sends an unconfigured command
+/// through the real handle and decodes the frame, which a builder-only
+/// assertion could not catch.
 #[tokio::test]
 async fn exit_position_encodes_auto_placement_by_default() {
     let (handle, mut command_receiver) = test_handle();

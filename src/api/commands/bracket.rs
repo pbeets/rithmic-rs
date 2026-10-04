@@ -489,7 +489,7 @@ impl RithmicBracketOrder {
                 (true, true) => Some(BracketType::TargetAndStopStatic),
                 (true, false) => Some(BracketType::TargetOnlyStatic),
                 (false, true) => Some(BracketType::StopOnlyStatic),
-                // No exit legs to describe, so invent no shape.
+                // No exit legs, so there is no shape to set.
                 (false, false) => None,
             };
         }
@@ -644,7 +644,7 @@ mod tests {
         assert!(matched.validate().is_ok());
     }
 
-    /// The ergonomic one-target/one-stop path has to produce exactly what the
+    /// The one-target/one-stop setters must produce exactly what the
     /// explicit vectors produce, including the `Static` shape the crate has
     /// always sent for a simple bracket.
     #[test]

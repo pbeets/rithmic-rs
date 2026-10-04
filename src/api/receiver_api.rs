@@ -46,8 +46,8 @@ pub(crate) struct RithmicReceiverApi {
 }
 
 impl RithmicReceiverApi {
-    // Large Result size (~1296 bytes) due to RithmicMessage enum, but acceptable since
-    // the Result is immediately matched and not passed through deep call stacks.
+    // The Result is large (~1296 bytes) because of `RithmicMessage`, but it is
+    // matched at once and never passed down deep call stacks.
     /// Decode one length-prefixed frame. `Err` is still a routable response:
     /// `error` holds the `ProtocolError`, and `request_id` is recovered if it can be.
     #[allow(clippy::result_large_err)]
@@ -2160,9 +2160,8 @@ mod tests {
 
     #[test]
     fn list_accounts_no_data_decodes_as_ok() {
-        // rp_code = ["7", "no data"] on a ResponseAccountList (list-style response)
-        // should produce Ok with no error, confirming the allowlist normalization
-        // flows end-to-end for list responses as well as replay responses.
+        // rp_code ["7", "no data"] on a ResponseAccountList decodes as Ok with no
+        // error, so the benign-empty mapping covers list replies too.
         let api = RithmicReceiverApi {
             source: "test".to_string(),
         };
@@ -2186,8 +2185,8 @@ mod tests {
 
     #[test]
     fn response_login_rejection_decodes_with_structured_error() {
-        // Structured rejection must be exposed via `request_rejection()` alongside
-        // the legacy `error: Option<String>` for protocol-level rejections.
+        // A protocol-level rejection shows up in `request_rejection()` as well as
+        // the legacy `error: Option<String>`.
         let api = RithmicReceiverApi {
             source: "test".to_string(),
         };
@@ -2214,9 +2213,8 @@ mod tests {
 
     #[test]
     fn response_order_session_config_parse_error_decodes_with_structured_error() {
-        // Captured fixture: rp_code = ["7", "an error occurred while parsing data."]
-        // must decode as a RequestRejected with the full rp_code payload
-        // preserved. It MUST NOT be swallowed as KnownBenignEmpty.
+        // Captured fixture: this rp_code must decode as a RequestRejected with the
+        // full payload kept, not be swallowed as KnownBenignEmpty.
         let api = RithmicReceiverApi {
             source: "test".to_string(),
         };
@@ -2248,8 +2246,8 @@ mod tests {
 
     #[test]
     fn replay_no_data_decodes_as_ok() {
-        // rp_code = ["7", "no data"] on a ResponseReplayExecutions should produce Ok,
-        // confirming the fix flows end-to-end through buf_to_message.
+        // rp_code ["7", "no data"] on a ResponseReplayExecutions decodes as Ok
+        // through buf_to_message.
         let api = RithmicReceiverApi {
             source: "test".to_string(),
         };
@@ -2299,9 +2297,8 @@ mod tests {
             source: "test".to_string(),
         };
 
-        // Intermediate frame with a non-"0" rq_handler_rp_code. has_multiple's
-        // `[0] == "0"` gate used to drop it, truncating legitimate multipart
-        // responses.
+        // Intermediate frame with a non-"0" rq_handler_rp_code. The old
+        // `[0] == "0"` gate dropped it and truncated multipart replies.
         let intermediate = api
             .buf_to_message(encode_with_header(&ResponseSearchSymbols {
                 template_id: 110,

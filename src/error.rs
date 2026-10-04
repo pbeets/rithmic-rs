@@ -1,12 +1,9 @@
 use std::fmt;
 
-/// A request the server turned down, carrying the numeric code and the
-/// human-readable message separately so callers can branch on the code without
-/// parsing the message text.
+/// A request the server turned down. The code and message are kept apart so
+/// you can branch on the code without parsing text.
 ///
-/// This is a request-level outcome, not a connection failure. Receiving one
-/// does not mean the connection is unhealthy, so it is not a reason to
-/// reconnect.
+/// This says nothing about connection health. Do not reconnect because of it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct RithmicRequestError {
@@ -60,9 +57,8 @@ impl std::error::Error for RithmicRequestError {}
 /// - `Err(..)`: the request could not be completed: an argument was invalid,
 ///   the connection dropped, or no response came back.
 ///
-/// The second case is the one that catches people out: a request the server
-/// turned down still returns `Ok`. Code that only checks for `Err` will treat
-/// it as a success. Check [`RithmicResponse::error`] to tell the first two
+/// The second case is easy to miss: a request the server turned down still
+/// returns `Ok`. Code that only checks for `Err` will treat it as a success. Check [`RithmicResponse::error`] to tell the first two
 /// apart.
 ///
 /// `login` returns a refusal as `Err(`[`RequestRejected`](Self::RequestRejected)`)`
@@ -122,11 +118,9 @@ pub enum RithmicError {
     /// The plant answered with no response at all where one was expected. A
     /// defensive case; you should not see it.
     EmptyResponse,
-    /// Deprecated and has no effect: nothing returns it any more. The library
-    /// does not time out requests; a caller that wants a deadline wraps the
-    /// call in [`tokio::time::timeout`], which reports expiry through its own
-    /// `Elapsed` rather than this variant. Kept so existing code keeps
-    /// compiling.
+    /// Deprecated and never returned: the library does not time out requests.
+    /// For a deadline, wrap the call in [`tokio::time::timeout`], which reports
+    /// expiry as its own `Elapsed`. Kept so existing code keeps compiling.
     #[deprecated(
         since = "3.1.0",
         note = "the library no longer times out requests; wrap the call in tokio::time::timeout"
@@ -313,11 +307,9 @@ mod tests {
 
     #[test]
     fn request_error_display_sanitizes_control_chars() {
-        // A malicious or malformed server message must not leak newlines
-        // (log-injection) or ANSI escapes (terminal-control) into `Display`.
-        // The sanitizer strips control characters. The ESC byte of an ANSI
-        // sequence is removed, which breaks the escape and prevents terminal
-        // interpretation (even though the printable `[31m` text remains).
+        // Server text must not put newlines or ANSI escapes into `Display`.
+        // Stripping the ESC byte breaks the escape; the printable `[31m`
+        // text remains.
         let err = RithmicRequestError {
             rp_code: vec![
                 "3\n".to_string(),

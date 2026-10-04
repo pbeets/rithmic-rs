@@ -52,7 +52,7 @@ pub(crate) enum PnlPlantCommand {
 ///
 /// Get one handle per account with [`get_handle`](Self::get_handle). Through
 /// it you can ask for the account's current positions and subscribe to
-/// changes. Both deliver their data the same way: as
+/// changes. Both deliver data as
 /// [`RithmicMessage::AccountPnLPositionUpdate`] (account totals) and
 /// [`RithmicMessage::InstrumentPnLPositionUpdate`] (one per instrument) on the
 /// handle's [`subscription_receiver`](RithmicPnlPlantHandle::subscription_receiver).

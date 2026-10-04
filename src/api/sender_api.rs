@@ -2186,8 +2186,8 @@ mod tests {
             ]
         );
 
-        // Every remaining repeated field is asserted too: the two-leg builder was
-        // rewritten into this loop, so a per-field slip would otherwise go unseen.
+        // Every remaining repeated field is asserted too, since the two-leg
+        // builder was rewritten into this loop.
         assert_eq!(
             request.transaction_type,
             vec![
@@ -2470,8 +2470,8 @@ mod tests {
     fn account_list_carries_the_scope() {
         let mut api = RithmicSenderApi::new(&test_config());
 
-        // Trader is included on purpose: those logins carry ids too, so their bytes
-        // change as well.
+        // Trader is included on purpose: those logins carry ids too, so their
+        // bytes change as well.
         for (user_type, expected) in [
             (LoginUserType::Fcm, request_account_list::UserType::Fcm),
             (LoginUserType::Ib, request_account_list::UserType::Ib),
@@ -3005,10 +3005,9 @@ mod tests {
         );
     }
 
-    /// `OrderSide` reaches the wire through three hand-written `From` impls, one
-    /// per request module. The OCO one is read back by the mixed-group test; these
-    /// two are the ones where a swapped arm would send a buy as a sell without
-    /// anything else noticing.
+    /// `OrderSide` has one hand-written `From` impl per request module. The OCO
+    /// one is read back by the mixed-group test; a swapped arm in these two
+    /// would send a buy as a sell unnoticed.
     #[test]
     fn the_side_survives_the_trip_to_the_wire_on_both_requests() {
         let mut api = RithmicSenderApi::new(&test_config());
