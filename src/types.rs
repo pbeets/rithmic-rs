@@ -21,6 +21,8 @@ pub use crate::rti::request_time_bar_replay::BarType as TimeBarType;
 
 /// Market data usage capacity reported when accepting or self-certifying an agreement.
 /// Choose the capacity applicable to the user; there is no default.
+///
+/// Parses from `"professional"` or `"non-professional"`, in any case.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[non_exhaustive]
@@ -28,13 +30,12 @@ pub enum MarketDataUsageCapacity {
     /// Professional market data user.
     Professional,
     /// Non-professional market data user.
-    #[cfg_attr(feature = "serde", serde(rename = "Non-Professional"))]
     NonProfessional,
 }
 
 impl MarketDataUsageCapacity {
     /// Exact spelling used by the generated agreement request's string field.
-    pub fn as_str(self) -> &'static str {
+    pub fn as_str_name(&self) -> &'static str {
         match self {
             Self::Professional => "Professional",
             Self::NonProfessional => "Non-Professional",
@@ -44,7 +45,31 @@ impl MarketDataUsageCapacity {
 
 impl fmt::Display for MarketDataUsageCapacity {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
+        f.write_str(self.as_str_name())
+    }
+}
+
+/// Error returned when parsing an invalid [`MarketDataUsageCapacity`] string.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParseMarketDataUsageCapacityError(String);
+
+impl fmt::Display for ParseMarketDataUsageCapacityError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "invalid market data usage capacity: '{}'", self.0)
+    }
+}
+
+impl std::error::Error for ParseMarketDataUsageCapacityError {}
+
+impl FromStr for MarketDataUsageCapacity {
+    type Err = ParseMarketDataUsageCapacityError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "professional" => Ok(Self::Professional),
+            "non-professional" => Ok(Self::NonProfessional),
+            _ => Err(ParseMarketDataUsageCapacityError(s.to_string())),
+        }
     }
 }
 

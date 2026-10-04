@@ -15,6 +15,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `MarketDataUsageCapacity` for Professional/Non-Professional agreement requests.
 - `examples/repository_agreements.rs` for first-use agreement onboarding.
 
+### Removed
+
+- The order plant's agreement methods (`list_unaccepted_agreements`,
+  `list_accepted_agreements`, `accept_agreement`, `show_agreement` and
+  `set_rithmic_mrkt_data_self_cert_status`). Rithmic serves agreement templates
+  only on the repository plant, so use `RithmicRepositoryPlantHandle` instead.
+  This removes public API, but is released as a minor version because the
+  methods did not work against the order plant.
+
 ## [3.2.0]
 
 No API breaks. Three behavior changes to check when upgrading:

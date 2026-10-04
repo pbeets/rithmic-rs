@@ -19,6 +19,7 @@ use crate::{
     },
 };
 
+// Local because the shared wire helpers speak raw TCP, not WebSocket frames.
 async fn read_request<M: prost::Message + Default>(ws: &mut WebSocketStream<TcpStream>) -> M {
     loop {
         match ws.next().await.unwrap().unwrap() {
@@ -48,8 +49,7 @@ async fn optional_connection_supports_the_full_agreement_workflow() {
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("ws://{}", listener.local_addr().unwrap());
-        let config = test_support::test_config();
-        let mut config = config;
+        let mut config = test_support::test_config();
         config.url = url;
 
         let server = tokio::spawn(async move {
@@ -235,7 +235,7 @@ async fn optional_connection_supports_the_full_agreement_workflow() {
                 .all(|r| r.error.is_none() && r.source == "repository_plant")
         );
         let RithmicMessage::ResponseListUnacceptedAgreements(first) = &listed[0].message else {
-            panic!()
+            panic!("expected an unaccepted agreement frame")
         };
         assert_eq!(first.agreement_id.as_deref(), Some("agreement-a"));
         assert_eq!(
@@ -243,7 +243,7 @@ async fn optional_connection_supports_the_full_agreement_workflow() {
             Some("required")
         );
         let RithmicMessage::ResponseListUnacceptedAgreements(second) = &listed[1].message else {
-            panic!()
+            panic!("expected an unaccepted agreement frame")
         };
         assert_eq!(second.agreement_id.as_deref(), Some("agreement-b"));
 
@@ -251,7 +251,7 @@ async fn optional_connection_supports_the_full_agreement_workflow() {
         assert_eq!(shown.len(), 3);
         for (response, expected) in shown[..2].iter().zip([vec![0, 255, 1], vec![2, 254, 3]]) {
             let RithmicMessage::ResponseShowAgreement(part) = &response.message else {
-                panic!()
+                panic!("expected a show agreement frame")
             };
             assert_eq!(part.agreement.as_ref(), Some(&expected));
             assert_eq!(
@@ -284,7 +284,7 @@ async fn optional_connection_supports_the_full_agreement_workflow() {
         let accepted = handle.list_accepted_agreements().await.unwrap();
         assert_eq!(accepted.len(), 2);
         let RithmicMessage::ResponseListAcceptedAgreements(first) = &accepted[0].message else {
-            panic!()
+            panic!("expected an accepted agreement frame")
         };
         assert_eq!(first.agreement_acceptance_ssboe, Some(1_700_000_000));
         assert_eq!(
@@ -313,7 +313,7 @@ async fn acceptance_can_omit_capacity() {
         response_sender: tx,
     }));
     let [Effect::Send { frame: bytes, id }] = effects.as_slice() else {
-        panic!()
+        panic!("expected one send effect")
     };
     let request = RequestAcceptAgreement::decode(&bytes[4..]).unwrap();
     assert_eq!(request.agreement_id.as_deref(), Some("terms"));
@@ -341,7 +341,7 @@ async fn agreement_content_and_terminal_refusal_are_both_preserved() {
         response_sender: tx,
     }));
     let [Effect::Send { id, .. }] = effects.as_slice() else {
-        panic!()
+        panic!("expected one send effect")
     };
     let content = frame(&ResponseShowAgreement {
         template_id: 507,
@@ -380,7 +380,7 @@ async fn empty_lists_and_terminal_refusals_complete_without_losing_errors() {
             RepositoryPlantCommand::ListUnacceptedAgreements(tx),
         ));
         let [Effect::Send { id, .. }] = effects.as_slice() else {
-            panic!()
+            panic!("expected one send effect")
         };
         core.on_event(Event::Frame(frame(&ResponseListUnacceptedAgreements {
             template_id: 501,
@@ -413,11 +413,11 @@ fn test_handle() -> (
 async fn login_refusal_is_an_error() {
     let (handle, mut receiver) = test_handle();
     let call = tokio::spawn(async move { handle.login().await });
-    let RepositoryPlantCommand::Shared(PlantCommand::Login {
+    let RepositoryPlantCommand::Login {
         response_sender, ..
-    }) = receiver.recv().await.unwrap()
+    } = receiver.recv().await.unwrap()
     else {
-        panic!()
+        panic!("expected a login command")
     };
     response_sender
         .send(Ok(vec![frame(&ResponseLogin {
@@ -439,12 +439,10 @@ async fn disconnect_sends_close_even_when_logout_fails() {
     test_support::assert_close_follows_failed_logout(
         &mut receiver,
         |command| match command {
-            RepositoryPlantCommand::Shared(PlantCommand::Logout { response_sender }) => {
-                Some(response_sender)
-            }
+            RepositoryPlantCommand::Logout { response_sender } => Some(response_sender),
             _ => None,
         },
-        |command| matches!(command, RepositoryPlantCommand::Shared(PlantCommand::Close)),
+        |command| matches!(command, RepositoryPlantCommand::Close),
     )
     .await;
     assert!(matches!(call.await.unwrap(), Err(RithmicError::SendFailed)));
@@ -458,14 +456,17 @@ async fn abort_drains_pending_requests_and_broadcasts_connection_loss() {
         agreement_id: "terms".into(),
         response_sender: tx,
     }));
-    let effects = core.on_event(Event::Command(RepositoryPlantCommand::Shared(
-        PlantCommand::Abort,
-    )));
+    let effects = core.on_event(Event::Command(RepositoryPlantCommand::Abort));
     assert!(matches!(
         answer(&mut rx),
         Some(Err(RithmicError::ConnectionClosed))
     ));
     assert!(effects.iter().any(|e| matches!(e, Effect::Stop)));
-    assert!(effects.iter().any(|e| matches!(e, Effect::Broadcast(r) if r.source == "repository_plant" && matches!(r.message, RithmicMessage::ConnectionError))));
+    assert!(effects.iter().any(|e| matches!(
+        e,
+        Effect::Broadcast(r)
+            if r.source == "repository_plant"
+                && matches!(r.message, RithmicMessage::ConnectionError)
+    )));
     assert!(matches!(core.session, Session::Closed));
 }
