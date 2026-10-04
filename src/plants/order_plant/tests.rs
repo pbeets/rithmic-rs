@@ -517,7 +517,7 @@ async fn login_succeeds_and_stays_unscoped_when_the_login_info_fails() {
     }
 }
 
-/// The scope belongs to the connection, not to the handle that logged in — the
+/// The scope belongs to the connection, not to the handle that logged in. The
 /// README's multi-account flow takes a further handle per account after logging in
 /// on one, and those must be scoped too.
 #[tokio::test]
@@ -1128,7 +1128,7 @@ fn leg_on(exchange: &str, trade_route: Option<&str>) -> RithmicOcoOrderLeg {
 }
 
 /// Every order command must reach the wire on the route cached for its own
-/// exchange — a route crossed between exchanges is an order the server rejects.
+/// exchange. A route crossed between exchanges is an order the server rejects.
 #[tokio::test]
 async fn every_order_command_sends_the_route_cached_for_its_exchange() {
     let (mut plant, _sender, mut client) = plant_with_wire().await;
@@ -1208,7 +1208,7 @@ async fn every_order_command_sends_the_route_cached_for_its_exchange() {
     );
 }
 
-/// The per-order route wins over the cache, and works with nothing cached at all —
+/// The per-order route wins over the cache, and works with nothing cached at all,
 /// which is how an unlisted route stays reachable.
 #[tokio::test]
 async fn a_per_order_route_overrides_the_cached_one() {
@@ -1518,7 +1518,7 @@ async fn an_unset_price_is_omitted_on_the_wire() {
 
 /// The `Auto` attribution for an exit lives in the command's default, and the
 /// sender now always states a placement. So this drives an unconfigured command
-/// through the real handle and decodes the transmitted frame — asserting on the
+/// through the real handle and decodes the transmitted frame. Asserting on the
 /// builder alone could not detect the default moving.
 #[tokio::test]
 async fn exit_position_encodes_auto_placement_by_default() {

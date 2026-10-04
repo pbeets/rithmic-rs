@@ -237,7 +237,7 @@ impl RithmicBracketOrder {
     /// One target leg at this tick distance, sized to the entry quantity.
     ///
     /// Reads [`Self::quantity`] as it stands right now, so set the quantity
-    /// first — otherwise the leg is sized to 0 and [`Self::build`] rejects it.
+    /// first, or the leg is sized to 0 and [`Self::build`] rejects it.
     pub fn target(mut self, ticks: i32) -> Self {
         self.target_quantity = vec![self.quantity];
         self.target_ticks = vec![ticks];
@@ -247,7 +247,7 @@ impl RithmicBracketOrder {
     /// One stop leg at this tick distance, sized to the entry quantity.
     ///
     /// Reads [`Self::quantity`] as it stands right now, so set the quantity
-    /// first — otherwise the leg is sized to 0 and [`Self::build`] rejects it.
+    /// first, or the leg is sized to 0 and [`Self::build`] rejects it.
     pub fn stop(mut self, ticks: i32) -> Self {
         self.stop_quantity = vec![self.quantity];
         self.stop_ticks = vec![ticks];
@@ -427,8 +427,7 @@ impl RithmicBracketOrder {
     /// Also check the exit legs hold together: each side's quantities and tick
     /// distances pair up one to one, every leg's quantity is positive, and a
     /// [`Self::bracket_type`] set by hand names the sides the legs actually
-    /// form. Tick distances themselves are not judged — Rithmic is the
-    /// authority on what it accepts.
+    /// form. Tick distances are not judged: Rithmic decides what it accepts.
     pub fn validate(&self) -> Result<(), RithmicError> {
         validate_instrument(&self.symbol, &self.exchange, self.quantity)?;
 
@@ -448,7 +447,7 @@ impl RithmicBracketOrder {
 
             if let Some(quantity) = quantities.iter().find(|quantity| **quantity <= 0) {
                 return Err(RithmicError::InvalidArgument(format!(
-                    "every {side} leg needs a positive quantity, got {quantity} — \
+                    "every {side} leg needs a positive quantity, got {quantity}: \
                      `target(..)`/`stop(..)` size the leg to the quantity set so far"
                 )));
             }
@@ -527,7 +526,7 @@ pub struct RithmicBracketLevelAdjustment {
     pub id: String,
     /// The new distance in ticks. Not checked by [`Self::build`].
     pub ticks: i32,
-    /// Which bracket leg to adjust — a target leg via `adjust_target`, a stop
+    /// Which bracket leg to adjust: a target leg via `adjust_target`, a stop
     /// leg via `adjust_stop`. Sent as given; `None` leaves it off the request.
     pub level: Option<i32>,
 }
@@ -550,7 +549,7 @@ impl RithmicBracketLevelAdjustment {
         self
     }
 
-    /// Which bracket leg to adjust — a target leg via `adjust_target`, a stop
+    /// Which bracket leg to adjust: a target leg via `adjust_target`, a stop
     /// leg via `adjust_stop`.
     pub fn level(mut self, level: i32) -> Self {
         self.level = Some(level);
@@ -601,7 +600,7 @@ mod tests {
         assert!(order.validate().is_ok());
     }
 
-    /// The exit legs have to hold together as a structure — paired vectors,
+    /// The exit legs have to hold together: paired vectors,
     /// positive sizes, a `bracket_type` that names the sides supplied. Tick
     /// distances themselves are left to Rithmic to judge.
     #[test]
@@ -677,9 +676,9 @@ mod tests {
         );
     }
 
-    /// The sizing reads `quantity` where it stands, so the setter order that
-    /// looks equivalent is not — and the zero-sized leg the wrong order
-    /// produces is refused rather than sent.
+    /// The sizing reads `quantity` where it stands, so a setter order that
+    /// looks equivalent is not. The zero-sized leg the wrong order produces
+    /// is refused, not sent.
     #[test]
     fn the_bracket_sugar_sizes_its_leg_to_the_quantity_set_so_far() {
         let after = RithmicBracketOrder::new()

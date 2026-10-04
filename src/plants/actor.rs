@@ -250,7 +250,7 @@ where
 
             Err(WebSocketSendError::Timeout) => {
                 error!(
-                    "{}: WebSocket send timed out for request {} — sink poisoned",
+                    "{}: WebSocket send timed out for request {}: sink poisoned",
                     self.rithmic_receiver_api.source, id
                 );
 
@@ -297,7 +297,7 @@ where
 
             Err(WebSocketSendError::Transport(error)) => {
                 error!(
-                    "{}: WebSocket ping send failed — connection dead: {}",
+                    "{}: WebSocket ping send failed: connection dead: {}",
                     self.rithmic_receiver_api.source, error
                 );
 
@@ -337,7 +337,7 @@ where
 
             Err(WebSocketSendError::Transport(error)) => {
                 error!(
-                    "{}: heartbeat send failed — connection dead: {}",
+                    "{}: heartbeat send failed: connection dead: {}",
                     self.rithmic_receiver_api.source, error
                 );
 
@@ -440,7 +440,7 @@ where
                         self.handle(Event::ConnectionLost {
                             id: "",
                             error: RithmicError::ConnectionFailed(
-                                "Failed to send pong — sink dead".to_string(),
+                                "Failed to send pong: sink dead".to_string(),
                             ),
                         })
                         .await
@@ -620,7 +620,7 @@ mod tests {
     }
 
     /// Create a real-but-dormant `WsReader` by establishing a local WebSocket
-    /// connection so the type is satisfied. The reader is never actually polled
+    /// connection so the type is satisfied. The reader is never polled
     /// in any of the tests below.
     async fn make_dormant_ws_reader() -> WsReader {
         use tokio::net::{TcpListener, TcpStream};
@@ -639,7 +639,7 @@ mod tests {
         let server_stream = MaybeTlsStream::Plain(server_tcp);
 
         // Build a raw WebSocket on the server side (no HTTP upgrade needed for
-        // our purposes — we only need the type, not actual messages).
+        // our purposes; we only need the type, not actual messages).
         let server_ws = WebSocketStream::from_raw_socket(server_stream, Role::Server, None).await;
 
         // Drop the client TCP so the server stream sits idle; split and return

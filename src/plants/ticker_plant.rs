@@ -683,8 +683,8 @@ impl RithmicTickerPlantHandle {
         };
 
         let _ = self.sender.send(command).await;
-        // Held rather than propagated here so that `Close` is queued either way —
-        // see `RithmicOrderPlantHandle::disconnect`.
+        // Held rather than propagated here so that `Close` is queued either way.
+        // See `RithmicOrderPlantHandle::disconnect`.
         let outcome = rx.await.map_err(|_| RithmicError::ConnectionClosed);
         let _ = self.sender.send(TickerPlantCommand::Close).await;
 

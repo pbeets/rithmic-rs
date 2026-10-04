@@ -536,7 +536,7 @@ impl PlantKind for OrderPlant {
     fn on_command(&mut self, command: OrderPlantCommand, cx: &mut Cx<'_, OrderTag>) {
         match command {
             OrderPlantCommand::AccountList { response_sender } => {
-                // Warn here too, not just at login: this is where the wider list
+                // Warn here too as well as at login: this is where the wider list
                 // comes back.
                 if self.login_scope.is_none() {
                     warn!("order_plant: no login info retained, listing accounts unscoped");
@@ -1194,13 +1194,13 @@ impl RithmicOrderPlantHandle {
         await_first_response(rx).await
     }
 
-    /// Place a bracket order — entry with linked profit target and stop loss.
+    /// Place a bracket order: entry with linked profit target and stop loss.
     ///
     /// Build the order with [`RithmicBracketOrder::build`], which validates it. This
     /// method does not re-validate: an order assembled without `build()` goes to the
     /// exchange as-is.
     ///
-    /// `Ok` means the request was sent, not that it was accepted — check `error` on
+    /// `Ok` means the request was sent, not that it was accepted. Check `error` on
     /// each response.
     ///
     /// ```no_run
@@ -1362,7 +1362,7 @@ impl RithmicOrderPlantHandle {
 
     /// Ask Rithmic to replay the account's open orders onto the update stream.
     ///
-    /// The returned `RithmicResponse` is only an acknowledgement —
+    /// The returned `RithmicResponse` is only an acknowledgement.
     /// `ResponseShowOrders` carries a response code and nothing else. Each open
     /// order arrives separately as a
     /// [`RithmicMessage::RithmicOrderNotification`] or
@@ -1425,7 +1425,7 @@ impl RithmicOrderPlantHandle {
     /// Get account RMS (Risk Management System) limits, one response per account.
     ///
     /// Template 304 names no account, so like [`get_account_list`](Self::get_account_list)
-    /// this covers every account the login reaches, not just this handle's.
+    /// this covers every account the login reaches, whichever handle logged in.
     pub async fn get_account_rms_info(&self) -> Result<Vec<RithmicResponse>, RithmicError> {
         let (tx, rx) = oneshot::channel::<Result<Vec<RithmicResponse>, RithmicError>>();
 
@@ -1642,7 +1642,7 @@ impl RithmicOrderPlantHandle {
     /// does not re-validate: an order assembled without `build()` goes to the
     /// exchange as-is.
     ///
-    /// `Ok` means the request was sent, not that it was accepted — check `error` on
+    /// `Ok` means the request was sent, not that it was accepted. Check `error` on
     /// each response.
     ///
     /// # Example
@@ -1731,7 +1731,7 @@ impl RithmicOrderPlantHandle {
     /// ```
     ///
     /// # Errors
-    /// * [`RithmicError::InvalidArgument`] if the group has fewer than two legs —
+    /// * [`RithmicError::InvalidArgument`] if the group has fewer than two legs.
     ///   [`RithmicOcoOrder::build`] does not check the count, this does. Also if
     ///   a leg's price type cannot be sent in an OCO request.
     /// * [`RithmicError::NoTradeRoute`] if no route covers a leg's exchange.
@@ -1793,7 +1793,7 @@ impl RithmicOrderPlantHandle {
         await_all_responses(rx).await
     }
 
-    /// Flatten a position — one instrument, or the whole account.
+    /// Flatten a position: one instrument, or the whole account.
     ///
     /// The command's symbol and exchange select one instrument; with neither
     /// set, every open position on the account is exited.
@@ -1985,7 +1985,7 @@ impl RithmicOrderPlantHandle {
     ///
     /// # Errors
     /// [`RithmicError::InvalidArgument`] when `max_record_count` is outside
-    /// 0..=10,000 — Rithmic rejects a cap above 10,000. Nothing is sent.
+    /// 0..=10,000. Rithmic rejects a cap above 10,000. Nothing is sent.
     pub async fn show_fill_history(
         &self,
         range: FillHistoryRange,

@@ -54,8 +54,8 @@ pub struct RithmicModifyOrder {
     pub price: Option<f64>,
     /// The order's type after the change. Defaults to `Limit`.
     pub price_type: OrderType,
-    /// Trigger price. Left unset, the four triggering price types — the stop and
-    /// if-touched pairs — send `price` in its place.
+    /// Trigger price. Left unset, the four triggering price types (the stop and
+    /// if-touched pairs) send `price` in its place.
     pub trigger_price: Option<f64>,
     /// Whether the modification was made by a human or automatically. Defaults
     /// to `Auto`.
@@ -64,7 +64,7 @@ pub struct RithmicModifyOrder {
     pub window_name: Option<String>,
     /// Ticks to trail behind the market price.
     ///
-    /// A bare distance, not a [`TrailingStop`](crate::TrailingStop) — a modify
+    /// A bare distance, not a [`TrailingStop`](crate::TrailingStop). A modify
     /// takes no price-id.
     pub trail_by_ticks: Option<i32>,
     /// Conditional trigger on the resulting order.
@@ -265,7 +265,7 @@ mod tests {
     }
 
     /// The table is `RithmicOrder::validate`'s, except that a triggering type
-    /// accepts `price` standing in for the trigger — a modify restates the
+    /// accepts `price` standing in for the trigger. A modify restates the
     /// order, and moving a stop by its price alone predates `trigger_price`.
     #[test]
     fn a_modify_requires_the_prices_its_type_needs() {

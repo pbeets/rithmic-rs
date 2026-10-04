@@ -319,7 +319,7 @@ explain what to do about them.
 
 | Flag | Default | What it adds |
 |---|---|---|
-| `serde` | off | `Serialize`/`Deserialize` on the config types, the trading and agreement enums, every order command and the history request types — enough to persist and replay a command |
+| `serde` | off | `Serialize`/`Deserialize` on the config types, the trading and agreement enums, every order command and the history request types, enough to persist and replay a command |
 
 The crate uses `native-tls` (via `tokio-tungstenite`) for all WebSocket
 connections. There is no `rustls` option.

@@ -1646,7 +1646,7 @@ mod tests {
     };
 
     // Prost keeps template_id's wire tag but drops the canonical mapping,
-    // which lives outside the .proto schema — this table supplies it. `multi`
+    // which lives outside the .proto schema, so this table supplies it. `multi`
     // is set exactly for the vendor protos that carry `rq_handler_rp_code`.
     macro_rules! inbound_templates {
         ($consumer:ident) => {
@@ -1970,13 +1970,13 @@ mod tests {
     #[test]
     fn frame_without_a_template_id_stays_an_error() {
         // prost decodes a missing proto2 `required` int32 as 0, so this must
-        // not be mistaken for a template we simply don't map.
+        // not be mistaken for a template we don't map.
         let api = RithmicReceiverApi {
             source: "order_plant".to_string(),
         };
 
         let mut framed = 2u32.to_be_bytes().to_vec();
-        framed.extend_from_slice(&[0x08, 0x01]); // field 1 — not in MessageType
+        framed.extend_from_slice(&[0x08, 0x01]); // field 1, not in MessageType
 
         let response = api
             .buf_to_message(Bytes::from(framed))
@@ -1998,10 +1998,10 @@ mod tests {
         template_id: i32,
         #[prost(string, repeated, tag = "132760")]
         user_msg: Vec<String>,
-        /// `ResponseLogin::template_version` — a string there, a varint here.
+        /// `ResponseLogin::template_version`: a string there, a varint here.
         #[prost(int32, optional, tag = "153634")]
         template_version: Option<i32>,
-        /// `LastTrade::symbol` — a string there, a varint here.
+        /// `LastTrade::symbol`: a string there, a varint here.
         #[prost(int32, optional, tag = "110100")]
         symbol: Option<i32>,
     }
@@ -2299,9 +2299,9 @@ mod tests {
             source: "test".to_string(),
         };
 
-        // Intermediate frame with a non-"0" rq_handler_rp_code — previously
-        // dropped by has_multiple's `[0] == "0"` gate, which would truncate
-        // legitimate multipart responses.
+        // Intermediate frame with a non-"0" rq_handler_rp_code. has_multiple's
+        // `[0] == "0"` gate used to drop it, truncating legitimate multipart
+        // responses.
         let intermediate = api
             .buf_to_message(encode_with_header(&ResponseSearchSymbols {
                 template_id: 110,

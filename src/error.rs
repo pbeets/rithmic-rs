@@ -54,10 +54,10 @@ impl std::error::Error for RithmicRequestError {}
 ///
 /// There are three outcomes to handle, not two:
 ///
-/// - `Ok(resp)` with `resp.error == None` — the request succeeded.
-/// - `Ok(resp)` with `resp.error == Some(..)` — the request reached the server
+/// - `Ok(resp)` with `resp.error == None`: the request succeeded.
+/// - `Ok(resp)` with `resp.error == Some(..)`: the request reached the server
 ///   and the server turned it down.
-/// - `Err(..)` — the request could not be completed: an argument was invalid,
+/// - `Err(..)`: the request could not be completed: an argument was invalid,
 ///   the connection dropped, or no response came back.
 ///
 /// The second case is the one that catches people out: a request the server
@@ -84,7 +84,7 @@ impl std::error::Error for RithmicRequestError {}
 ///     },
 ///     Err(RithmicError::ConnectionClosed | RithmicError::SendFailed) => {
 ///         handle.abort();
-///         // reconnect — see examples/reconnect.rs
+///         // reconnect, see examples/reconnect.rs
 ///     }
 ///     Err(e) => eprintln!("{e}"),
 /// }
@@ -315,7 +315,7 @@ mod tests {
     fn request_error_display_sanitizes_control_chars() {
         // A malicious or malformed server message must not leak newlines
         // (log-injection) or ANSI escapes (terminal-control) into `Display`.
-        // The sanitizer strips control characters — the ESC byte of an ANSI
+        // The sanitizer strips control characters. The ESC byte of an ANSI
         // sequence is removed, which breaks the escape and prevents terminal
         // interpretation (even though the printable `[31m` text remains).
         let err = RithmicRequestError {

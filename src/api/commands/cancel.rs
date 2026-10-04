@@ -111,7 +111,7 @@ impl RithmicCancelAllOrders {
         self
     }
 
-    /// Requires nothing — the command names no order.
+    /// Requires nothing, since the command names no order.
     pub fn build(self) -> Result<Self, RithmicError> {
         Ok(self)
     }

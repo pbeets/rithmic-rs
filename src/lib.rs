@@ -71,7 +71,7 @@
 //! The library provides three connection strategies:
 //!
 //! - [`ConnectStrategy::Simple`]: Single connection attempt, fast-fail
-//! - [`ConnectStrategy::Retry`]: Indefinite retries with linear backoff — 500 ms more per attempt, capped at 60s, jittered ±50% (recommended default)
+//! - [`ConnectStrategy::Retry`]: Indefinite retries with linear backoff: 500 ms more per attempt, capped at 60s, jittered ±50% (recommended default)
 //! - [`ConnectStrategy::AlternateWithRetry`]: Alternates between primary and beta URLs
 //!
 //! `Retry` and `AlternateWithRetry` keep trying until they connect. To bound
@@ -160,8 +160,8 @@
 //! Handle methods return [`Result<_, RithmicError>`], but `Ok` does not mean
 //! success. A request the server turned down still comes back as `Ok`, with the
 //! reason in `resp.error`. Code that checks only for `Err` will read it as
-//! having worked. `login` is the exception — a rejected login is an `Err` —
-//! and so is a `load_*` replay the server refuses to continue.
+//! having worked. `login` is the exception: a rejected login is an `Err`.
+//! So is a `load_*` replay the server refuses to continue.
 //!
 //! ```ignore
 //! use rithmic_rs::RithmicError;
@@ -173,7 +173,7 @@
 //!     },
 //!     Err(RithmicError::ConnectionClosed | RithmicError::SendFailed) => {
 //!         handle.abort();
-//!         // reconnect — see examples/reconnect.rs
+//!         // reconnect, see examples/reconnect.rs
 //!     }
 //!     Err(e) => eprintln!("{e}"),
 //! }
@@ -191,23 +191,23 @@
 //! [`RequestRejected`](RithmicError::RequestRejected) is the server saying no,
 //! with its code and message split out so you can branch on the code.
 //! [`ProtocolError`](RithmicError::ProtocolError) means the response arrived but
-//! would not decode — usually Rithmic's schema has moved ahead of this crate, so
+//! would not decode. Usually Rithmic's schema has moved ahead of this crate, so
 //! retrying will not help and it is worth filing.
 //!
 //! An `Err` means you never got an answer at all:
 //!
-//! - [`InvalidArgument`](RithmicError::InvalidArgument) — your arguments.
+//! - [`InvalidArgument`](RithmicError::InvalidArgument): your arguments.
 //!   Nothing was sent. Fix them and call again.
-//! - [`NoTradeRoute`](RithmicError::NoTradeRoute) — no route for the order's
+//! - [`NoTradeRoute`](RithmicError::NoTradeRoute): no route for the order's
 //!   exchange. Nothing was sent. Set the order's `trade_route`, or check the
 //!   exchange with `trade_route_for` before you trade.
-//! - [`SendFailed`](RithmicError::SendFailed) — the send failed. Only this
+//! - [`SendFailed`](RithmicError::SendFailed): the send failed. Only this
 //!   request fails and the plant is still up, but the connection is usually on
 //!   its way out; expect a `ConnectionError` to follow. Treat it as a
 //!   connection problem rather than retrying in a loop.
-//! - [`ConnectionClosed`](RithmicError::ConnectionClosed) — the plant is gone.
+//! - [`ConnectionClosed`](RithmicError::ConnectionClosed): the plant is gone.
 //!   Reconnect; calling again will not work.
-//! - [`LoginConflict`](RithmicError::LoginConflict) — `login` with a
+//! - [`LoginConflict`](RithmicError::LoginConflict): `login` with a
 //!   different `LoginConfig` from the plant's own login. Nothing was sent.
 //!   Disconnect and connect again to change it.
 //!
@@ -222,8 +222,8 @@
 //!
 //! ([`ConnectionFailed`](RithmicError::ConnectionFailed) comes from `connect()`
 //! rather than a handle method, and only under [`ConnectStrategy::Simple`] or
-//! once a [`retry_timeout`](RithmicConfigBuilder::retry_timeout) passes —
-//! without one, the retrying strategies keep trying instead of handing you an
+//! once a [`retry_timeout`](RithmicConfigBuilder::retry_timeout) passes.
+//! Without one, the retrying strategies keep trying instead of handing you an
 //! error.
 //! [`EmptyResponse`](RithmicError::EmptyResponse) is a defensive case you should
 //! not see.)
@@ -236,15 +236,15 @@
 //! | Message | What to do |
 //! |---|---|
 //! | `ConnectionError` | Reconnect. The plant is stopping or already stopped. |
-//! | `HeartbeatTimeout` | Reconnect — unless `error` holds a `RequestRejected`, which means the server rejected a heartbeat and the connection is fine. |
+//! | `HeartbeatTimeout` | Reconnect, unless `error` holds a `RequestRejected`, which means the server rejected a heartbeat and the connection is fine. |
 //! | `ForcedLogout` | The server ended your session. A `ConnectionError` follows, so expect two events. |
 //! | `UnknownTemplate` | Nothing, unless you want to. A template this crate has no mapping for, raw payload attached. Not an error. |
 //! | `Unknown` | A frame that would not decode. Log it and carry on. |
 //!
 //! [`RithmicError::is_connection_issue`] is the shortcut: true means reconnect,
 //! false means the connection is fine and something about the data or the
-//! request was not. Do not reconnect on `ProtocolError` or `RequestRejected` —
-//! neither says anything about connection health, and you will only churn.
+//! request was not. Do not reconnect on `ProtocolError` or `RequestRejected`.
+//! Neither says anything about connection health, and you will only churn.
 //!
 //! This is a broadcast channel, so anything sent while you hold no receiver is
 //! gone. Keep it for as long as the plant lives.
@@ -279,7 +279,7 @@
 //! connection-health event and every pending call fails with `ConnectionClosed`.
 //!
 //! Bad data never does. An undecodable frame, an unmapped template, a rejected
-//! request — the plant keeps running and your other in-flight requests are
+//! request: the plant keeps running and your other in-flight requests are
 //! untouched. A decode failure usually comes back from the call it belongs to,
 //! and arrives as `Unknown` when the frame names no request. A frame too
 //! damaged to carry a template id at all is logged and dropped.

@@ -63,8 +63,8 @@ pub(crate) enum LoginUserType {
 // Each request proto declares its own `UserType`. List every one here so no request is
 // left hardcoding a user type the login never granted.
 //
-// Mapped by name, not by cast — the numbers agree today, but a cast would keep sending
-// the old one if a proto were renumbered.
+// Mapped by name, not by cast. The numbers agree today, but a cast would keep
+// sending the old one if a proto were renumbered.
 macro_rules! login_user_type_accessors {
     ($($accessor:ident => $request:ty),+ $(,)?) => {
         impl LoginUserType {
@@ -841,7 +841,7 @@ impl RithmicSenderApi {
             account_id: Some(account.account_id.clone()),
             request: Some(action.into()),
             // Off the wire keeps the pre-5.42 behavior: the subscription
-            // streams every PnL update, not just RMS-driven ones.
+            // streams every PnL update, including those not driven by RMS.
             rms_updates_only: None,
             user_msg: vec![id.clone()],
         };
@@ -2225,7 +2225,7 @@ mod tests {
             ]
         );
         // Leg 0 does not trail, so its three slots are filled rather than
-        // skipped — a shorter vector would move legs 1 and 2's distances onto
+        // skipped: a shorter vector would move legs 1 and 2's distances onto
         // the wrong legs.
         assert_eq!(request.trailing_stop, vec![false, true, true]);
         assert_eq!(request.trail_by_ticks, vec![0, 15, 25]);
@@ -2288,8 +2288,8 @@ mod tests {
     }
 
     /// The fallback covers the same four types `RithmicOrder::validate` demands
-    /// a trigger for, not just the two stop types — `RequestModifyOrder`
-    /// declares the two if-touched price types as well.
+    /// a trigger for: the two stop types and, since `RequestModifyOrder`
+    /// declares them, the two if-touched price types.
     #[test]
     fn modify_order_falls_back_to_the_price_for_every_triggering_type() {
         let mut api = RithmicSenderApi::new(&test_config());
@@ -2563,8 +2563,8 @@ mod tests {
         }
     }
 
-    /// Every field is asserted, not just `level`: the builder now names them all
-    /// outright rather than leaning on `Default`.
+    /// Every field is asserted, including `level`: the builder names them all
+    /// outright instead of leaning on `Default`.
     #[test]
     fn update_target_bracket_level_carries_requested_level() {
         let mut api = RithmicSenderApi::new(&test_config());
@@ -2612,7 +2612,7 @@ mod tests {
     }
 
     /// `level` is proto2 `optional`, so a decoded `None` proves the field never
-    /// reached the wire — an explicit zero comes back as `Some(0)`.
+    /// reached the wire; an explicit zero comes back as `Some(0)`.
     #[test]
     fn bracket_level_requests_omit_level_when_unset() {
         let mut api = RithmicSenderApi::new(&test_config());
@@ -3078,7 +3078,7 @@ mod tests {
         }
     }
 
-    /// With neither symbol nor exchange, both fields stay off the wire — the
+    /// With neither symbol nor exchange, both fields stay off the wire. The
     /// absent pair is how template 3504 spells "flatten the whole account".
     #[test]
     fn exit_position_request_omits_the_instrument_for_an_account_wide_exit() {
@@ -3259,7 +3259,7 @@ mod tests {
     }
 
     /// A trigger that skipped `build()` and never set a price must omit
-    /// `if_touched_price` from the wire — sent as `0.0`, the default
+    /// `if_touched_price` from the wire. Sent as `0.0`, the default
     /// `GreaterThanEqualTo`/`TradePrice` condition would release the order
     /// immediately.
     #[test]

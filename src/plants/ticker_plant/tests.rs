@@ -126,7 +126,7 @@ async fn disconnect_sends_close_even_when_logout_fails() {
     ));
 }
 
-/// A caller that gives up on `login()` — say under `tokio::time::timeout` —
+/// A caller that gives up on `login()` (say under `tokio::time::timeout`)
 /// once the request is on the wire must still leave a session that heartbeats:
 /// the actor learns it is logged in from the reply itself.
 #[tokio::test]
