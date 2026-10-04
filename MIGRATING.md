@@ -5,7 +5,7 @@ setters instead of struct literals, the generated protobuf enums are replaced by
 crate-owned ones, and every order call takes a command struct.
 
 Most of the work is mechanical and the compiler finds it. Work through the
-sections in order — section 1 resolves the majority of the errors.
+sections in order. Section 1 resolves most of the errors.
 
 Section 10 lists what the compiler will *not* find: six changes that compile
 untouched and alter what reaches the exchange. Read that one even if everything
@@ -49,7 +49,7 @@ order.symbol = "ESZ6".into();
 `build()` is the opt-in strict path. Commands carrying an instrument need a symbol,
 an exchange and a positive quantity; commands naming an existing order need its
 basket id; and every price type needs the prices it uses. The handles send what
-they are given, so a command assembled by field access skips those checks — call
+they are given, so a command assembled by field access skips those checks. Call
 `validate()` yourself if you want them.
 
 `TrailingStop` and `RithmicIfTouchedTrigger` are built the same way, though they
@@ -104,7 +104,7 @@ things do not:
 - **`OrderType` has six variants where `OcoPriceType` had four**, adding
   `MarketIfTouched` and `LimitIfTouched`.
 
-The prost-specific surface does not carry over either — `as i32`, `try_from`,
+The prost-specific surface does not carry over either: `as i32`, `try_from`,
 `from_str_name` and the derived `Ord`/`PartialOrd`. `as_str_name` is still
 available.
 
@@ -113,7 +113,7 @@ available.
 Seven names change, covering ten methods (`list_system_info` exists on all four
 plants). Each method is now named after the request it sends. Signatures are
 unchanged except `adjust_target`, which also swaps `(id, ticks)` for a command
-struct — see section 6.
+struct (see section 6).
 
 | old | new | handle |
 |---|---|---|
@@ -126,7 +126,7 @@ struct — see section 6.
 | `adjust_profit` | `adjust_target` | order |
 
 `list_exchange_permissions` already existed on the order plant; the ticker method
-was renamed to match, and both remain — two plants' handles onto the same request.
+was renamed to match, and both remain, as two plants' handles onto the same request.
 `subscribe_order_book_summary`/`unsubscribe_order_book_summary` is a different
 request pair and is unchanged. `RithmicSenderApi::request_depth_by_order_snapshot`
 keeps its name, since every sender-api method is `request_*`.
@@ -135,7 +135,7 @@ keeps its name, since every sender-api method is `request_*`.
 
 `price` on `RithmicOrder`, `RithmicOcoOrderLeg` and `RithmicModifyOrder` is now
 `Option<f64>`. Wrap existing values in `Some(..)`, and pass `None` for market
-orders — those previously went out priced at `0.0`.
+orders. Those previously went out priced at `0.0`.
 
 An unset price is now left out of the request entirely. It can no longer reach the
 wire as `0.0` or stand in as a `0.0` trigger.
@@ -145,16 +145,16 @@ price when only the quantity is changing.
 
 ## 5. `RithmicAdvancedBracketOrder` is gone
 
-`RithmicBracketOrder` now carries every venue-native field the advanced type did —
+`RithmicBracketOrder` now carries every venue-native field the advanced type did:
 trailing stops, break-even, timed release and cancel, if-touched entry. Call
 `place_bracket_order` instead of the removed `place_advanced_bracket_order`.
 
-Which fields you rename depends on which type you were using — 2.0.0 had both, and
+Which fields you rename depends on which type you were using. 2.0.0 had both, and
 they did not agree.
 
 **Coming from the plain `RithmicBracketOrder`:** the tick fields change name *and*
 type. `profit_ticks: i32` becomes `target_ticks: Vec<i32>`, and `stop_ticks: i32`
-becomes `stop_ticks: Vec<i32>` — same name, new type. Reads need an index:
+becomes `stop_ticks: Vec<i32>`: same name, new type. Reads need an index:
 `bracket.stop_ticks[0]` where you had `bracket.stop_ticks`.
 
 **Coming from `RithmicAdvancedBracketOrder`:** `target_quantity`, `target_ticks`,
@@ -166,7 +166,7 @@ Either way:
 - The single-value **setters** are renamed: `.profit_ticks(n)` is now `.target(n)`,
   `.stop_ticks(n)` is now `.stop(n)`.
 - `.target(n)`/`.stop(n)` size their leg from the entry quantity at the moment
-  they are called, so call `.quantity()` first — otherwise `build()` rejects the
+  they are called, so call `.quantity()` first, or `build()` rejects the
   zero-sized leg. The plural `.targets(..)`/`.stops(..)` take explicit
   `(quantity, ticks)` pairs and can be called in any order.
 - `bracket_type` is now `Option<BracketType>`. Left unset, `build()` derives it
@@ -186,7 +186,7 @@ other order call.
 
 Origination is a field on the command rather than a handle argument, set with
 `.manual_or_auto(..)`. It defaults to `ManualOrAutoEntry::Auto` on every command
-type — set it explicitly on all of them or none, or one session will report two
+type. Set it explicitly on all of them or none, or one session will report two
 different originators.
 
 `adjust_target`/`adjust_stop` take a `RithmicBracketLevelAdjustment` instead of
@@ -241,12 +241,12 @@ automatically, but for large time bar windows, check the last bar reaches the
 end of the window; the README's History Plant section shows how.
 
 ```rust
-// Before — first 10,000 bars, silently
+// Before: first 10,000 bars, silently
 let bars = handle
     .load_time_bars(symbol, exchange, BarType::MinuteBar, 5, start, end)
     .await?;
 
-// After — the whole window
+// After: the whole window
 let bars = handle
     .load_time_bars_all(symbol, exchange, TimeBarType::MinuteBar, 5, start, end)
     .await?;
@@ -260,7 +260,7 @@ The `load_*` methods also validate now. An empty symbol or exchange, a
 `bar_length` or `bar_type_period` below 1, a non-positive timestamp, or an
 `end_time_sec` before `start_time_sec` returns `RithmicError::InvalidArgument`
 without a round trip. Only a zero `bar_length` was caught before, so a call that
-appeared to work and came back empty may now surface as an error — which is the
+appeared to work and came back empty may now surface as an error, which is the
 point.
 
 ## 8. Build `RithmicConfig` through the builder
@@ -303,7 +303,7 @@ These compile as-is but change what goes on the wire or what the server records.
   because the field is no longer sent as `""`.
 - **An unrecognized `template_id` is no longer a decode failure.** It arrives as
   `RithmicMessage::UnknownTemplate` with the body intact. Code matching
-  `RithmicMessage::Unknown` still compiles but no longer sees these frames —
+  `RithmicMessage::Unknown` still compiles but no longer sees these frames.
   `Unknown` now means only that a frame failed to decode.
 - **Reconnect delays are jittered** by a clock-derived factor in `[0.5, 1.5)`, applied
   after the cap, so plants that lost the same connection no longer retry in
@@ -313,7 +313,7 @@ These compile as-is but change what goes on the wire or what the server records.
 
 The bundled protos track R | Protocol API 0.89.0.0 (template version 5.42).
 
-`RithmicMessage::AccountListUpdates` is removed — Rithmic dropped
+`RithmicMessage::AccountListUpdates` is removed. Rithmic dropped
 `account_list_updates.proto` (template 354) from the pool and its release notes
 point to the account RMS updates stream instead. Subscribe with
 `subscribe_account_rms_updates` and match `RithmicMessage::AccountRmsUpdates`.
@@ -336,6 +336,6 @@ generated `UpdateType`/`AccessType` enums no longer exist.
 - [ ] Add a `_` arm to matches on generated enums
 - [ ] Handle `RithmicError::NoTradeRoute`
 - [ ] Re-check account lists if you rely on `get_account_list` returning everything
-- [ ] Decide whether `cancel_all_orders` should stay `Manual` — it is now `Auto`
+- [ ] Decide whether `cancel_all_orders` should stay `Manual` (it is now `Auto`)
 - [ ] Check target-only brackets: they now send `TARGET_ONLY_STATIC`
 - [ ] Confirm a trade route exists for every exchange you trade

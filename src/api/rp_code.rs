@@ -12,7 +12,7 @@ use crate::{
 pub(crate) enum RpCodeClassification {
     /// Request succeeded: rp_code is empty or starts with `"0"`.
     Success,
-    /// Benign empty result — currently only `["7", "no data"]` (case-insensitive).
+    /// Benign empty result. Currently only `["7", "no data"]` (case-insensitive).
     KnownBenignEmpty,
     /// Protocol-level rejection (rp_code reports a non-zero failure code).
     RequestRejected(RithmicRequestError),
@@ -128,7 +128,7 @@ pub(crate) fn response_rp_code_slice(message: &RithmicMessage) -> Option<&[Strin
 
 // Single extension point for benign `rp_code` normalizations. Any new mapping
 // MUST match exactly on both code AND message and ship with a captured-fixture
-// decode test — e.g. `["7", "an error occurred while parsing data."]` shares
+// decode test. E.g. `["7", "an error occurred while parsing data."]` shares
 // code "7" but is a real error.
 pub(crate) fn classify_rp_code(rp_code: &[String]) -> RpCodeClassification {
     // `rp_code[0] == "0"` is success. Empty counts as success too: the data
@@ -325,8 +325,8 @@ mod tests {
     fn classify_rp_code_seven_parse_error_is_request_rejected_not_benign_empty() {
         // Captured evidence: ResponseOrderSessionConfig can return
         // rp_code = ["7", "an error occurred while parsing data."]. This shares
-        // the benign-empty code ("7") but is NOT a no-data marker — the
-        // classifier must match exactly on message, not just code.
+        // the benign-empty code ("7") but is NOT a no-data marker. The
+        // classifier must match on both message and code.
         let rp_code = vec![
             "7".to_string(),
             "an error occurred while parsing data.".to_string(),
@@ -431,7 +431,7 @@ mod tests {
         assert_eq!(rp_code, &["5".to_string(), "permission denied".to_string()]);
     }
 
-    // Symmetric with the `define_response_rp_code_info` expansion — driven off
+    // Symmetric with the `define_response_rp_code_info` expansion, driven off
     // the same `rp_code_response_variants!` list, so removing a variant from
     // the macro without updating this test is a compile error, and any listed
     // variant whose inner proto lacks the expected shape fails the assertion.

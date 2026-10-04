@@ -302,7 +302,7 @@ impl<K: PlantKind> PlantCore<K> {
     fn on_send_timed_out(&mut self, request_id: &str) {
         self.emit_connection_health_event(
             request_id,
-            RithmicError::ConnectionFailed("WebSocket send timed out — sink poisoned".to_string()),
+            RithmicError::ConnectionFailed("WebSocket send timed out: sink poisoned".to_string()),
         );
 
         if matches!(self.session, Session::Preparing { .. }) {
@@ -490,7 +490,7 @@ impl<K: PlantKind> PlantCore<K> {
     /// lifecycle event follows it, since stopping the loop means no later
     /// path emits one.
     fn on_forced_logout(&mut self) {
-        error!("{}: server sent a forced logout — stopping", K::SOURCE);
+        error!("{}: server sent a forced logout, stopping", K::SOURCE);
         // Drain first: the loop is about to stop, so nothing else will resolve
         // these. Draining also closes the session.
         self.drain_requests();
@@ -523,7 +523,7 @@ impl<K: PlantKind> PlantCore<K> {
     fn on_ping_timeout(&mut self) {
         if self.close_requested() {
             warn!(
-                "{}: ping timed out while waiting for server close echo — terminating",
+                "{}: ping timed out while waiting for server close echo, terminating",
                 K::SOURCE
             );
             self.drain_requests();

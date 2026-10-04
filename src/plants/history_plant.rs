@@ -194,15 +194,15 @@ pub(crate) enum ReplayQuery {
 /// # Runnable examples
 ///
 /// - [`load_historical_ticks.rs`](https://github.com/pbeets/rithmic-rs/blob/main/examples/load_historical_ticks.rs)
-///   — load a window of trades
+///   Load a window of trades.
 /// - [`backfill.rs`](https://github.com/pbeets/rithmic-rs/blob/main/examples/backfill.rs)
-///   — backfill large windows and check you got all of them
+///   Backfill large windows and check you got all of them.
 /// - [`load_historical_bars.rs`](https://github.com/pbeets/rithmic-rs/blob/main/examples/load_historical_bars.rs)
-///   — load five-minute bars
+///   Load five-minute bars.
 /// - [`reconnect.rs`](https://github.com/pbeets/rithmic-rs/blob/main/examples/reconnect.rs)
-///   — surviving a dropped connection
+///   Survive a dropped connection.
 /// - [`.env.blank`](https://github.com/pbeets/rithmic-rs/blob/main/examples/.env.blank)
-///   — the credentials the examples expect
+///   The credentials the examples expect.
 #[derive(Debug)]
 pub struct RithmicHistoryPlant {
     pub(crate) connection_handle: JoinHandle<()>,
@@ -541,8 +541,8 @@ impl RithmicHistoryPlantHandle {
         };
 
         let _ = self.sender.send(command).await;
-        // Held rather than propagated here so that `Close` is queued either way —
-        // see `RithmicOrderPlantHandle::disconnect`.
+        // Held rather than propagated here so that `Close` is queued either way.
+        // See `RithmicOrderPlantHandle::disconnect`.
         let outcome = rx.await.map_err(|_| RithmicError::ConnectionClosed);
         let _ = self.sender.send(HistoryPlantCommand::Close).await;
 
@@ -569,8 +569,8 @@ impl RithmicHistoryPlantHandle {
 
     /// Load individual trades for a symbol over a time window.
     ///
-    /// Each response is one trade. This returns **at most 10,000 trades** — the
-    /// limit Rithmic puts on a single replay — and gives no sign when it has cut
+    /// Each response is one trade. This returns **at most 10,000 trades**, the
+    /// limit Rithmic puts on a single replay, and gives no sign when it has cut
     /// the result short. For a window that may hold more, use
     /// [`load_ticks_all`](Self::load_ticks_all).
     ///
@@ -712,7 +712,7 @@ impl RithmicHistoryPlantHandle {
     ///
     /// # How it works
     ///
-    /// A normal replay stops at 10,000 records and does not say so — the closing
+    /// A normal replay stops at 10,000 records and does not say so. The closing
     /// response looks the same whether it was cut short or not. Setting Rithmic's
     /// `resume_bars` flag on the request lifts that limit, and the server sends
     /// the rest on the same request. There is no paging and no second call.
@@ -741,7 +741,7 @@ impl RithmicHistoryPlantHandle {
     ///
     /// The whole window is collected in memory before it returns. A full 23-hour
     /// ES session runs to hundreds of thousands of records, so ask for the window
-    /// you actually need rather than a day at a time.
+    /// you need rather than a day at a time.
     ///
     /// The first record's open time carries the same quirk described on
     /// [`load_ticks`](Self::load_ticks).
@@ -883,7 +883,7 @@ impl RithmicHistoryPlantHandle {
 
     /// Load bars covering a fixed span of time each.
     ///
-    /// `bar_type` picks the unit — second, minute, day or week — and
+    /// `bar_type` picks the unit (second, minute, day or week) and
     /// `bar_type_period` how many of them per bar. `MinuteBar` with a period of
     /// 5 gives five-minute bars.
     ///
@@ -1011,7 +1011,7 @@ impl RithmicHistoryPlantHandle {
     /// Load minute bars that break volume down by price.
     ///
     /// Each bar reports how much traded at each price during that minute, rather
-    /// than a single volume figure — useful for building a volume profile. Build
+    /// than a single volume figure. This is useful for building a volume profile. Build
     /// the `request` with [`VolumeProfileMinuteBarsRequest`].
     ///
     /// # Returns

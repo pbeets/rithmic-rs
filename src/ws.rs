@@ -138,7 +138,7 @@ async fn connect(url: &str) -> Result<WebSocketStream<MaybeTlsStream<TcpStream>>
 }
 
 /// Scale a delay by a factor in [0.5, 1.5), seeded from the clock's
-/// sub-second nanos — enough spread to break reconnect lockstep without
+/// sub-second nanos. That is enough spread to break reconnect lockstep without
 /// pulling in a rand dependency.
 fn jittered(ms: u64) -> u64 {
     let nanos = std::time::SystemTime::now()

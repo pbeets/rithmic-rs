@@ -801,7 +801,7 @@ mod tests {
     //
     // Observed 2026-09-12 on RequestVolumeProfileMinuteBars (template 208): the
     // history plant sent thousands of parts, then a dataless end marker, then
-    // ~170 more parts for the same request id, then — 70-85s later — a final
+    // ~170 more parts for the same request id, then, 70-85s later, a final
     // response with rp_code ["12", "output inhibited"].
     // =========================================================================
 
@@ -918,8 +918,8 @@ mod tests {
     // Edge cases
     // =========================================================================
 
-    /// The caller gave up mid-reply — its own deadline elapsed and it dropped
-    /// its receiver — while the server is still streaming. The next part frees
+    /// The caller gave up mid-reply (its own deadline elapsed and it dropped
+    /// its receiver) while the server is still streaming. The next part frees
     /// the responder and the parts held for nobody, says so once, and the rest
     /// of the reply is counted as a late continuation like any other.
     #[test]
@@ -964,7 +964,7 @@ mod tests {
 
     /// The caller gave up and the very next frame is the terminal: the
     /// reply has nowhere to go, and that is said in one line with the frame
-    /// count and the server's code — never as a dump of every frame.
+    /// count and the server's code, never as a dump of every frame.
     #[test]
     fn a_reply_for_a_caller_that_stopped_waiting_is_one_line_not_a_dump() {
         let mut handler = RithmicRequestHandler::<Tag>::new();
@@ -1035,7 +1035,7 @@ mod tests {
     /// the caller is waiting: the caller keeps waiting, the parts stay, the
     /// plant is told to resume with the key, the acknowledgement is consumed,
     /// the continuation joins the parts, and the server's real end marker
-    /// resolves the whole reply — without the notice in it.
+    /// resolves the whole reply, without the notice in it.
     #[test]
     fn a_truncation_notice_keeps_the_caller_waiting_and_asks_to_resume() {
         let mut handler = RithmicRequestHandler::<Tag>::new();

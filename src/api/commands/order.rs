@@ -276,7 +276,7 @@ impl RithmicOrder {
     /// `StopMarket`, `StopLimit`, `MarketIfTouched` and `LimitIfTouched` need
     /// [`Self::trigger_price`]. `Market` needs neither. An embedded
     /// [`TrailingStop`] or [`RithmicIfTouchedTrigger`] is deliberately not
-    /// re-validated — `build()` on those types is the opt-in strict path.
+    /// re-validated; `build()` on those types is the opt-in strict path.
     pub fn validate(&self) -> Result<(), RithmicError> {
         validate_instrument(&self.symbol, &self.exchange, self.quantity)?;
 

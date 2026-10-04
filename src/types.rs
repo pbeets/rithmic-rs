@@ -163,14 +163,14 @@ impl From<OrderSide> for request_oco_order::TransactionType {
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[non_exhaustive]
 pub enum OrderType {
-    /// Market order — executes immediately at the best available price.
+    /// Market order: executes immediately at the best available price.
     Market,
-    /// Limit order — executes at the specified price or better.
+    /// Limit order: executes at the specified price or better.
     #[default]
     Limit,
-    /// Stop market order — becomes a market order when the stop price is reached.
+    /// Stop market order: becomes a market order when the stop price is reached.
     StopMarket,
-    /// Stop limit order — becomes a limit order when the stop price is reached.
+    /// Stop limit order: becomes a limit order when the stop price is reached.
     StopLimit,
     /// Market order released when the trigger price is touched.
     MarketIfTouched,
@@ -307,9 +307,9 @@ pub enum TimeInForce {
     Day,
     /// Good till cancelled.
     Gtc,
-    /// Immediate or cancel — fill what you can, cancel the rest.
+    /// Immediate or cancel: fill what you can, cancel the rest.
     Ioc,
-    /// Fill or kill — fill the entire order or cancel it.
+    /// Fill or kill: fill the entire order or cancel it.
     Fok,
 }
 
@@ -547,13 +547,13 @@ impl From<BracketType> for request_bracket_order::BracketType {
 /// The `order_operation_type` of a bracket order, added in template
 /// version 5.37: which event on one order of the bracket cancels the rest.
 ///
-/// Rithmic documents only the wire spellings — "AFOCCA, FOCCA, CCA, FCA or
+/// Rithmic documents only the wire spellings: "AFOCCA, FOCCA, CCA, FCA or
 /// OCA". The reading on each variant is async_rithmic's annotation of the
 /// same field, not Rithmic's own words; Rithmic's C++ SDK declares the same
 /// constants without comment.
 ///
 /// Leave [`RithmicBracketOrder::operation_type`] unset unless a specific
-/// grouping is wanted — the server then applies its default, and
+/// grouping is wanted. The server then applies its default, and
 /// async_rithmic reverted sending `OCA` on every bracket after it broke
 /// bracket orders.
 ///
@@ -562,15 +562,15 @@ impl From<BracketType> for request_bracket_order::BracketType {
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[non_exhaustive]
 pub enum BracketOperationType {
-    /// Sent as `AFOCCA` — read as "all fill or cancel cancels all".
+    /// Sent as `AFOCCA`, read as "all fill or cancel cancels all".
     Afocca,
-    /// Sent as `FOCCA` — read as "fill or cancel cancels all".
+    /// Sent as `FOCCA`, read as "fill or cancel cancels all".
     Focca,
-    /// Sent as `CCA` — read as "cancel cancels all".
+    /// Sent as `CCA`, read as "cancel cancels all".
     Cca,
-    /// Sent as `FCA` — read as "fill cancels all".
+    /// Sent as `FCA`, read as "fill cancels all".
     Fca,
-    /// Sent as `OCA` — read as "one cancels all", the classic OCO grouping.
+    /// Sent as `OCA`, read as "one cancels all", the classic OCO grouping.
     /// The one value Rithmic's C++ SDK declares no constant for.
     Oca,
 }
@@ -888,7 +888,7 @@ fn validate_replay_window(
 /// A tick bar replay request, passed to [`load_tick_bar_replay`].
 ///
 /// A tick bar groups a fixed number of trades. [`bar_length`](Self::bar_length)
-/// of 1 gives one bar per trade — the raw tape.
+/// of 1 gives one bar per trade (the raw tape).
 ///
 /// # Example
 ///

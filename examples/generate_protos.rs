@@ -2,7 +2,7 @@
 //! Run via: `cargo run --example generate_protos && cargo fmt`
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let manifest_dir = std::path::PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").map_err(
-        |_| "CARGO_MANIFEST_DIR not set — run this via `cargo run --example generate_protos`",
+        |_| "CARGO_MANIFEST_DIR not set: run this via `cargo run --example generate_protos`",
     )?);
     let src_dir = manifest_dir.join("src");
     let proto_dir = src_dir.join("raw-proto");
@@ -54,7 +54,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Some Rithmic comments contain tabs, which prost copies into doc comments
     // and clippy rejects. Strip them here so a proto refresh cannot break the
-    // build. Code is untouched — prost indents with spaces.
+    // build. Code is untouched; prost indents with spaces.
     let mut detabbed = String::with_capacity(combined.len());
 
     for line in combined.lines() {
@@ -71,6 +71,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     std::fs::write(&pool_path, detabbed)?;
 
-    println!("Generated src/rti.rs — run `cargo fmt` to format it.");
+    println!("Generated src/rti.rs. Run `cargo fmt` to format it.");
     Ok(())
 }

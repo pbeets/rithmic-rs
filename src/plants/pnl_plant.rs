@@ -407,7 +407,7 @@ impl RithmicPnlPlantHandle {
 
     /// Log out and close the connection.
     ///
-    /// This closes the plant for every handle and account, not just this one.
+    /// This closes the plant for every handle and account.
     /// It waits for the logout reply, then closes the WebSocket whether or not
     /// the logout succeeded. Requests still waiting, and anything sent later
     /// from any handle, fail with [`RithmicError::ConnectionClosed`].
@@ -423,8 +423,8 @@ impl RithmicPnlPlantHandle {
         };
 
         let _ = self.sender.send(command).await;
-        // Held rather than propagated here so that `Close` is queued either way —
-        // see `RithmicOrderPlantHandle::disconnect`.
+        // Held rather than propagated here so that `Close` is queued either way.
+        // See `RithmicOrderPlantHandle::disconnect`.
         let outcome = rx.await.map_err(|_| RithmicError::ConnectionClosed);
         let _ = self.sender.send(PnlPlantCommand::Close).await;
 
