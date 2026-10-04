@@ -191,8 +191,8 @@
 //! [`RequestRejected`](RithmicError::RequestRejected) is the server saying no,
 //! with its code and message split out so you can branch on the code.
 //! [`ProtocolError`](RithmicError::ProtocolError) means the response arrived but
-//! would not decode. Usually Rithmic's schema has moved ahead of this crate, so
-//! retrying will not help and it is worth filing.
+//! would not decode. Usually Rithmic's schema has moved ahead of this crate.
+//! Retrying will not help, so file an issue.
 //!
 //! An `Err` means you never got an answer at all:
 //!
@@ -339,7 +339,7 @@ mod request_handler;
 /// Rithmic protocol message definitions (protobuf-generated).
 ///
 /// This module contains the protocol buffer message types used by the Rithmic API.
-/// The main type you'll interact with is [`rti::messages::RithmicMessage`], an enum
+/// The main type is [`rti::messages::RithmicMessage`], an enum
 /// covering all message types including market data, order notifications, and
 /// connection health events.
 #[allow(missing_docs)]

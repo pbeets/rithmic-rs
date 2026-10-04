@@ -222,7 +222,7 @@ pub(crate) async fn assert_wire_wrote(client: &mut TcpStream, expectation: &str)
 }
 
 /// Reads one frame the plant wrote and returns the protobuf inside it, so a test can
-/// assert on the request itself rather than just on bytes having moved.
+/// assert on the request itself.
 pub(crate) async fn read_wire_request(client: &mut TcpStream) -> Vec<u8> {
     let mut header = [0u8; 2];
 

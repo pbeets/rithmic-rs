@@ -20,7 +20,7 @@ use crate::{
 pub use crate::rti::request_time_bar_replay::BarType as TimeBarType;
 
 /// Market data usage capacity reported when accepting or self-certifying an agreement.
-/// Choose the capacity applicable to the user; there is no default.
+/// Pick the one that applies to the user. There is no default.
 ///
 /// Parses from `"professional"` or `"non-professional"`, in any case.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
