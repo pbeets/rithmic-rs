@@ -294,16 +294,14 @@
 //!
 //! | Flag | Default | Description |
 //! |------|---------|-------------|
-//! | `serde` | off | Adds `Serialize`/`Deserialize` derives on the config types (`RithmicEnv`, `RithmicAccount`), the trading enums (`OrderSide`, `OrderType`, `TimeInForce`, `ManualOrAutoEntry`, `OrderCondition`, `OrderPriceField`, `BracketType`, `BracketOperationType`, `FillHistoryRange`, `EasyToBorrowRequest`, `RmsUpdateBits`, `OrderStatus`), every order command type (`RithmicOrder`, `RithmicBracketOrder`, `RithmicOcoOrder` and its legs, `RithmicModifyOrder`, the cancel/exit/link/retag/adjustment commands), the triggers (`TrailingStop`, `RithmicIfTouchedTrigger`) and the history request types (`VolumeProfileMinuteBarsRequest`, `TickBarReplayRequest`) |
+//! | `serde` | off | Adds `Serialize`/`Deserialize` derives on the config types (`RithmicEnv`, `RithmicAccount`), the trading enums (`OrderSide`, `OrderType`, `TimeInForce`, `ManualOrAutoEntry`, `OrderCondition`, `OrderPriceField`, `BracketType`, `BracketOperationType`, `FillHistoryRange`, `EasyToBorrowRequest`, `RmsUpdateBits`, `MarketDataUsageCapacity`, `OrderStatus`), every order command type (`RithmicOrder`, `RithmicBracketOrder`, `RithmicOcoOrder` and its legs, `RithmicModifyOrder`, the cancel/exit/link/retag/adjustment commands), the triggers (`TrailingStop`, `RithmicIfTouchedTrigger`) and the history request types (`VolumeProfileMinuteBarsRequest`, `TickBarReplayRequest`) |
 //!
 //! **TLS backend:** The crate uses `native-tls` (via `tokio-tungstenite`) for all
 //! WebSocket connections. There is currently no `rustls` option.
 //!
-//! The `serde` feature also covers [`MarketDataUsageCapacity`] for agreement requests.
-//!
 //! ## Module Organization
 //!
-//! - [`plants`]: Specialized clients for ticker, order, P&L, history and agreements
+//! - [`plants`]: Specialized clients for different data types (ticker, order, P&L, history, repository)
 //! - [`config`]: Configuration API for connecting to Rithmic
 //! - [`error`]: Typed error enum for plant handle methods
 //! - [`api`]: Order command types, [`LoginConfig`] and [`RithmicResponse`], the wrapper every message arrives in
@@ -329,7 +327,7 @@ mod ping_manager;
 /// - [`order_plant`](plants::order_plant): Order entry and management
 /// - [`history_plant`](plants::history_plant): Historical tick and bar data
 /// - [`pnl_plant`](plants::pnl_plant): Position and P&L tracking
-/// - [`repository_plant`](plants::repository_plant): Optional first-use agreement signing
+/// - [`repository_plant`](plants::repository_plant): Optional first-use agreements
 ///
 /// Plants run as independent async tasks using the actor pattern, communicating
 /// via tokio channels. This allows running multiple plants concurrently and
@@ -384,9 +382,9 @@ pub use plants::{
 pub use types::{
     BracketOperationType, BracketType, EasyToBorrowRequest, FillHistoryRange, ManualOrAutoEntry,
     MarketDataUsageCapacity, OrderCondition, OrderPriceField, OrderSide, OrderType,
-    ParseOrderSideError, ParseOrderTypeError, ParseTimeInForceError, RmsUpdateBits,
-    TickBarReplayRequest, TimeBarReplayRequest, TimeBarType, TimeInForce,
-    VolumeProfileMinuteBarsRequest,
+    ParseMarketDataUsageCapacityError, ParseOrderSideError, ParseOrderTypeError,
+    ParseTimeInForceError, RmsUpdateBits, TickBarReplayRequest, TimeBarReplayRequest, TimeBarType,
+    TimeInForce, VolumeProfileMinuteBarsRequest,
 };
 
 pub use util::{

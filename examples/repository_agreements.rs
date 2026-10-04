@@ -17,14 +17,6 @@ use rithmic_rs::{
 const ENV: RithmicEnv = RithmicEnv::Demo;
 type ExampleResult<T> = Result<T, Box<dyn std::error::Error>>;
 
-fn capacity(value: &str) -> ExampleResult<MarketDataUsageCapacity> {
-    match value {
-        "professional" => Ok(MarketDataUsageCapacity::Professional),
-        "non-professional" => Ok(MarketDataUsageCapacity::NonProfessional),
-        _ => Err("capacity must be professional or non-professional".into()),
-    }
-}
-
 fn check(response: &RithmicResponse) -> ExampleResult<()> {
     if let Some(error) = &response.error {
         return Err(error.clone().into());
@@ -47,8 +39,8 @@ fn command() -> ExampleResult<Command> {
         ["accepted"] => Ok(Command::Accepted),
         ["show", id, directory] => Ok(Command::Show((*id).into(), (*directory).into())),
         ["accept", id] => Ok(Command::Accept((*id).into(), None)),
-        ["accept", id, value] => Ok(Command::Accept((*id).into(), Some(capacity(value)?))),
-        ["certify", id, value] => Ok(Command::Certify((*id).into(), capacity(value)?)),
+        ["accept", id, value] => Ok(Command::Accept((*id).into(), Some(value.parse()?))),
+        ["certify", id, value] => Ok(Command::Certify((*id).into(), value.parse()?)),
         _ => Err("usage: pending | accepted | show ID DIRECTORY | accept ID [CAPACITY] | certify ID CAPACITY".into()),
     }
 }
@@ -109,7 +101,7 @@ async fn main() -> ExampleResult<()> {
     dotenvy::dotenv().ok();
     tracing_subscriber::fmt().init();
     let config = RithmicConfig::from_env(ENV)?;
-    let plant = RithmicRepositoryPlant::connect(&config, ConnectStrategy::Simple).await?;
+    let plant = RithmicRepositoryPlant::connect(&config, ConnectStrategy::Retry).await?;
     let handle = plant.get_handle();
     if let Err(error) = handle.login().await {
         handle.abort();

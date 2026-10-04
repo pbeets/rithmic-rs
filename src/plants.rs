@@ -9,7 +9,7 @@
 //! - [`RithmicOrderPlant`]: order placement and management
 //! - [`RithmicPnlPlant`]: positions and profit and loss
 //! - [`RithmicHistoryPlant`]: historical ticks and bars
-//! - [`RithmicRepositoryPlant`]: optional first-use agreement signing
+//! - [`RithmicRepositoryPlant`]: optional first-use agreements (the only plant with agreement methods)
 //!
 //! Each plant is its own WebSocket connection with its own login.
 

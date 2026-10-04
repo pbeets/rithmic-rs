@@ -113,7 +113,7 @@ This library uses the actor pattern where each Rithmic service runs independentl
 - [**`RithmicOrderPlant`**](#order-plant) - Order entry and management
 - [**`RithmicHistoryPlant`**](#history-plant) - Historical tick and bar data
 - [**`RithmicPnlPlant`**](#pnl-plant) - Position and P&L tracking
-- [**`RithmicRepositoryPlant`**](#repository-plant) - Optional first-use agreement signing
+- [**`RithmicRepositoryPlant`**](#repository-plant) - Optional first-use agreements
 
 > [!NOTE]
 > Live updates arrive on each handle's `subscription_receiver`, which holds 10,000
@@ -254,39 +254,30 @@ handle.subscribe_pnl_updates().await?;
 
 ### Repository Plant
 
-Connect `RithmicRepositoryPlant` when a new user needs to review and accept Rithmic
-agreements, then disconnect it. Trading plants never open this connection
-automatically. It uses the same `RithmicConfig` and needs no trading account IDs.
+Connect `RithmicRepositoryPlant` only when a new user must review and accept Rithmic
+agreements, then disconnect it. Agreement methods live only on this plant, not the
+order plant. It uses the same `RithmicConfig` and needs no account IDs.
 
 ```rust
-use rithmic_rs::{ConnectStrategy, RithmicRepositoryPlant};
+use rithmic_rs::{ConnectStrategy, MarketDataUsageCapacity, RithmicRepositoryPlant};
 
 let plant = RithmicRepositoryPlant::connect(&config, ConnectStrategy::Simple).await?;
 let handle = plant.get_handle();
 handle.login().await?;
+
 let pending = handle.list_unaccepted_agreements().await?;
-// Match ResponseListUnacceptedAgreements to find IDs, then fetch each for review:
 let agreement = handle.show_agreement("agreement-id").await?;
-// After the user accepts, call accept_agreement(id, capacity).
+// Only after the user has read it:
+handle.accept_agreement("agreement-id", Some(MarketDataUsageCapacity::NonProfessional)).await?;
+
 handle.disconnect().await?;
 plant.await_shutdown().await?;
 ```
 
-`list_unaccepted_agreements`, `list_accepted_agreements` and `show_agreement` return
-every response frame, including the terminal reply. Check each frame's `error`.
-The generated `ResponseShowAgreement` contains optional `agreement` and
-`agreement_html` byte buffers, plus mandatory, status and acceptance metadata.
-The client preserves the bytes without assuming their encoding or file format.
-
-`accept_agreement(id, Option<MarketDataUsageCapacity>)` and
-`set_market_data_self_cert_status(id, MarketDataUsageCapacity)` perform explicit
-changes. Choose `Professional` or `NonProfessional` as applicable; `None` on
-acceptance omits capacity. These calls return the server's acknowledgement, with
-`error` set on refusal. Login never accepts agreements automatically.
-
-[`examples/repository_agreements.rs`](examples/repository_agreements.rs) lists
-pending agreements by default, saves agreement content for review, and provides
-explicit commands to accept or self-certify an agreement.
+The list and show methods return every response frame, including the terminal one,
+so check each frame's `error`. Login never accepts anything; `accept_agreement` and
+`set_market_data_self_cert_status` are explicit. See
+[`repository_agreements.rs`](examples/repository_agreements.rs).
 
 ## Migrating from 2.x
 

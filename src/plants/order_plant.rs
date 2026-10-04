@@ -200,27 +200,6 @@ pub(crate) enum OrderPlantCommand {
     GetLoginInfo {
         response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
     },
-    // Agreement-related commands
-    ListUnacceptedAgreements {
-        response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
-    },
-    ListAcceptedAgreements {
-        response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
-    },
-    AcceptAgreement {
-        agreement_id: String,
-        market_data_usage_capacity: Option<String>,
-        response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
-    },
-    ShowAgreement {
-        agreement_id: String,
-        response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
-    },
-    SetRithmicMrktDataSelfCertStatus {
-        agreement_id: String,
-        market_data_usage_capacity: String,
-        response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
-    },
     ListExchangePermissions {
         user: String,
         response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
@@ -233,7 +212,6 @@ pub(crate) enum OrderPlantCommand {
 /// - Place, modify and cancel orders, including brackets and OCO groups
 /// - Receive order status updates and fills
 /// - Query order and fill history, RMS limits, and trade routes
-/// - List and accept market data agreements
 ///
 /// One plant is one WebSocket connection and one login. Get a handle per
 /// account with [`get_handle`](Self::get_handle).
@@ -876,52 +854,6 @@ impl PlantKind for OrderPlant {
                 OrderTag::LoginInfo {
                     caller: Some(response_sender),
                 },
-            ),
-
-            OrderPlantCommand::ListUnacceptedAgreements { response_sender } => cx.send_for(
-                |api| api.request_list_unaccepted_agreements(),
-                response_sender,
-            ),
-
-            OrderPlantCommand::ListAcceptedAgreements { response_sender } => cx.send_for(
-                |api| api.request_list_accepted_agreements(),
-                response_sender,
-            ),
-
-            OrderPlantCommand::AcceptAgreement {
-                agreement_id,
-                market_data_usage_capacity,
-                response_sender,
-            } => cx.send_for(
-                |api| {
-                    api.request_accept_agreement(
-                        &agreement_id,
-                        market_data_usage_capacity.as_deref(),
-                    )
-                },
-                response_sender,
-            ),
-
-            OrderPlantCommand::ShowAgreement {
-                agreement_id,
-                response_sender,
-            } => cx.send_for(
-                |api| api.request_show_agreement(&agreement_id),
-                response_sender,
-            ),
-
-            OrderPlantCommand::SetRithmicMrktDataSelfCertStatus {
-                agreement_id,
-                market_data_usage_capacity,
-                response_sender,
-            } => cx.send_for(
-                |api| {
-                    api.request_set_rithmic_mrkt_data_self_cert_status(
-                        &agreement_id,
-                        &market_data_usage_capacity,
-                    )
-                },
-                response_sender,
             ),
 
             OrderPlantCommand::ListExchangePermissions {
@@ -2127,104 +2059,6 @@ impl RithmicOrderPlantHandle {
         await_first_response(rx).await
     }
 
-    /// List the agreements this user has not accepted yet, one response per
-    /// agreement.
-    pub async fn list_unaccepted_agreements(&self) -> Result<Vec<RithmicResponse>, RithmicError> {
-        let (tx, rx) = oneshot::channel::<Result<Vec<RithmicResponse>, RithmicError>>();
-
-        let command = OrderPlantCommand::ListUnacceptedAgreements {
-            response_sender: tx,
-        };
-
-        let _ = self.sender.send(command).await;
-
-        await_all_responses(rx).await
-    }
-
-    /// List the agreements this user has accepted, one response per agreement.
-    pub async fn list_accepted_agreements(&self) -> Result<Vec<RithmicResponse>, RithmicError> {
-        let (tx, rx) = oneshot::channel::<Result<Vec<RithmicResponse>, RithmicError>>();
-
-        let command = OrderPlantCommand::ListAcceptedAgreements {
-            response_sender: tx,
-        };
-
-        let _ = self.sender.send(command).await;
-
-        await_all_responses(rx).await
-    }
-
-    /// Accept a market data agreement
-    ///
-    /// # Arguments
-    /// * `agreement_id` - The ID of the agreement to accept
-    /// * `market_data_usage_capacity` - Optional capacity indicator (e.g., "Professional", "Non-Professional")
-    pub async fn accept_agreement(
-        &self,
-        agreement_id: &str,
-        market_data_usage_capacity: Option<&str>,
-    ) -> Result<RithmicResponse, RithmicError> {
-        let (tx, rx) = oneshot::channel::<Result<Vec<RithmicResponse>, RithmicError>>();
-
-        let command = OrderPlantCommand::AcceptAgreement {
-            agreement_id: agreement_id.to_string(),
-            market_data_usage_capacity: market_data_usage_capacity.map(|s| s.to_string()),
-            response_sender: tx,
-        };
-
-        let _ = self.sender.send(command).await;
-
-        await_first_response(rx).await
-    }
-
-    /// Get the text and details of one agreement.
-    ///
-    /// # Arguments
-    /// * `agreement_id` - The ID of the agreement to display
-    pub async fn show_agreement(
-        &self,
-        agreement_id: &str,
-    ) -> Result<Vec<RithmicResponse>, RithmicError> {
-        let (tx, rx) = oneshot::channel::<Result<Vec<RithmicResponse>, RithmicError>>();
-
-        let command = OrderPlantCommand::ShowAgreement {
-            agreement_id: agreement_id.to_string(),
-            response_sender: tx,
-        };
-
-        let _ = self.sender.send(command).await;
-
-        await_all_responses(rx).await
-    }
-
-    /// Set Rithmic market data self-certification status
-    ///
-    /// # Arguments
-    /// * `agreement_id` - The ID of the agreement
-    /// * `market_data_usage_capacity` - The usage capacity (e.g., "Professional", "Non-Professional")
-    pub async fn set_rithmic_mrkt_data_self_cert_status(
-        &self,
-        agreement_id: &str,
-        market_data_usage_capacity: &str,
-    ) -> Result<RithmicResponse, RithmicError> {
-        let (tx, rx) = oneshot::channel::<Result<Vec<RithmicResponse>, RithmicError>>();
-
-        let command = OrderPlantCommand::SetRithmicMrktDataSelfCertStatus {
-            agreement_id: agreement_id.to_string(),
-            market_data_usage_capacity: market_data_usage_capacity.to_string(),
-            response_sender: tx,
-        };
-
-        let _ = self.sender.send(command).await;
-
-        await_first_response(rx).await
-    }
-
-    /// List exchange permissions for a user
-    ///
-    /// Returns the exchanges the user has permission to trade on, along with
-    /// their entitlement status for each exchange.
-    ///
     /// # Arguments
     /// * `user` - The username to query exchange permissions for
     pub async fn list_exchange_permissions(
