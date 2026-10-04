@@ -311,7 +311,8 @@ pub struct RithmicConfig {
     )]
     pub request_timeout: Duration,
     /// Capacity of each plant's subscription broadcast channel, or `None` for
-    /// the default of 10,000. Set with
+    /// the plant's default: 10,000 for trading plants, 64 for the repository
+    /// plant's connection events. Set with
     /// [`RithmicConfigBuilder::subscription_capacity`], which explains what
     /// the capacity costs.
     pub subscription_capacity: Option<usize>,
@@ -667,9 +668,10 @@ impl RithmicConfigBuilder {
     /// Every plant allocates its channel up front, when it connects. Tokio
     /// rounds the capacity up to the next power of two and allocates every
     /// slot eagerly, and each slot holds a
-    /// [`RithmicResponse`](crate::RithmicResponse) of about 1.3 KB. The default
-    /// of 10,000 becomes 16,384 slots, about 22 MB per plant. Lower the
-    /// capacity to save memory when you run many plants.
+    /// [`RithmicResponse`](crate::RithmicResponse) of about 1.3 KB. The trading
+    /// plants' default of 10,000 becomes 16,384 slots, about 22 MB per plant.
+    /// The repository plant defaults to 64 slots for connection events.
+    /// Lower the capacity to save memory when you run many plants.
     ///
     /// The memory grows with the capacity, so set it to what your consumer
     /// needs. A capacity too large to allocate fails in the plant's

@@ -72,7 +72,7 @@ pub struct RithmicResponse {
     /// error.
     pub error: Option<RithmicError>,
     /// Plant that produced the frame: `"ticker_plant"`, `"order_plant"`,
-    /// `"history_plant"` or `"pnl_plant"`.
+    /// `"history_plant"`, `"pnl_plant"` or `"repository_plant"`.
     pub source: String,
 }
 
