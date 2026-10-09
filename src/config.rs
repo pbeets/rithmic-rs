@@ -28,6 +28,7 @@
 
 #[allow(deprecated)]
 use crate::request_handler::DEFAULT_REQUEST_TIMEOUT;
+use crate::ws::DEFAULT_CONNECT_ATTEMPT_TIMEOUT;
 use std::{env, fmt, str::FromStr, time::Duration};
 
 /// Which Rithmic environment a config is for.
@@ -315,14 +316,25 @@ pub struct RithmicConfig {
     /// [`RithmicConfigBuilder::subscription_capacity`], which explains what
     /// the capacity costs.
     pub subscription_capacity: Option<usize>,
-    /// How long [`ConnectStrategy::Retry`](crate::ConnectStrategy::Retry) and
-    /// [`ConnectStrategy::AlternateWithRetry`](crate::ConnectStrategy::AlternateWithRetry)
-    /// keep trying before `connect` gives up with
+    /// How long one connection attempt may take, 5 seconds by default; zero
+    /// also means the default.
+    /// [`connect_total_timeout`](Self::connect_total_timeout) limits all
+    /// attempts together. Set it with
+    /// [`RithmicConfigBuilder::connect_attempt_timeout`].
+    pub connect_attempt_timeout: Duration,
+    /// How long `connect` may take in total, every attempt and backoff
+    /// together, before it gives up with
     /// [`RithmicError::ConnectionFailed`](crate::RithmicError::ConnectionFailed).
-    /// The limit covers every attempt together, not each one. `None`, the
-    /// default, retries until connected. Set it with
-    /// [`RithmicConfigBuilder::retry_timeout`].
+    /// `None`, the default, retries until connected. Set it with
+    /// [`RithmicConfigBuilder::connect_total_timeout`].
+    pub connect_total_timeout: Option<Duration>,
+    /// Deprecated name for [`connect_total_timeout`](Self::connect_total_timeout).
+    /// It still works: the builder fills both, and a value written here after
+    /// building takes effect unless `connect_total_timeout` was also changed.
+    #[deprecated(since = "3.3.0", note = "use connect_total_timeout")]
     pub retry_timeout: Option<Duration>,
+    /// `connect_total_timeout` as built, to tell which field was written later.
+    built_total_timeout: Option<Duration>,
 }
 
 impl fmt::Debug for RithmicConfig {
@@ -339,12 +351,37 @@ impl fmt::Debug for RithmicConfig {
             .field("app_version", &self.app_version)
             .field("request_timeout", &self.request_timeout)
             .field("subscription_capacity", &self.subscription_capacity)
+            .field("connect_attempt_timeout", &self.connect_attempt_timeout)
+            .field("connect_total_timeout", &self.connect_total_timeout)
             .field("retry_timeout", &self.retry_timeout)
             .finish()
     }
 }
 
 impl RithmicConfig {
+    /// The per-attempt limit, with a zero written to the field read as the
+    /// default so a retry cannot loop on instant timeouts.
+    pub(crate) fn effective_connect_attempt_timeout(&self) -> Duration {
+        if self.connect_attempt_timeout.is_zero() {
+            DEFAULT_CONNECT_ATTEMPT_TIMEOUT
+        } else {
+            self.connect_attempt_timeout
+        }
+    }
+
+    /// The total connect limit, honouring a later write to the deprecated
+    /// `retry_timeout` field. A write to `connect_total_timeout` wins.
+    #[allow(deprecated)]
+    pub(crate) fn effective_connect_total_timeout(&self) -> Option<Duration> {
+        if self.connect_total_timeout == self.built_total_timeout
+            && self.retry_timeout != self.built_total_timeout
+        {
+            self.retry_timeout
+        } else {
+            self.connect_total_timeout
+        }
+    }
+
     /// Create a configuration by loading values from environment variables.
     ///
     /// Returns [`ConfigError::MissingEnvVar`] naming the first required
@@ -456,7 +493,10 @@ impl RithmicConfig {
             app_version,
             request_timeout,
             subscription_capacity: None,
+            connect_attempt_timeout: DEFAULT_CONNECT_ATTEMPT_TIMEOUT,
+            connect_total_timeout: None,
             retry_timeout: None,
+            built_total_timeout: None,
         })
     }
 
@@ -499,7 +539,8 @@ pub struct RithmicConfigBuilder {
     app_version: Option<String>,
     request_timeout: Duration,
     subscription_capacity: Option<usize>,
-    retry_timeout: Option<Duration>,
+    connect_attempt_timeout: Duration,
+    connect_total_timeout: Option<Duration>,
 }
 
 impl RithmicConfigBuilder {
@@ -530,7 +571,8 @@ impl RithmicConfigBuilder {
             app_version: Some(config.app_version),
             request_timeout: config.request_timeout,
             subscription_capacity: config.subscription_capacity,
-            retry_timeout: config.retry_timeout,
+            connect_attempt_timeout: config.connect_attempt_timeout,
+            connect_total_timeout: config.connect_total_timeout,
         })
     }
 
@@ -552,7 +594,8 @@ impl RithmicConfigBuilder {
             app_version: None,
             request_timeout: DEFAULT_REQUEST_TIMEOUT,
             subscription_capacity: None,
-            retry_timeout: None,
+            connect_attempt_timeout: DEFAULT_CONNECT_ATTEMPT_TIMEOUT,
+            connect_total_timeout: None,
         }
     }
 
@@ -615,24 +658,43 @@ impl RithmicConfigBuilder {
         self
     }
 
+    /// Set how long one connection attempt may take. The default is 5
+    /// seconds; `0` keeps it.
+    ///
+    /// An attempt covers DNS, TCP, TLS and the WebSocket upgrade. Raise it
+    /// when the server is far away, for example Australia to Chicago. To limit
+    /// all attempts together, use
+    /// [`connect_total_timeout`](Self::connect_total_timeout).
+    ///
+    /// Applies to every [`ConnectStrategy`](crate::ConnectStrategy). With
+    /// `AlternateWithRetry` a lower value moves to `beta_url` sooner when
+    /// `url` does not answer.
+    pub fn connect_attempt_timeout(mut self, timeout: Duration) -> Self {
+        self.connect_attempt_timeout = if timeout.is_zero() {
+            DEFAULT_CONNECT_ATTEMPT_TIMEOUT
+        } else {
+            timeout
+        };
+
+        self
+    }
+
     /// Give up connecting after `timeout` instead of retrying forever.
     ///
-    /// The timeout covers the whole retry loop, every attempt and backoff
-    /// together, not a single attempt.
+    /// The timeout covers every attempt and backoff together. For the limit on
+    /// one attempt, see
+    /// [`connect_attempt_timeout`](Self::connect_attempt_timeout).
     ///
     /// It bounds only `connect()`. `login()` and requests never time out; wrap
     /// them in `tokio::time::timeout` (see `examples/request_timeout.rs`).
     /// Each `connect()` call starts its own clock.
     ///
-    /// Applies to [`ConnectStrategy::Retry`](crate::ConnectStrategy::Retry)
-    /// and [`ConnectStrategy::AlternateWithRetry`](crate::ConnectStrategy::AlternateWithRetry),
-    /// which keep their usual backoff but cap each attempt's timeout at the
-    /// time left and stop before a backoff that would run past the timeout.
-    /// At least one attempt is always made. `connect` then returns
+    /// Every [`ConnectStrategy`](crate::ConnectStrategy) cuts its attempts to
+    /// the time left. The retrying strategies keep their usual backoff but
+    /// stop before a backoff that would run past the timeout. At least one
+    /// attempt is always made. The retrying strategies then return
     /// [`RithmicError::ConnectionFailed`](crate::RithmicError::ConnectionFailed)
     /// with the attempt count and the timeout in its message.
-    /// [`ConnectStrategy::Simple`](crate::ConnectStrategy::Simple) makes one
-    /// attempt either way and ignores this.
     ///
     /// ```no_run
     /// use std::time::Duration;
@@ -643,7 +705,7 @@ impl RithmicConfigBuilder {
     ///
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let config = RithmicConfigBuilder::from_env(RithmicEnv::Demo)?
-    ///     .retry_timeout(Duration::from_secs(30))
+    ///     .connect_total_timeout(Duration::from_secs(30))
     ///     .build()?;
     ///
     /// // Retries for up to 30 seconds, then returns ConnectionFailed.
@@ -651,9 +713,16 @@ impl RithmicConfigBuilder {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn retry_timeout(mut self, timeout: Duration) -> Self {
-        self.retry_timeout = Some(timeout);
+    pub fn connect_total_timeout(mut self, timeout: Duration) -> Self {
+        self.connect_total_timeout = Some(timeout);
         self
+    }
+
+    /// Deprecated name for
+    /// [`connect_total_timeout`](Self::connect_total_timeout), which it calls.
+    #[deprecated(since = "3.3.0", note = "use connect_total_timeout")]
+    pub fn retry_timeout(self, timeout: Duration) -> Self {
+        self.connect_total_timeout(timeout)
     }
 
     /// Set the application version sent at login. Required.
@@ -719,7 +788,10 @@ impl RithmicConfigBuilder {
                 .ok_or_else(|| ConfigError::MissingField("app_version".to_string()))?,
             request_timeout: self.request_timeout,
             subscription_capacity: self.subscription_capacity,
-            retry_timeout: self.retry_timeout,
+            connect_attempt_timeout: self.connect_attempt_timeout,
+            connect_total_timeout: self.connect_total_timeout,
+            retry_timeout: self.connect_total_timeout,
+            built_total_timeout: self.connect_total_timeout,
         })
     }
 }
@@ -948,6 +1020,70 @@ mod tests {
             .unwrap();
 
         assert_eq!(config.subscription_capacity, None);
+    }
+
+    #[test]
+    fn the_builder_treats_a_zero_connect_attempt_timeout_as_the_default() {
+        let config = builder_with_required_fields()
+            .connect_attempt_timeout(Duration::ZERO)
+            .build()
+            .unwrap();
+
+        assert_eq!(
+            config.connect_attempt_timeout,
+            DEFAULT_CONNECT_ATTEMPT_TIMEOUT
+        );
+    }
+
+    #[test]
+    fn a_zero_written_to_the_connect_attempt_timeout_field_reads_as_the_default() {
+        let mut config = builder_with_required_fields().build().unwrap();
+
+        config.connect_attempt_timeout = Duration::ZERO;
+
+        assert_eq!(
+            config.effective_connect_attempt_timeout(),
+            DEFAULT_CONNECT_ATTEMPT_TIMEOUT
+        );
+    }
+
+    #[test]
+    fn the_deprecated_retry_timeout_setter_sets_the_total_timeout() {
+        let config = builder_with_required_fields()
+            .retry_timeout(Duration::from_secs(10))
+            .build()
+            .unwrap();
+
+        assert_eq!(config.connect_total_timeout, Some(Duration::from_secs(10)));
+        assert_eq!(config.retry_timeout, Some(Duration::from_secs(10)));
+    }
+
+    #[test]
+    fn a_later_write_to_the_deprecated_retry_timeout_field_takes_effect() {
+        let mut config = builder_with_required_fields()
+            .connect_total_timeout(Duration::from_secs(10))
+            .build()
+            .unwrap();
+
+        config.retry_timeout = Some(Duration::from_secs(3));
+
+        assert_eq!(
+            config.effective_connect_total_timeout(),
+            Some(Duration::from_secs(3))
+        );
+    }
+
+    #[test]
+    fn a_later_write_to_connect_total_timeout_wins_over_retry_timeout() {
+        let mut config = builder_with_required_fields().build().unwrap();
+
+        config.retry_timeout = Some(Duration::from_secs(3));
+        config.connect_total_timeout = Some(Duration::from_secs(20));
+
+        assert_eq!(
+            config.effective_connect_total_timeout(),
+            Some(Duration::from_secs(20))
+        );
     }
 
     #[test]
