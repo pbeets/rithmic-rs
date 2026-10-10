@@ -100,10 +100,11 @@ and reconnection.
 | `Retry` | Retries `url` with backoff: 500 ms more per attempt, capped at 60 s, jittered ±50%. The recommended default. |
 | `AlternateWithRetry` | Like `Retry`, but alternates between `url` and `beta_url`. |
 
-The retrying strategies keep trying forever unless you set `retry_timeout` on
-the config builder. Once connected, the crate does not reconnect for you: see
-[`examples/reconnect.rs`](examples/reconnect.rs) for a loop that restores
-subscriptions.
+Each attempt gets 5 seconds. Raise it with `connect_attempt_timeout` on the
+config builder if the server is far away. The retrying strategies keep trying
+forever unless you set `connect_total_timeout`. Once connected, the crate does
+not reconnect for you: see [`examples/reconnect.rs`](examples/reconnect.rs) for
+a loop that restores subscriptions.
 
 ## Architecture
 

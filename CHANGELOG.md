@@ -14,6 +14,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   actor and opens no connection until explicitly requested.
 - `MarketDataUsageCapacity` for Professional/Non-Professional agreement requests.
 - `examples/repository_agreements.rs` for first-use agreement onboarding.
+- `RithmicConfigBuilder::connect_attempt_timeout()` to set how long one
+  connection attempt may take ([#124](https://github.com/pbeets/rithmic-rs/issues/124)).
+- `RithmicConfigBuilder::connect_total_timeout()`, the new name for
+  `retry_timeout()`.
+
+### Changed
+
+- A connection attempt times out after 5 seconds, up from 2. Distant servers,
+  such as Chicago from Australia, could not finish the handshake in time.
+- `connect_total_timeout` (formerly `retry_timeout`) also cuts the single
+  attempt of `ConnectStrategy::Simple`, which used to ignore it.
+
+### Deprecated
+
+- `RithmicConfigBuilder::retry_timeout()`: use `connect_total_timeout()`, which
+  it now calls.
+- `RithmicConfig::retry_timeout`: no longer read or set; use
+  `connect_total_timeout`.
 
 ### Removed
 

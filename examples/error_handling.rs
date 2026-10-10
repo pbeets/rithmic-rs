@@ -30,10 +30,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenvy::dotenv().ok();
     tracing_subscriber::fmt().init();
 
-    // Without a retry timeout, `Retry` keeps trying forever and never hands
+    // Without a total timeout, `Retry` keeps trying forever and never hands
     // you `ConnectionFailed`.
     let config = RithmicConfigBuilder::from_env(ENV)?
-        .retry_timeout(Duration::from_secs(60))
+        .connect_total_timeout(Duration::from_secs(60))
         .build()?;
 
     let exchange = common::exchange();

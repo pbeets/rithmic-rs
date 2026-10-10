@@ -92,7 +92,8 @@ impl RithmicRepositoryPlant {
     /// # Errors
     /// Returns [`RithmicError::ConnectionFailed`] if the connection strategy
     /// exhausts its attempts. Retrying strategies can wait indefinitely unless
-    /// the config sets [`retry_timeout`](crate::RithmicConfigBuilder::retry_timeout).
+    /// the config sets
+    /// [`connect_total_timeout`](crate::RithmicConfigBuilder::connect_total_timeout).
     pub async fn connect(
         config: &RithmicConfig,
         strategy: ConnectStrategy,

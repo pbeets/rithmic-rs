@@ -75,8 +75,10 @@
 //! - [`ConnectStrategy::AlternateWithRetry`]: Alternates between primary and beta URLs
 //!
 //! `Retry` and `AlternateWithRetry` keep trying until they connect. To bound
-//! them, set [`RithmicConfigBuilder::retry_timeout`]; once it passes,
+//! them, set [`RithmicConfigBuilder::connect_total_timeout`]; once it passes,
 //! `connect` returns [`RithmicError::ConnectionFailed`] with the attempt count.
+//! Each attempt gets 5 seconds; raise
+//! [`RithmicConfigBuilder::connect_attempt_timeout`] if the server is far away.
 //!
 //! A graceful `disconnect().await` logs out first and then closes the WebSocket.
 //! See [Error Handling](#error-handling) for how that differs from an
@@ -222,9 +224,9 @@
 //!
 //! ([`ConnectionFailed`](RithmicError::ConnectionFailed) comes from `connect()`
 //! rather than a handle method, and only under [`ConnectStrategy::Simple`] or
-//! once a [`retry_timeout`](RithmicConfigBuilder::retry_timeout) passes.
-//! Without one, the retrying strategies keep trying instead of handing you an
-//! error.
+//! once a [`connect_total_timeout`](RithmicConfigBuilder::connect_total_timeout)
+//! passes. Without one, the retrying strategies keep trying instead of handing
+//! you an error.
 //! [`EmptyResponse`](RithmicError::EmptyResponse) is a defensive case you should
 //! not see.)
 //!
