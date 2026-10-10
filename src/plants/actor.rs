@@ -89,8 +89,8 @@ impl<K: PlantKind> Plant<K> {
             &config.url,
             &config.beta_url,
             strategy,
-            config.effective_connect_attempt_timeout(),
-            config.effective_connect_total_timeout(),
+            config.connect_attempt_timeout,
+            config.connect_total_timeout,
         )
         .await
         .map_err(|e| RithmicError::ConnectionFailed(e.to_string()))?;
@@ -1766,26 +1766,24 @@ mod tests {
         ));
     }
 
-    /// A retry that runs out of time surfaces as `ConnectionFailed`. The limit
-    /// is written to the deprecated field, which must still take effect.
+    /// A retry that runs out of time surfaces as `ConnectionFailed`, like a
+    /// failed `Simple` attempt.
     #[tokio::test(start_paused = true)]
-    #[allow(deprecated)]
     async fn a_passed_connect_total_timeout_is_reported_as_connection_failed() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("ws://127.0.0.1:{}", listener.local_addr().unwrap().port());
         drop(listener);
 
-        let mut config = RithmicConfig::builder(RithmicEnv::Demo)
+        let config = RithmicConfig::builder(RithmicEnv::Demo)
             .user("test_user")
             .password("test_password")
             .url(url.clone())
             .beta_url(url)
             .app_name("test_app")
             .app_version("1.0")
+            .connect_total_timeout(std::time::Duration::from_secs(3))
             .build()
             .unwrap();
-
-        config.retry_timeout = Some(std::time::Duration::from_secs(3));
 
         let (subscription_sender, _) = broadcast::channel(4);
         let (_, request_receiver) = mpsc::channel(1);

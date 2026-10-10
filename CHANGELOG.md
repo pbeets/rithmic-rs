@@ -28,8 +28,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Deprecated
 
-- `retry_timeout` on the config and builder: use `connect_total_timeout`. Both
-  keep working, including a value written to the field after building.
+- `RithmicConfigBuilder::retry_timeout()`: use `connect_total_timeout()`, which
+  it now calls.
+- `RithmicConfig::retry_timeout`: no longer read or set; use
+  `connect_total_timeout`.
 
 ### Removed
 
