@@ -6,7 +6,7 @@ use std::{convert::Infallible, fmt, str::FromStr};
 
 /// Status string for open orders.
 pub const OPEN: &str = "open";
-/// Status string for completed/filled orders.
+/// Status string for finished orders, filled or cancelled.
 pub const COMPLETE: &str = "complete";
 /// Status string for cancelled orders.
 pub const CANCELLED: &str = "cancelled";
@@ -20,6 +20,10 @@ pub const OPEN_PENDING: &str = "open pending";
 pub const MODIFY_PENDING: &str = "modify pending";
 /// Status string for orders with a pending cancellation.
 pub const CANCEL_PENDING: &str = "cancel pending";
+/// Status string for working orders that have been modified.
+pub const MODIFIED: &str = "modified";
+/// Status string for modified conditional orders still awaiting their trigger.
+pub const MODIFIED_TRIGGER_PENDING: &str = "modified, trigger pending";
 /// Status string for rejected orders.
 pub const REJECTED: &str = "rejected";
 /// Status string for partially filled orders.
@@ -47,11 +51,13 @@ pub const EXPIRED: &str = "expired";
 pub enum OrderStatus {
     /// Order is open and working in the market.
     Open,
-    /// Order has been completely filled.
+    /// Order is finished. Rithmic reports cancels as `complete` too; the
+    /// notification's `completion_reason` is `"F"` for filled, `"C"` for cancelled.
     Complete,
     /// Order has been cancelled.
     Cancelled,
-    /// Order is pending acknowledgement.
+    /// Generic pending status. Rithmic order notifications send the specific
+    /// pending variants, such as [`Self::OpenPending`], instead.
     Pending,
     /// Order was rejected by the exchange or risk system.
     Rejected,
@@ -71,6 +77,10 @@ pub enum OrderStatus {
     ModifyPending,
     /// Order has a pending cancellation and remains active until confirmed.
     CancelPending,
+    /// Order has been modified and is still working.
+    Modified,
+    /// Conditional order has been modified and is still awaiting its trigger.
+    ModifiedTriggerPending,
 }
 
 impl OrderStatus {
@@ -82,8 +92,8 @@ impl OrderStatus {
         )
     }
 
-    /// Returns true for open, partially filled, and pending orders, including
-    /// orders awaiting a trigger, modification, or cancellation.
+    /// Returns true for open, partially filled, modified and pending orders,
+    /// including orders awaiting a trigger, modification or cancellation.
     pub fn is_active(&self) -> bool {
         matches!(
             self,
@@ -93,6 +103,8 @@ impl OrderStatus {
                 | Self::OpenPending
                 | Self::ModifyPending
                 | Self::CancelPending
+                | Self::Modified
+                | Self::ModifiedTriggerPending
                 | Self::Partial
         )
     }
@@ -111,6 +123,8 @@ impl FromStr for OrderStatus {
             OPEN_PENDING => Self::OpenPending,
             MODIFY_PENDING => Self::ModifyPending,
             CANCEL_PENDING => Self::CancelPending,
+            MODIFIED => Self::Modified,
+            MODIFIED_TRIGGER_PENDING => Self::ModifiedTriggerPending,
             REJECTED => Self::Rejected,
             PARTIAL | "partially_filled" | "partially filled" => Self::Partial,
             EXPIRED => Self::Expired,
@@ -132,6 +146,8 @@ impl fmt::Display for OrderStatus {
             Self::OpenPending => OPEN_PENDING,
             Self::ModifyPending => MODIFY_PENDING,
             Self::CancelPending => CANCEL_PENDING,
+            Self::Modified => MODIFIED,
+            Self::ModifiedTriggerPending => MODIFIED_TRIGGER_PENDING,
             Self::Rejected => REJECTED,
             Self::Partial => PARTIAL,
             Self::Expired => EXPIRED,
@@ -147,12 +163,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_pending_operations_remain_active() {
+    fn test_working_statuses_remain_active() {
         for (value, expected) in [
             ("trigger pending", OrderStatus::TriggerPending),
             ("open pending", OrderStatus::OpenPending),
             ("modify pending", OrderStatus::ModifyPending),
             ("cancel pending", OrderStatus::CancelPending),
+            ("modified", OrderStatus::Modified),
+            (
+                "modified, trigger pending",
+                OrderStatus::ModifiedTriggerPending,
+            ),
         ] {
             let status: OrderStatus = value.parse().unwrap();
             assert_eq!(status, expected);
@@ -246,6 +267,8 @@ mod tests {
             OrderStatus::OpenPending,
             OrderStatus::ModifyPending,
             OrderStatus::CancelPending,
+            OrderStatus::Modified,
+            OrderStatus::ModifiedTriggerPending,
             OrderStatus::Rejected,
             OrderStatus::Partial,
             OrderStatus::Expired,
