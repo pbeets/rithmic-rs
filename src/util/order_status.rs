@@ -6,12 +6,24 @@ use std::{convert::Infallible, fmt, str::FromStr};
 
 /// Status string for open orders.
 pub const OPEN: &str = "open";
-/// Status string for completed/filled orders.
+/// Status string for finished orders, filled or cancelled.
 pub const COMPLETE: &str = "complete";
 /// Status string for cancelled orders.
 pub const CANCELLED: &str = "cancelled";
 /// Status string for pending orders.
 pub const PENDING: &str = "pending";
+/// Status string for working conditional orders awaiting their trigger.
+pub const TRIGGER_PENDING: &str = "trigger pending";
+/// Status string for orders awaiting acknowledgement that they are open.
+pub const OPEN_PENDING: &str = "open pending";
+/// Status string for orders with a pending modification.
+pub const MODIFY_PENDING: &str = "modify pending";
+/// Status string for orders with a pending cancellation.
+pub const CANCEL_PENDING: &str = "cancel pending";
+/// Status string for working orders that have been modified.
+pub const MODIFIED: &str = "modified";
+/// Status string for modified conditional orders still awaiting their trigger.
+pub const MODIFIED_TRIGGER_PENDING: &str = "modified, trigger pending";
 /// Status string for rejected orders.
 pub const REJECTED: &str = "rejected";
 /// Status string for partially filled orders.
@@ -39,11 +51,13 @@ pub const EXPIRED: &str = "expired";
 pub enum OrderStatus {
     /// Order is open and working in the market.
     Open,
-    /// Order has been completely filled.
+    /// Order is finished. Rithmic reports cancels as `complete` too; the
+    /// notification's `completion_reason` is `"F"` for filled, `"C"` for cancelled.
     Complete,
     /// Order has been cancelled.
     Cancelled,
-    /// Order is pending acknowledgement.
+    /// Generic pending status. Rithmic order notifications send the specific
+    /// pending variants, such as [`Self::OpenPending`], instead.
     Pending,
     /// Order was rejected by the exchange or risk system.
     Rejected,
@@ -54,6 +68,19 @@ pub enum OrderStatus {
     /// Unknown or unrecognized status.
     #[default]
     Unknown,
+    // Append variants to preserve existing indices in index-based Serde formats.
+    /// Conditional order is working and awaiting its trigger.
+    TriggerPending,
+    /// Order is awaiting acknowledgement that it is open.
+    OpenPending,
+    /// Order has a pending modification and remains active.
+    ModifyPending,
+    /// Order has a pending cancellation and remains active until confirmed.
+    CancelPending,
+    /// Order has been modified and is still working.
+    Modified,
+    /// Conditional order has been modified and is still awaiting its trigger.
+    ModifiedTriggerPending,
 }
 
 impl OrderStatus {
@@ -65,9 +92,21 @@ impl OrderStatus {
         )
     }
 
-    /// Returns true if this is an active status (Open, Pending, Partial).
+    /// Returns true for open, partially filled, modified and pending orders,
+    /// including orders awaiting a trigger, modification or cancellation.
     pub fn is_active(&self) -> bool {
-        matches!(self, Self::Open | Self::Pending | Self::Partial)
+        matches!(
+            self,
+            Self::Open
+                | Self::Pending
+                | Self::TriggerPending
+                | Self::OpenPending
+                | Self::ModifyPending
+                | Self::CancelPending
+                | Self::Modified
+                | Self::ModifiedTriggerPending
+                | Self::Partial
+        )
     }
 }
 
@@ -80,6 +119,12 @@ impl FromStr for OrderStatus {
             COMPLETE | "filled" => Self::Complete,
             CANCELLED | "canceled" => Self::Cancelled,
             PENDING => Self::Pending,
+            TRIGGER_PENDING => Self::TriggerPending,
+            OPEN_PENDING => Self::OpenPending,
+            MODIFY_PENDING => Self::ModifyPending,
+            CANCEL_PENDING => Self::CancelPending,
+            MODIFIED => Self::Modified,
+            MODIFIED_TRIGGER_PENDING => Self::ModifiedTriggerPending,
             REJECTED => Self::Rejected,
             PARTIAL | "partially_filled" | "partially filled" => Self::Partial,
             EXPIRED => Self::Expired,
@@ -97,6 +142,12 @@ impl fmt::Display for OrderStatus {
             Self::Complete => COMPLETE,
             Self::Cancelled => CANCELLED,
             Self::Pending => PENDING,
+            Self::TriggerPending => TRIGGER_PENDING,
+            Self::OpenPending => OPEN_PENDING,
+            Self::ModifyPending => MODIFY_PENDING,
+            Self::CancelPending => CANCEL_PENDING,
+            Self::Modified => MODIFIED,
+            Self::ModifiedTriggerPending => MODIFIED_TRIGGER_PENDING,
             Self::Rejected => REJECTED,
             Self::Partial => PARTIAL,
             Self::Expired => EXPIRED,
@@ -110,6 +161,26 @@ impl fmt::Display for OrderStatus {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_working_statuses_remain_active() {
+        for (value, expected) in [
+            ("trigger pending", OrderStatus::TriggerPending),
+            ("open pending", OrderStatus::OpenPending),
+            ("modify pending", OrderStatus::ModifyPending),
+            ("cancel pending", OrderStatus::CancelPending),
+            ("modified", OrderStatus::Modified),
+            (
+                "modified, trigger pending",
+                OrderStatus::ModifiedTriggerPending,
+            ),
+        ] {
+            let status: OrderStatus = value.parse().unwrap();
+            assert_eq!(status, expected);
+            assert!(status.is_active(), "{value} must remain active");
+            assert!(!status.is_terminal(), "{value} must remain nonterminal");
+        }
+    }
 
     #[test]
     fn test_parse_case_insensitive() {
@@ -192,6 +263,12 @@ mod tests {
             OrderStatus::Complete,
             OrderStatus::Cancelled,
             OrderStatus::Pending,
+            OrderStatus::TriggerPending,
+            OrderStatus::OpenPending,
+            OrderStatus::ModifyPending,
+            OrderStatus::CancelPending,
+            OrderStatus::Modified,
+            OrderStatus::ModifiedTriggerPending,
             OrderStatus::Rejected,
             OrderStatus::Partial,
             OrderStatus::Expired,
