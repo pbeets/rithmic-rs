@@ -22,7 +22,6 @@ impl LoginScope {
     }
 }
 
-/// The user type `scope` grants, or `Trader` without one.
 pub(crate) fn user_type_or_trader(scope: Option<&LoginScope>) -> UserType {
     scope.map_or(UserType::Trader, |s| s.user_type)
 }
@@ -53,8 +52,8 @@ impl From<UserType> for request_cancel_all_orders::UserType {
     }
 }
 
-/// `None` for Admin, which template 302 lacks: the optional field is left off
-/// rather than sending Trader.
+/// `None` for Admin, which template 302 lacks, so the field is left off rather
+/// than sent as Trader.
 pub(crate) fn account_list_user_type(
     user_type: UserType,
 ) -> Option<request_account_list::UserType> {
@@ -66,7 +65,8 @@ pub(crate) fn account_list_user_type(
     }
 }
 
-/// `None` for Admin, which template 304 lacks.
+/// `None` for Admin, which template 304 lacks, so the field is left off rather
+/// than sent as Trader.
 pub(crate) fn account_rms_info_user_type(
     user_type: UserType,
 ) -> Option<request_account_rms_info::UserType> {

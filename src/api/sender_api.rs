@@ -2883,8 +2883,8 @@ mod tests {
 
     #[test]
     fn account_rms_info_without_a_scope_sends_the_trader_user_type() {
-        // Trader is 3 in the request modules; `response_login_info` numbers from
-        // Admin = 0, so the two enums are not interchangeable.
+        // Pins the wire value. 304 has no Admin = 0, so its enum is not
+        // interchangeable with `response_login_info`'s even though Trader is 3 in both.
         let mut api = RithmicSenderApi::new(&test_config());
 
         let (buf, _) = api.request_account_rms_info(&default_account(), None);
