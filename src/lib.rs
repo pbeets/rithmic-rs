@@ -296,7 +296,7 @@
 //!
 //! | Flag | Default | Description |
 //! |------|---------|-------------|
-//! | `serde` | off | Adds `Serialize`/`Deserialize` derives on the config types (`RithmicEnv`, `RithmicAccount`), the trading enums (`OrderSide`, `ReportedOrderSide`, `OrderType`, `TimeInForce`, `ManualOrAutoEntry`, `OrderCondition`, `OrderPriceField`, `BracketType`, `BracketOperationType`, `FillHistoryRange`, `EasyToBorrowRequest`, `RmsUpdateBits`, `MarketDataUsageCapacity`, `OrderStatus`), every order command type (`RithmicOrder`, `RithmicBracketOrder`, `RithmicOcoOrder` and its legs, `RithmicModifyOrder`, the cancel/exit/link/retag/adjustment commands), the triggers (`TrailingStop`, `RithmicIfTouchedTrigger`) and the history request types (`VolumeProfileMinuteBarsRequest`, `TickBarReplayRequest`) |
+//! | `serde` | off | Adds `Serialize`/`Deserialize` derives on the config types (`RithmicEnv`, `RithmicAccount`), the trading enums (`OrderSide`, `OrderType`, `TimeInForce`, `ManualOrAutoEntry`, `OrderCondition`, `OrderPriceField`, `BracketType`, `BracketOperationType`, `FillHistoryRange`, `EasyToBorrowRequest`, `RmsUpdateBits`, `MarketDataUsageCapacity`, `OrderStatus`), every order command type (`RithmicOrder`, `RithmicBracketOrder`, `RithmicOcoOrder` and its legs, `RithmicModifyOrder`, the cancel/exit/link/retag/adjustment commands), the triggers (`TrailingStop`, `RithmicIfTouchedTrigger`) and the history request types (`VolumeProfileMinuteBarsRequest`, `TickBarReplayRequest`) |
 //!
 //! **TLS backend:** The crate uses `native-tls` (via `tokio-tungstenite`) for all
 //! WebSocket connections. There is currently no `rustls` option.
@@ -385,8 +385,8 @@ pub use types::{
     BracketOperationType, BracketType, EasyToBorrowRequest, FillHistoryRange, ManualOrAutoEntry,
     MarketDataUsageCapacity, OrderCondition, OrderPriceField, OrderSide, OrderType,
     ParseMarketDataUsageCapacityError, ParseOrderSideError, ParseOrderTypeError,
-    ParseTimeInForceError, ReportedOrderSide, RmsUpdateBits, TickBarReplayRequest,
-    TimeBarReplayRequest, TimeBarType, TimeInForce, VolumeProfileMinuteBarsRequest,
+    ParseTimeInForceError, RmsUpdateBits, TickBarReplayRequest, TimeBarReplayRequest, TimeBarType,
+    TimeInForce, VolumeProfileMinuteBarsRequest,
 };
 
 pub use util::{

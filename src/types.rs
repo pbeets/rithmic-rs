@@ -73,10 +73,11 @@ impl FromStr for MarketDataUsageCapacity {
     }
 }
 
-/// Buy or sell for order submission. Defaults to `Buy`.
+/// Buy or sell. Defaults to `Buy`.
 ///
-/// Parses from `"BUY"`, `"B"`, `"SELL"` or `"S"`, in any case.
-/// For notification sides, including short sells, use [`ReportedOrderSide`].
+/// Parses from `"BUY"`, `"B"`, `"SELL"` or `"S"`, in any case. Order notifications
+/// can also report a short sell, which has no variant here: see
+/// [`TransactionType::Ss`](crate::rti::exchange_order_notification::TransactionType::Ss).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[non_exhaustive]
@@ -104,7 +105,7 @@ impl fmt::Display for OrderSide {
     }
 }
 
-/// Error returned when parsing an invalid [`OrderSide`] or [`ReportedOrderSide`] string.
+/// Error returned when parsing an invalid [`OrderSide`] string.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParseOrderSideError(String);
 
@@ -124,110 +125,6 @@ impl FromStr for OrderSide {
             "BUY" | "B" => Ok(Self::Buy),
             "SELL" | "S" => Ok(Self::Sell),
             _ => Err(ParseOrderSideError(s.to_string())),
-        }
-    }
-}
-
-/// Side reported by an order notification or fill history.
-///
-/// Parses from `"BUY"`, `"B"`, `"SELL"`, `"S"` or `"SS"`, in any case.
-/// Unlike [`OrderSide`], this can represent the notification-only short-sell
-/// value. Converting it to a submission side rejects [`Self::ShortSell`],
-/// because the generated order request enums support only buy and sell.
-///
-/// ```
-/// use rithmic_rs::{OrderSide, ReportedOrderSide};
-/// use rithmic_rs::rti::exchange_order_notification::TransactionType;
-///
-/// let side = ReportedOrderSide::from(TransactionType::Ss);
-/// assert_eq!("ss".parse::<ReportedOrderSide>()?, side);
-/// assert_eq!(side.to_string(), "SS");
-/// assert!(OrderSide::try_from(side).is_err());
-/// # Ok::<(), rithmic_rs::ParseOrderSideError>(())
-/// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[non_exhaustive]
-pub enum ReportedOrderSide {
-    /// Buy side.
-    Buy,
-    /// Sell side.
-    Sell,
-    /// Short-sell side, reported as `SS` by the protocol.
-    ShortSell,
-}
-
-impl ReportedOrderSide {
-    /// The protobuf notification spelling: `BUY`, `SELL` or `SS`.
-    pub fn as_str_name(&self) -> &'static str {
-        match self {
-            Self::Buy => "BUY",
-            Self::Sell => "SELL",
-            Self::ShortSell => "SS",
-        }
-    }
-}
-
-impl fmt::Display for ReportedOrderSide {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str_name())
-    }
-}
-
-impl FromStr for ReportedOrderSide {
-    type Err = ParseOrderSideError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_uppercase().as_str() {
-            "BUY" | "B" => Ok(Self::Buy),
-            "SELL" | "S" => Ok(Self::Sell),
-            "SS" => Ok(Self::ShortSell),
-            _ => Err(ParseOrderSideError(s.to_string())),
-        }
-    }
-}
-
-impl From<OrderSide> for ReportedOrderSide {
-    fn from(side: OrderSide) -> Self {
-        match side {
-            OrderSide::Buy => Self::Buy,
-            OrderSide::Sell => Self::Sell,
-        }
-    }
-}
-
-impl From<crate::rti::rithmic_order_notification::TransactionType> for ReportedOrderSide {
-    fn from(side: crate::rti::rithmic_order_notification::TransactionType) -> Self {
-        use crate::rti::rithmic_order_notification::TransactionType;
-        match side {
-            TransactionType::Buy => Self::Buy,
-            TransactionType::Sell => Self::Sell,
-            TransactionType::Ss => Self::ShortSell,
-        }
-    }
-}
-
-impl From<crate::rti::exchange_order_notification::TransactionType> for ReportedOrderSide {
-    fn from(side: crate::rti::exchange_order_notification::TransactionType) -> Self {
-        use crate::rti::exchange_order_notification::TransactionType;
-        match side {
-            TransactionType::Buy => Self::Buy,
-            TransactionType::Sell => Self::Sell,
-            TransactionType::Ss => Self::ShortSell,
-        }
-    }
-}
-
-impl TryFrom<ReportedOrderSide> for OrderSide {
-    type Error = RithmicError;
-
-    fn try_from(side: ReportedOrderSide) -> Result<Self, Self::Error> {
-        match side {
-            ReportedOrderSide::Buy => Ok(Self::Buy),
-            ReportedOrderSide::Sell => Ok(Self::Sell),
-            ReportedOrderSide::ShortSell => Err(RithmicError::InvalidArgument(
-                "reported side SS is not available for order submission".into(),
-            )),
         }
     }
 }
@@ -1416,61 +1313,6 @@ impl From<OrderPriceField> for request_modify_order::PriceField {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn reported_sides_preserve_notifications_and_reject_short_sell_submission() {
-        use crate::rti::{
-            exchange_order_notification as exchange, rithmic_order_notification as rithmic,
-        };
-
-        for (rithmic_side, exchange_side, reported, spelling, submission) in [
-            (
-                rithmic::TransactionType::Buy,
-                exchange::TransactionType::Buy,
-                ReportedOrderSide::Buy,
-                "BUY",
-                Some(OrderSide::Buy),
-            ),
-            (
-                rithmic::TransactionType::Sell,
-                exchange::TransactionType::Sell,
-                ReportedOrderSide::Sell,
-                "SELL",
-                Some(OrderSide::Sell),
-            ),
-            (
-                rithmic::TransactionType::Ss,
-                exchange::TransactionType::Ss,
-                ReportedOrderSide::ShortSell,
-                "SS",
-                None,
-            ),
-        ] {
-            assert_eq!(ReportedOrderSide::from(rithmic_side), reported);
-            assert_eq!(ReportedOrderSide::from(exchange_side), reported);
-            assert_eq!(
-                spelling
-                    .to_lowercase()
-                    .parse::<ReportedOrderSide>()
-                    .unwrap(),
-                reported
-            );
-            assert_eq!(reported.to_string(), spelling);
-            match submission {
-                Some(side) => {
-                    assert_eq!(OrderSide::try_from(reported).unwrap(), side);
-                    assert_eq!(ReportedOrderSide::from(side), reported);
-                }
-                None => {
-                    assert!(matches!(
-                        OrderSide::try_from(reported),
-                        Err(RithmicError::InvalidArgument(_))
-                    ));
-                    assert!(spelling.parse::<OrderSide>().is_err());
-                }
-            }
-        }
-    }
 
     /// `RequestOcoOrder` stops at four price types; the if-touched pair has to be
     /// rejected rather than remapped onto something the caller did not ask for.

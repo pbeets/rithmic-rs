@@ -5,6 +5,7 @@
 //! rather than directly.
 
 pub(crate) mod commands;
+pub(crate) mod login_scope;
 pub(crate) mod receiver_api;
 pub(crate) mod response;
 pub(crate) mod rp_code;
