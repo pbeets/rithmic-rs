@@ -316,6 +316,13 @@ dropped updates arrive on `subscription_receiver`.
 and the [crate docs](https://docs.rs/rithmic-rs/latest/rithmic_rs/#error-handling)
 explain what to do about them.
 
+## Server Behavior
+
+[BEHAVIOR.md](BEHAVIOR.md) collects what the Rithmic servers were seen to do:
+fills that can arrive before their reply, replays after a reconnect, position
+statements that trail fills, and bracket orders that outlive their position.
+Read it before you build your own order and position tracking.
+
 ## Feature Flags
 
 | Flag | Default | What it adds |
