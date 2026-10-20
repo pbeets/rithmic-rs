@@ -1153,7 +1153,7 @@ impl RithmicOrderPlantHandle {
     ///     if let RithmicMessage::ExchangeOrderNotification(order) =
     ///         &response.message
     ///     {
-    ///         println!("{:?} filled {:?}", order.status, order.fill_size);
+    ///         println!("{:?} filled {:?}", order.status, order.fill_size_64);
     ///     }
     /// }
     /// # Ok(())
@@ -1979,20 +1979,20 @@ impl RithmicOrderPlantHandle {
     ///
     /// # Arguments
     /// * `range` - The window to report on
-    /// * `max_record_count` - Cap on the number of fills returned, at most
+    /// * `max_record_count` - Cap on the number of fills returned, from 1 to
     ///   10,000. `None` leaves the cap to the server.
     ///
     /// # Errors
     /// [`RithmicError::InvalidArgument`] when `max_record_count` is outside
-    /// 0..=10,000. Rithmic rejects a cap above 10,000. Nothing is sent.
+    /// 1..=10,000. Nothing is sent.
     pub async fn show_fill_history(
         &self,
         range: FillHistoryRange,
         max_record_count: Option<i32>,
     ) -> Result<Vec<RithmicResponse>, RithmicError> {
-        if let Some(count) = max_record_count.filter(|count| !(0..=10_000).contains(count)) {
+        if let Some(count) = max_record_count.filter(|count| !(1..=10_000).contains(count)) {
             return Err(RithmicError::InvalidArgument(format!(
-                "max_record_count must be between 0 and 10,000, got {count}"
+                "max_record_count must be between 1 and 10,000, got {count}"
             )));
         }
 

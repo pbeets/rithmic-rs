@@ -100,7 +100,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             ),
             RithmicMessage::ExchangeOrderNotification(n) => info!(
                 "exchange: status={:?} filled={:?} avg_price={:?}",
-                n.status, n.total_fill_size, n.avg_fill_price
+                n.status, n.total_fill_size_64, n.avg_fill_price
             ),
             RithmicMessage::BracketUpdates(b) => info!(
                 "bracket: basket_id={:?} target_ticks={:?} stop_ticks={:?}",

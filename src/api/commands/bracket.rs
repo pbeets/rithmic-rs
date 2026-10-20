@@ -89,7 +89,7 @@ pub struct RithmicBracketOrder {
     /// For a coherent bracket, this should equal the sum of
     /// `target_quantity` across all target legs. The crate does not validate
     /// this invariant.
-    pub quantity: i32,
+    pub quantity: u64,
     /// Trading symbol (e.g., "ESZ6").
     pub symbol: String,
     /// Rithmic bracket shape. When `None`, [`Self::build`] picks the `Static`
@@ -97,11 +97,11 @@ pub struct RithmicBracketOrder {
     /// are no legs. A value set by hand must match the legs.
     pub bracket_type: Option<BracketType>,
     /// Contracts on each target leg. Pairs by index with `target_ticks`.
-    pub target_quantity: Vec<i32>,
+    pub target_quantity: Vec<u64>,
     /// Distance of each target leg, in ticks.
     pub target_ticks: Vec<i32>,
     /// Contracts on each stop leg. Pairs by index with `stop_ticks`.
-    pub stop_quantity: Vec<i32>,
+    pub stop_quantity: Vec<u64>,
     /// Distance of each stop leg, in ticks.
     pub stop_ticks: Vec<i32>,
     /// Optional if-touched trigger settings.
@@ -187,7 +187,7 @@ impl RithmicBracketOrder {
     ///
     /// Set this before [`Self::target`] or [`Self::stop`], which size their
     /// leg to whatever the quantity is when they are called.
-    pub fn quantity(mut self, quantity: i32) -> Self {
+    pub fn quantity(mut self, quantity: u64) -> Self {
         self.quantity = quantity;
         self
     }
@@ -255,16 +255,16 @@ impl RithmicBracketOrder {
     }
 
     /// Target legs as `(quantity, ticks)` pairs, replacing any already set.
-    pub fn targets(mut self, legs: impl IntoIterator<Item = (i32, i32)>) -> Self {
-        let (quantities, ticks): (Vec<i32>, Vec<i32>) = legs.into_iter().unzip();
+    pub fn targets(mut self, legs: impl IntoIterator<Item = (u64, i32)>) -> Self {
+        let (quantities, ticks): (Vec<u64>, Vec<i32>) = legs.into_iter().unzip();
         self.target_quantity = quantities;
         self.target_ticks = ticks;
         self
     }
 
     /// Stop legs as `(quantity, ticks)` pairs, replacing any already set.
-    pub fn stops(mut self, legs: impl IntoIterator<Item = (i32, i32)>) -> Self {
-        let (quantities, ticks): (Vec<i32>, Vec<i32>) = legs.into_iter().unzip();
+    pub fn stops(mut self, legs: impl IntoIterator<Item = (u64, i32)>) -> Self {
+        let (quantities, ticks): (Vec<u64>, Vec<i32>) = legs.into_iter().unzip();
         self.stop_quantity = quantities;
         self.stop_ticks = ticks;
         self
@@ -445,7 +445,7 @@ impl RithmicBracketOrder {
                 )));
             }
 
-            if let Some(quantity) = quantities.iter().find(|quantity| **quantity <= 0) {
+            if let Some(quantity) = quantities.iter().find(|quantity| **quantity == 0) {
                 return Err(RithmicError::InvalidArgument(format!(
                     "every {side} leg needs a positive quantity, got {quantity}: \
                      `target(..)`/`stop(..)` size the leg to the quantity set so far"
@@ -578,7 +578,7 @@ impl RithmicBracketLevelAdjustment {
 mod tests {
     use super::*;
 
-    fn bracket(quantity: i32, price_type: OrderType) -> RithmicBracketOrder {
+    fn bracket(quantity: u64, price_type: OrderType) -> RithmicBracketOrder {
         RithmicBracketOrder::new()
             .symbol("ESZ6")
             .exchange("CME")

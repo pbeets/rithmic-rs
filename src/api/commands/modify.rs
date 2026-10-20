@@ -47,7 +47,7 @@ pub struct RithmicModifyOrder {
     /// Trading symbol (e.g., "ESZ6"). Required.
     pub symbol: String,
     /// The order's quantity after the change. Must be at least 1.
-    pub quantity: i32,
+    pub quantity: u64,
     /// New price, omitted from the request when unset. A modify restates the
     /// order, so set this to the order's current price when only the quantity
     /// is changing.
@@ -97,7 +97,7 @@ impl RithmicModifyOrder {
     }
 
     /// The order's size after the modification.
-    pub fn quantity(mut self, quantity: i32) -> Self {
+    pub fn quantity(mut self, quantity: u64) -> Self {
         self.quantity = quantity;
         self
     }

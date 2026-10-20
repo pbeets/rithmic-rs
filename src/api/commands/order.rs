@@ -89,7 +89,7 @@ pub struct RithmicOrder {
     /// Exchange code (e.g., "CME")
     pub exchange: String,
     /// Number of contracts. Must be at least 1.
-    pub quantity: i32,
+    pub quantity: u64,
     /// Order price. A market order does not need one.
     pub price: Option<f64>,
     /// Buy or sell. Defaults to `Buy`.
@@ -148,7 +148,7 @@ impl RithmicOrder {
     }
 
     /// Number of contracts.
-    pub fn quantity(mut self, quantity: i32) -> Self {
+    pub fn quantity(mut self, quantity: u64) -> Self {
         self.quantity = quantity;
         self
     }

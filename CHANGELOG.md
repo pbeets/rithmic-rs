@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Protocol API 0.90 account/user playback and history bindings, plus decoding of
+  account/user, entitlement, session configuration and flow-control messages.
+- Native 64-bit quantity and market-data size fields in `rti` messages.
+
+### Changed
+
+- Regenerated protocol bindings from R | Protocol API 0.90.0.0 and send template
+  version 5.55 on login. Template 358 now yields `AccountAndUserUpdate`;
+  `UserAccountUpdate` remains available for legacy template 76.
+- The proto generator accepts a vendor schema directory without a pool file.
+- Order, modify, bracket and OCO quantities now use `u64` and are sent in the
+  native `quantity_64` fields. Bracket exit quantities use `Vec<u64>` and the
+  native target/stop fields; tick distances remain `i32`.
+- The generated `last_trade::PresenceBits::PrecentChange` variant is now
+  `PercentChange`; its protobuf spelling is corrected to `PERCENT_CHANGE`.
+
+### Removed
+
+- `DepthByOrderEndEvent` and template 161 decoding, matching the removal of its
+  schema in Protocol API 0.90.0.0.
+
+### Fixed
+
+- Fill-history record caps reject zero as required by the 0.90 schema. Use `None`
+  to omit the cap, or a value from 1 through 10,000.
+- Examples and documentation read native 64-bit trade, quote and fill sizes.
+
 ## [3.3.0]
 
 The order plant's agreement methods are gone. They moved to the new repository

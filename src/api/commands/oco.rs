@@ -37,7 +37,7 @@ pub struct RithmicOcoOrderLeg {
     /// Exchange code (e.g., "CME")
     pub exchange: String,
     /// Number of contracts. Must be at least 1.
-    pub quantity: i32,
+    pub quantity: u64,
     /// Leg price. A market leg does not need one.
     ///
     /// The request holds one price slot per leg, so once any leg has a price,
@@ -89,7 +89,7 @@ impl RithmicOcoOrderLeg {
     }
 
     /// Number of contracts on this leg.
-    pub fn quantity(mut self, quantity: i32) -> Self {
+    pub fn quantity(mut self, quantity: u64) -> Self {
         self.quantity = quantity;
         self
     }

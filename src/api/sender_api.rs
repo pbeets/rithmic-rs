@@ -51,9 +51,9 @@ use crate::{
 };
 
 /// Template version sent on every login. It names the `src/raw-proto/` set,
-/// which the R | Protocol API 0.89.0.0 change log labels 5.42. Bump it when
+/// which the R | Protocol API 0.90.0.0 change log labels 5.55. Bump it when
 /// those protos are regenerated.
-pub(crate) const TEMPLATE_VERSION: &str = "5.42";
+pub(crate) const TEMPLATE_VERSION: &str = "5.55";
 
 /// An empty caller-supplied identifier carries no more information than an
 /// absent field, so it is left off the wire rather than sent as `""`.
@@ -419,7 +419,7 @@ impl RithmicSenderApi {
             trade_route: Some(trade_route.into()),
             exchange: Some(order.exchange.clone()),
             symbol: Some(order.symbol.clone()),
-            quantity: Some(order.quantity),
+            quantity_64: Some(order.quantity),
             price: order.price,
             transaction_type: Some(
                 request_new_order::TransactionType::from(order.transaction_type).into(),
@@ -458,6 +458,7 @@ impl RithmicSenderApi {
                 .as_ref()
                 .map(|trigger| request_new_order::PriceField::from(trigger.price_field).into()),
             if_touched_price: order.if_touched.as_ref().and_then(|trigger| trigger.price),
+            ..Default::default()
         };
 
         self.request_to_buf(req, id)
@@ -485,7 +486,7 @@ impl RithmicSenderApi {
             user_type: Some(
                 request_bracket_order::UserType::from(user_type_or_trader(scope)).into(),
             ),
-            quantity: Some(bracket_order.quantity),
+            quantity_64: Some(bracket_order.quantity),
             transaction_type: Some(
                 request_bracket_order::TransactionType::from(bracket_order.action).into(),
             ),
@@ -503,9 +504,9 @@ impl RithmicSenderApi {
                 .map(|kind| request_bracket_order::BracketType::from(kind).into()),
             break_even_ticks: bracket_order.break_even_ticks,
             break_even_trigger_ticks: bracket_order.break_even_trigger_ticks,
-            target_quantity: bracket_order.target_quantity,
+            target_quantity_64: bracket_order.target_quantity,
             target_ticks: bracket_order.target_ticks,
-            stop_quantity: bracket_order.stop_quantity,
+            stop_quantity_64: bracket_order.stop_quantity,
             stop_ticks: bracket_order.stop_ticks,
             trailing_stop_trigger_ticks: bracket_order.trailing_stop_trigger_ticks,
             trailing_stop_by_last_trade_price: bracket_order.trailing_stop_by_last_trade_price,
@@ -549,6 +550,7 @@ impl RithmicSenderApi {
             order_operation_type: bracket_order
                 .operation_type
                 .map(|op| op.as_str_name().to_string()),
+            ..Default::default()
         };
 
         self.request_to_buf(req, id)
@@ -576,7 +578,7 @@ impl RithmicSenderApi {
             exchange: Some(order.exchange.clone()),
             symbol: Some(order.symbol.clone()),
             price_type: Some(price_type.into()),
-            quantity: Some(order.quantity),
+            quantity_64: Some(order.quantity),
             price: order.price,
             user_msg: vec![id.clone()],
             // The same four types `RithmicOrder::validate` demands a trigger for
@@ -613,6 +615,7 @@ impl RithmicSenderApi {
                 .as_ref()
                 .map(|trigger| request_modify_order::PriceField::from(trigger.price_field).into()),
             if_touched_price: order.if_touched.as_ref().and_then(|trigger| trigger.price),
+            ..Default::default()
         };
 
         self.request_to_buf(req, id)
@@ -1321,7 +1324,7 @@ impl RithmicSenderApi {
             account_id: Some(account.account_id.clone()),
             symbol,
             exchange,
-            quantity,
+            quantity_64: quantity,
             price,
             trigger_price,
             transaction_type,
@@ -1335,6 +1338,7 @@ impl RithmicSenderApi {
             cancel_at_ssboe: timing.cancel_at_ssboe,
             cancel_at_usecs: timing.cancel_at_usecs,
             cancel_after_secs: timing.cancel_after_secs,
+            ..Default::default()
         };
 
         Ok(self.request_to_buf(req, id))
@@ -1411,6 +1415,7 @@ impl RithmicSenderApi {
             template_id: 3502,
             user_msg: vec![id.clone()],
             should_defer_request,
+            ..Default::default()
         };
 
         self.request_to_buf(req, id)
@@ -1458,7 +1463,7 @@ impl RithmicSenderApi {
         self.request_to_buf(req, id)
     }
 
-    /// Fills in `range`. Rithmic rejects a `max_record_count` above 10,000;
+    /// Fills in `range`. A specified `max_record_count` must be in 1..=10,000;
     /// `None` leaves the cap to the server.
     pub fn request_show_fill_history(
         &mut self,
@@ -1478,6 +1483,7 @@ impl RithmicSenderApi {
             start_index: Some(range.start()),
             finish_index: Some(range.finish()),
             max_record_count,
+            ..Default::default()
         };
 
         self.request_to_buf(req, id)
@@ -1590,6 +1596,86 @@ mod tests {
 
     fn decode_request<T: Message + Default>(buf: &[u8]) -> T {
         T::decode(&buf[4..]).expect("decode request")
+    }
+
+    #[test]
+    fn new_and_modified_orders_send_full_width_native_quantities() {
+        let mut api = RithmicSenderApi::new(&test_config());
+        let account = default_account();
+        let order = RithmicOrder::new()
+            .symbol("ESZ6")
+            .exchange("CME")
+            .quantity(u64::MAX)
+            .price_type(OrderType::Market)
+            .build()
+            .expect("valid market order");
+        let (buf, _) = api.request_order(&order, &account, "globex");
+        let request: RequestNewOrder = decode_request(&buf);
+        assert_eq!(request.quantity_64, Some(u64::MAX));
+        assert_eq!(request.quantity, None);
+
+        let modify = RithmicModifyOrder::new()
+            .id("basket-1")
+            .symbol("ESZ6")
+            .exchange("CME")
+            .quantity(u64::MAX)
+            .price_type(OrderType::Market)
+            .build()
+            .expect("valid market modification");
+        let (buf, _) = api.request_modify_order(&modify, &account);
+        let request: RequestModifyOrder = decode_request(&buf);
+        assert_eq!(request.quantity_64, Some(u64::MAX));
+        assert_eq!(request.quantity, None);
+    }
+
+    #[test]
+    fn bracket_entry_and_exit_legs_send_native_quantities_without_truncation() {
+        let mut api = RithmicSenderApi::new(&test_config());
+        let quantity = u64::from(u32::MAX) + 2;
+        let order = advanced_bracket()
+            .quantity(quantity)
+            .targets([(quantity - 1, 16), (1, 24)])
+            .stops([(quantity, 8)])
+            .build()
+            .expect("valid bracket");
+        let (buf, _) = api.request_bracket_order(order, &default_account(), None, "globex");
+        let request: RequestBracketOrder = decode_request(&buf);
+
+        assert_eq!(request.quantity_64, Some(quantity));
+        assert_eq!(request.target_quantity_64, vec![quantity - 1, 1]);
+        assert_eq!(request.stop_quantity_64, vec![quantity]);
+        assert_eq!(request.target_ticks, vec![16, 24]);
+        assert_eq!(request.stop_ticks, vec![8]);
+        assert_eq!(request.quantity, None);
+        assert!(request.target_quantity.is_empty());
+        assert!(request.stop_quantity.is_empty());
+    }
+
+    #[test]
+    fn oco_legs_keep_native_quantities_aligned_without_legacy_fields() {
+        let mut api = RithmicSenderApi::new(&test_config());
+        let quantities = vec![u64::from(u32::MAX) + 1, u64::MAX];
+        let legs = quantities
+            .iter()
+            .map(|&quantity| {
+                let leg = RithmicOcoOrderLeg::new()
+                    .symbol("ESZ6")
+                    .exchange("CME")
+                    .quantity(quantity)
+                    .price_type(OrderType::Market)
+                    .build()
+                    .expect("valid OCO leg");
+                (leg, "globex".to_owned())
+            })
+            .collect();
+        let (buf, _) = api
+            .request_oco_order(legs, OcoCancelTiming::default(), &default_account())
+            .expect("supported OCO legs");
+        let request: RequestOcoOrder = decode_request(&buf);
+
+        assert_eq!(request.quantity_64, quantities);
+        assert_eq!(request.symbol.len(), quantities.len());
+        assert!(request.quantity.is_empty());
     }
 
     /// A bracket exercising every field the request models, built the way
@@ -1709,9 +1795,9 @@ mod tests {
             request.bracket_type,
             Some(request_bracket_order::BracketType::TargetAndStopStatic as i32)
         );
-        assert_eq!(request.target_quantity, vec![1]);
+        assert_eq!(request.target_quantity_64, vec![1]);
         assert_eq!(request.target_ticks, vec![20]);
-        assert_eq!(request.stop_quantity, vec![1]);
+        assert_eq!(request.stop_quantity_64, vec![1]);
         assert_eq!(request.stop_ticks, vec![10]);
         assert_eq!(request.price, Some(5000.0));
         assert_eq!(request.trigger_price, None);
@@ -1805,9 +1891,9 @@ mod tests {
             request.bracket_type,
             Some(request_bracket_order::BracketType::TargetAndStop as i32)
         );
-        assert_eq!(request.target_quantity, vec![2, 1]);
+        assert_eq!(request.target_quantity_64, vec![2, 1]);
         assert_eq!(request.target_ticks, vec![16, 24]);
-        assert_eq!(request.stop_quantity, vec![3]);
+        assert_eq!(request.stop_quantity_64, vec![3]);
         assert_eq!(request.stop_ticks, vec![8]);
         assert_eq!(request.if_touched_symbol.as_deref(), Some("NQM6"));
         assert_eq!(request.if_touched_exchange.as_deref(), Some("CME"));
@@ -2097,7 +2183,7 @@ mod tests {
             request.exchange,
             vec!["CME".to_string(), "CME".to_string(), "NYMEX".to_string()]
         );
-        assert_eq!(request.quantity, vec![1, 2, 3]);
+        assert_eq!(request.quantity_64, vec![1, 2, 3]);
         assert_eq!(request.price, vec![5000.0, 18000.0, 75.0]);
         assert_eq!(request.trigger_price, vec![0.0, 17990.0, 74.5]);
         assert_eq!(
@@ -2620,7 +2706,7 @@ mod tests {
         assert_eq!(request.price, Vec::<f64>::new());
         assert_eq!(request.trigger_price, Vec::<f64>::new());
         // The rest of the per-leg fields still describe both legs.
-        assert_eq!(request.quantity, vec![1, 1]);
+        assert_eq!(request.quantity_64, vec![1, 1]);
     }
 
     #[test]

@@ -735,8 +735,8 @@ impl RithmicTickerPlantHandle {
 
     /// Subscribe to order book depth-by-order updates for a specific symbol
     ///
-    /// Updates arrive on `subscription_receiver` as [`RithmicMessage::DepthByOrder`]
-    /// and [`RithmicMessage::DepthByOrderEndEvent`]. For the current book, call
+    /// Updates arrive on `subscription_receiver` as [`RithmicMessage::DepthByOrder`].
+    /// For the current book, call
     /// [`get_depth_by_order_snapshot`](Self::get_depth_by_order_snapshot).
     ///
     /// # Arguments

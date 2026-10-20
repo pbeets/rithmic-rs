@@ -122,8 +122,7 @@ impl RithmicResponse {
             && self.resume_key().is_some()
     }
 
-    /// `true` for `BestBidOffer`, `LastTrade`, `DepthByOrder`,
-    /// `DepthByOrderEndEvent` and `OrderBook`.
+    /// `true` for `BestBidOffer`, `LastTrade`, `DepthByOrder` and `OrderBook`.
     ///
     /// Other ticker plant updates, such as `TradeStatistics` or `MarketMode`,
     /// give `false`.
@@ -133,7 +132,6 @@ impl RithmicResponse {
             RithmicMessage::BestBidOffer(_)
                 | RithmicMessage::LastTrade(_)
                 | RithmicMessage::DepthByOrder(_)
-                | RithmicMessage::DepthByOrderEndEvent(_)
                 | RithmicMessage::OrderBook(_)
         )
     }
@@ -164,7 +162,7 @@ mod tests {
     use super::*;
 
     use crate::rti::{
-        AccountPnLPositionUpdate, BestBidOffer, BracketUpdates, DepthByOrder, DepthByOrderEndEvent,
+        AccountPnLPositionUpdate, BestBidOffer, BracketUpdates, DepthByOrder,
         ExchangeOrderNotification, InstrumentPnLPositionUpdate, LastTrade, OrderBook,
         RithmicOrderNotification, messages::RithmicMessage,
     };
@@ -191,16 +189,11 @@ mod tests {
         let trade = make_response(RithmicMessage::LastTrade(LastTrade::default()));
         let depth = make_response(RithmicMessage::DepthByOrder(DepthByOrder::default()));
 
-        let depth_end = make_response(RithmicMessage::DepthByOrderEndEvent(
-            DepthByOrderEndEvent::default(),
-        ));
-
         let orderbook = make_response(RithmicMessage::OrderBook(OrderBook::default()));
 
         assert!(bbo.is_market_data());
         assert!(trade.is_market_data());
         assert!(depth.is_market_data());
-        assert!(depth_end.is_market_data());
         assert!(orderbook.is_market_data());
     }
 

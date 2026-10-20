@@ -6,31 +6,34 @@ use tracing::{error, warn};
 use crate::{
     error::RithmicError,
     rti::{
-        AccountPnLPositionUpdate, AccountRmsUpdates, BestBidOffer, BracketUpdates, DepthByOrder,
-        DepthByOrderEndEvent, EndOfDayPrices, ExchangeOrderNotification, ForcedLogout,
+        AccountAndUserUpdate, AccountPnLPositionUpdate, AccountRmsUpdates, BestBidOffer,
+        BracketUpdates, DepthByOrder, EndOfDayPrices, ExchangeOrderNotification, ForcedLogout,
         FrontMonthContractUpdate, IndicatorPrices, InstrumentPnLPositionUpdate, LastTrade,
         MarketMode, MessageType, OpenInterest, OrderBook, OrderPriceLimits, QuoteStatistics,
         Reject, RequestHeartbeat, ResponseAcceptAgreement, ResponseAccountList,
         ResponseAccountRmsInfo, ResponseAccountRmsUpdates, ResponseAuxilliaryReferenceData,
         ResponseBracketOrder, ResponseCancelAllOrders, ResponseCancelOrder,
         ResponseDepthByOrderSnapshot, ResponseDepthByOrderUpdates, ResponseEasyToBorrowList,
-        ResponseExitPosition, ResponseFrontMonthContract, ResponseGetInstrumentByUnderlying,
-        ResponseGetInstrumentByUnderlyingKeys, ResponseGetUserInfo, ResponseGetVolumeAtPrice,
-        ResponseGiveTickSizeTypeTable, ResponseHeartbeat, ResponseLinkOrders,
-        ResponseListAcceptedAgreements, ResponseListExchangePermissions,
-        ResponseListUnacceptedAgreements, ResponseLogin, ResponseLoginInfo, ResponseLogout,
-        ResponseMarketDataUpdate, ResponseMarketDataUpdateByUnderlying, ResponseModifyOrder,
+        ResponseExitPosition, ResponseFlowControl, ResponseFrontMonthContract,
+        ResponseGetInstrumentByUnderlying, ResponseGetInstrumentByUnderlyingKeys,
+        ResponseGetUserInfo, ResponseGetVolumeAtPrice, ResponseGiveTickSizeTypeTable,
+        ResponseHeartbeat, ResponseLinkOrders, ResponseListAcceptedAgreements,
+        ResponseListExchangePermissions, ResponseListUnacceptedAgreements, ResponseLogin,
+        ResponseLoginInfo, ResponseLogout, ResponseMarketDataUpdate,
+        ResponseMarketDataUpdateByUnderlying, ResponseModifyOrder,
         ResponseModifyOrderReferenceData, ResponseNewOrder, ResponseOcoOrder,
-        ResponseOrderSessionConfig, ResponsePnLPositionSnapshot, ResponsePnLPositionUpdates,
-        ResponseProductCodes, ResponseProductRmsInfo, ResponseReferenceData,
-        ResponseReplayExecutions, ResponseResumeBars, ResponseRithmicSystemGatewayInfo,
-        ResponseRithmicSystemInfo, ResponseSearchSymbols, ResponseSetRithmicMrktDataSelfCertStatus,
-        ResponseShowAgreement, ResponseShowBracketStops, ResponseShowBrackets,
-        ResponseShowFillHistory, ResponseShowOrderHistory, ResponseShowOrderHistoryDates,
-        ResponseShowOrderHistoryDetail, ResponseShowOrderHistorySummary, ResponseShowOrders,
-        ResponseSubscribeForOrderUpdates, ResponseSubscribeToBracketUpdates, ResponseTickBarReplay,
-        ResponseTickBarUpdate, ResponseTimeBarReplay, ResponseTimeBarUpdate, ResponseTradeRoutes,
-        ResponseUpdateStopBracketLevel, ResponseUpdateTargetBracketLevel,
+        ResponseOrderSessionConfig, ResponsePlaybackAccUsers, ResponsePnLPositionSnapshot,
+        ResponsePnLPositionUpdates, ResponseProductCodes, ResponseProductRmsInfo,
+        ResponseReferenceData, ResponseReplayExecutions, ResponseResumeBars,
+        ResponseRithmicSystemGatewayInfo, ResponseRithmicSystemInfo, ResponseSearchSymbols,
+        ResponseSessionConfig, ResponseSetRithmicMrktDataSelfCertStatus,
+        ResponseShowAccUserHistory, ResponseShowAgreement, ResponseShowBracketStops,
+        ResponseShowBrackets, ResponseShowFillHistory, ResponseShowOrderHistory,
+        ResponseShowOrderHistoryDates, ResponseShowOrderHistoryDetail,
+        ResponseShowOrderHistorySummary, ResponseShowOrders, ResponseSubscribeForOrderUpdates,
+        ResponseSubscribeToBracketUpdates, ResponseTickBarReplay, ResponseTickBarUpdate,
+        ResponseTimeBarReplay, ResponseTimeBarUpdate, ResponseTradeRoutes,
+        ResponseUpdateStopBracketLevel, ResponseUpdateTargetBracketLevel, ResponseUserEntitlements,
         ResponseVolumeProfileMinuteBars, RithmicOrderNotification, SymbolMarginRate, TickBar,
         TimeBar, TradeRoute, TradeStatistics, UpdateEasyToBorrowList, UserAccountUpdate,
         UserInfoUpdate, messages::RithmicMessage,
@@ -254,6 +257,36 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+            23 => {
+                let resp = ResponseFlowControl::decode(payload)
+                    .map_err(|e| decode_error(&self.source, e, false))?;
+                let error = classify_rp_code_error(&resp.rp_code);
+
+                RithmicResponse {
+                    request_id: resp.user_msg.first().cloned().unwrap_or_default(),
+                    message: RithmicMessage::ResponseFlowControl(resp),
+                    is_update: false,
+                    has_more: false,
+                    multi_response: false,
+                    error,
+                    source: self.source.clone(),
+                }
+            }
+            25 => {
+                let resp = ResponseSessionConfig::decode(payload)
+                    .map_err(|e| decode_error(&self.source, e, false))?;
+                let error = classify_rp_code_error(&resp.rp_code);
+
+                RithmicResponse {
+                    request_id: resp.user_msg.first().cloned().unwrap_or_default(),
+                    message: RithmicMessage::ResponseSessionConfig(resp),
+                    is_update: false,
+                    has_more: false,
+                    multi_response: false,
+                    error,
+                    source: self.source.clone(),
+                }
+            }
             75 => {
                 let resp =
                     Reject::decode(payload).map_err(|e| decode_error(&self.source, e, false))?;
@@ -280,9 +313,8 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
-            // 76 is retained for older gateways; template version 5.42 sends
-            // the same message schema as 358.
-            76 | 358 => {
+            // Legacy user/account updates retain their original general template.
+            76 => {
                 let resp = UserAccountUpdate::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, true))?;
 
@@ -645,20 +677,6 @@ impl RithmicReceiverApi {
                 RithmicResponse {
                     request_id: "".to_string(),
                     message: RithmicMessage::DepthByOrder(resp),
-                    is_update: true,
-                    has_more: false,
-                    multi_response: false,
-                    error: None,
-                    source: self.source.clone(),
-                }
-            }
-            161 => {
-                let resp = DepthByOrderEndEvent::decode(payload)
-                    .map_err(|e| decode_error(&self.source, e, true))?;
-
-                RithmicResponse {
-                    request_id: "".to_string(),
-                    message: RithmicMessage::DepthByOrderEndEvent(resp),
                     is_update: true,
                     has_more: false,
                     multi_response: false,
@@ -1302,6 +1320,20 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+            358 => {
+                let resp = AccountAndUserUpdate::decode(payload)
+                    .map_err(|e| decode_error(&self.source, e, true))?;
+
+                RithmicResponse {
+                    request_id: String::new(),
+                    message: RithmicMessage::AccountAndUserUpdate(resp),
+                    is_update: true,
+                    has_more: false,
+                    multi_response: false,
+                    error: None,
+                    source: self.source.clone(),
+                }
+            }
             401 => {
                 let resp = ResponsePnLPositionUpdates::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, false))?;
@@ -1546,6 +1578,54 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
+            3517 => {
+                let resp = ResponseUserEntitlements::decode(payload)
+                    .map_err(|e| decode_error(&self.source, e, false))?;
+                let has_more = has_multiple(&resp.rq_handler_rp_code);
+                let error = classify_rp_code_error(&resp.rp_code);
+
+                RithmicResponse {
+                    request_id: resp.user_msg.first().cloned().unwrap_or_default(),
+                    message: RithmicMessage::ResponseUserEntitlements(resp),
+                    is_update: false,
+                    has_more,
+                    multi_response: true,
+                    error,
+                    source: self.source.clone(),
+                }
+            }
+            3519 => {
+                let resp = ResponsePlaybackAccUsers::decode(payload)
+                    .map_err(|e| decode_error(&self.source, e, false))?;
+                let has_more = has_multiple(&resp.rq_handler_rp_code);
+                let error = classify_rp_code_error(&resp.rp_code);
+
+                RithmicResponse {
+                    request_id: resp.user_msg.first().cloned().unwrap_or_default(),
+                    message: RithmicMessage::ResponsePlaybackAccUsers(resp),
+                    is_update: false,
+                    has_more,
+                    multi_response: true,
+                    error,
+                    source: self.source.clone(),
+                }
+            }
+            3521 => {
+                let resp = ResponseShowAccUserHistory::decode(payload)
+                    .map_err(|e| decode_error(&self.source, e, false))?;
+                let has_more = has_multiple(&resp.rq_handler_rp_code);
+                let error = classify_rp_code_error(&resp.rp_code);
+
+                RithmicResponse {
+                    request_id: resp.user_msg.first().cloned().unwrap_or_default(),
+                    message: RithmicMessage::ResponseShowAccUserHistory(resp),
+                    is_update: false,
+                    has_more,
+                    multi_response: true,
+                    error,
+                    source: self.source.clone(),
+                }
+            }
             _ => {
                 // Not a recognized message template.
                 let unknown = UnknownTemplateMessage {
@@ -1660,6 +1740,8 @@ mod tests {
                 // heartbeats first, and only a failed one reaches subscribers.
                 19 => ResponseHeartbeat { update: true, multi: false },
                 21 => ResponseRithmicSystemGatewayInfo { update: false, multi: false },
+                23 => ResponseFlowControl { update: false, multi: false },
+                25 => ResponseSessionConfig { update: false, multi: false },
                 75 => Reject { update: false, multi: false },
                 76 => UserAccountUpdate { update: true, multi: false },
                 77 => ForcedLogout { update: true, multi: false },
@@ -1686,7 +1768,6 @@ mod tests {
                 158 => OpenInterest { update: true, multi: false },
                 159 => FrontMonthContractUpdate { update: true, multi: false },
                 160 => DepthByOrder { update: true, multi: false },
-                161 => DepthByOrderEndEvent { update: true, multi: false },
                 162 => SymbolMarginRate { update: true, multi: false },
                 163 => OrderPriceLimits { update: true, multi: false },
                 201 => ResponseTimeBarUpdate { update: false, multi: false },
@@ -1729,7 +1810,7 @@ mod tests {
                 355 => UpdateEasyToBorrowList { update: true, multi: false },
                 356 => AccountRmsUpdates { update: true, multi: false },
                 357 => UserInfoUpdate { update: true, multi: false },
-                358 => UserAccountUpdate { update: true, multi: false },
+                358 => AccountAndUserUpdate { update: true, multi: false },
                 401 => ResponsePnLPositionUpdates { update: false, multi: false },
                 403 => ResponsePnLPositionSnapshot { update: false, multi: false },
                 450 => InstrumentPnLPositionUpdate { update: true, multi: false },
@@ -1746,6 +1827,9 @@ mod tests {
                 3509 => ResponseAccountRmsUpdates { update: false, multi: false },
                 3511 => ResponseGetUserInfo { update: false, multi: true },
                 3513 => ResponseShowFillHistory { update: false, multi: true },
+                3517 => ResponseUserEntitlements { update: false, multi: true },
+                3519 => ResponsePlaybackAccUsers { update: false, multi: true },
+                3521 => ResponseShowAccUserHistory { update: false, multi: true },
             }
         };
     }
@@ -1853,6 +1937,73 @@ mod tests {
             RithmicMessage::UpdateEasyToBorrowList(_)
         ));
         assert!(response.is_update);
+    }
+
+    #[test]
+    fn account_and_user_update_preserves_new_audit_fields() {
+        let update = AccountAndUserUpdate {
+            template_id: 358,
+            account_id: Some("ACCOUNT_A".into()),
+            source_user_id: Some("admin".into()),
+            user: Some("trader".into()),
+            order_copy_status: Some("enabled".into()),
+            ..Default::default()
+        };
+        let response = decode_with_api(&update);
+
+        assert_eq!(
+            response.message,
+            RithmicMessage::AccountAndUserUpdate(update)
+        );
+        assert!(response.is_update);
+        assert!(response.request_id.is_empty());
+        assert!(response.error.is_none());
+    }
+
+    #[test]
+    fn native_trade_sizes_above_u32_are_preserved() {
+        let trade = LastTrade {
+            template_id: 150,
+            trade_size_64: Some(u64::from(u32::MAX) + 1),
+            ..Default::default()
+        };
+        let response = decode_with_api(&trade);
+
+        assert_eq!(response.message, RithmicMessage::LastTrade(trade));
+        assert!(response.is_update);
+    }
+
+    #[test]
+    fn account_history_replies_preserve_routing_and_multipart_completion() {
+        for intermediate in [true, false] {
+            let handler_code = if intermediate {
+                vec!["7".into()]
+            } else {
+                vec![]
+            };
+            let playback = decode_with_api(&ResponsePlaybackAccUsers {
+                template_id: 3519,
+                user_msg: vec!["playback".into()],
+                rq_handler_rp_code: handler_code.clone(),
+                rp_code: vec!["0".into()],
+                ..Default::default()
+            });
+            let history = decode_with_api(&ResponseShowAccUserHistory {
+                template_id: 3521,
+                user_msg: vec!["history".into()],
+                rq_handler_rp_code: handler_code,
+                rp_code: vec!["0".into()],
+                ..Default::default()
+            });
+
+            for (response, request_id) in [(playback, "playback"), (history, "history")] {
+                assert_eq!(response.request_id, request_id);
+                assert!(response.multi_response);
+                assert_eq!(response.has_more, intermediate);
+                assert!(!response.is_update);
+                assert!(response.error.is_none());
+            }
+        }
     }
 
     #[test]

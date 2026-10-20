@@ -89,7 +89,7 @@ async fn place_oco_order_rejects_fewer_than_two_legs() {
 
 #[tokio::test]
 async fn show_fill_history_rejects_a_record_cap_rithmic_would_refuse() {
-    for count in [10_001, -1] {
+    for count in [0, 10_001, -1] {
         let (handle, mut command_receiver) = test_handle();
 
         // No actor is running, so without the guard this parks forever; the
@@ -111,6 +111,35 @@ async fn show_fill_history_rejects_a_record_cap_rithmic_would_refuse() {
         assert!(matches!(err, RithmicError::InvalidArgument(_)));
         // Rejected before reaching the actor, so nothing was queued.
         assert!(command_receiver.try_recv().is_err());
+    }
+}
+
+#[tokio::test]
+async fn show_fill_history_forwards_valid_boundaries_and_an_omitted_cap() {
+    for count in [None, Some(1), Some(10_000)] {
+        let (handle, mut command_receiver) = test_handle();
+        let range = crate::types::FillHistoryRange::Ssboe {
+            start: 0,
+            finish: 1,
+        };
+        let (result, ()) = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            tokio::join!(handle.show_fill_history(range, count), async {
+                match command_receiver.recv().await {
+                    Some(OrderPlantCommand::ShowFillHistory {
+                        max_record_count,
+                        response_sender,
+                        ..
+                    }) => {
+                        assert_eq!(max_record_count, count);
+                        response_sender.send(Ok(vec![])).unwrap();
+                    }
+                    _ => panic!("expected a fill-history request"),
+                }
+            })
+        })
+        .await
+        .expect("valid record caps must reach the actor");
+        assert!(result.unwrap().is_empty());
     }
 }
 

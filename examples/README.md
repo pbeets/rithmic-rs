@@ -66,6 +66,16 @@ below the market, and cancel them before they exit.
 [`generate_protos.rs`](generate_protos.rs) is a maintainer tool, not an example. It
 regenerates `src/rti.rs` from the `.proto` files and never connects.
 
+With `protoc` installed, regenerate from a downloaded Rithmic release:
+
+```sh
+cargo run --example generate_protos -- /path/to/0.90.0.0/proto
+cargo fmt
+```
+
+Omit the path to read `src/raw-proto/`. Vendor source files remain outside Git;
+the generated Rust bindings are checked in.
+
 ## First-use agreements
 
 The repository example opens only the repository plant. It lists pending agreements
