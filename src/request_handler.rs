@@ -1,7 +1,6 @@
+use std::collections::{HashMap, hash_map::Entry};
 use tokio::sync::oneshot;
 use tracing::{error, info, warn};
-
-use std::collections::{HashMap, hash_map::Entry};
 
 use crate::{
     api::{receiver_api::RithmicResponse, rp_code::response_rp_code_info},

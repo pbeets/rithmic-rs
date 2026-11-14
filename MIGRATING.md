@@ -39,6 +39,9 @@ guide below still applies.
   the `retry_timeout` field.
 - Delete calls to the history plant's `resume_bars()`. The `load_*` methods
   already resume replays the server cuts short.
+- Replace `load_ticks(symbol, exchange, start, end)` with `load_ticks_all()`,
+  which takes the same arguments and has no 10,000-trade cap. To keep the cap,
+  call `load_tick_bars(symbol, exchange, 1, start, end)`.
 
 # Migrating to 3.0.0
 

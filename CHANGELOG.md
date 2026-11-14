@@ -76,6 +76,9 @@ Guide gives them no template id.
   deprecated in 3.3.0. Use `connect_total_timeout()`.
 - `RithmicHistoryPlantHandle::resume_bars()`, deprecated in 3.2.0. The `load_*`
   methods resume cut-short replays themselves.
+- `RithmicHistoryPlantHandle::load_ticks()`. It stopped at 10,000 trades
+  without saying so. Use `load_ticks_all()`, or `load_tick_bars()` with
+  `bar_length = 1` for the capped replay.
 
 ### Fixed
 
