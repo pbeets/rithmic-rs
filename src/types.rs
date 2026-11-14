@@ -11,10 +11,10 @@ use std::{
 use crate::{
     error::RithmicError,
     rti::{
-        request_account_rms_updates, request_bracket_order, request_cancel_all_orders,
-        request_cancel_order, request_easy_to_borrow_list, request_exit_position,
+        request_account_rms_updates::UpdateBits as RmsUpdateBits, request_bracket_order,
+        request_cancel_all_orders, request_cancel_order, request_exit_position,
         request_market_data_update::UpdateBits, request_modify_order, request_new_order,
-        request_oco_order,
+        request_oco_order, request_time_bar_update,
     },
 };
 
@@ -760,76 +760,35 @@ impl SessionConfig {
     }
 }
 
-/// Subscribe to or unsubscribe from the easy-to-borrow list (template 348).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[non_exhaustive]
-pub enum EasyToBorrowRequest {
-    /// Request the current list and receive updates as it changes.
-    Subscribe,
-    /// Stop receiving easy-to-borrow updates.
-    Unsubscribe,
-}
-
-impl EasyToBorrowRequest {
-    /// The protobuf spelling, as the generated enum's `as_str_name` writes it.
-    pub fn as_str_name(&self) -> &'static str {
-        match self {
-            Self::Subscribe => "SUBSCRIBE",
-            Self::Unsubscribe => "UNSUBSCRIBE",
-        }
-    }
-}
-
-impl fmt::Display for EasyToBorrowRequest {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str_name())
-    }
-}
-
-impl From<EasyToBorrowRequest> for request_easy_to_borrow_list::Request {
-    fn from(request: EasyToBorrowRequest) -> Self {
-        match request {
-            EasyToBorrowRequest::Subscribe => Self::Subscribe,
-            EasyToBorrowRequest::Unsubscribe => Self::Unsubscribe,
-        }
-    }
-}
-
-/// Selects which RMS fields to stream via
+/// The account RMS fields to stream, passed to
 /// [`subscribe_account_rms_updates`](crate::RithmicOrderPlantHandle::subscribe_account_rms_updates).
 ///
-/// Pass one or more selectors; they are combined into the request's
-/// `update_bits` bitmask. An empty selection leaves the field off the
-/// request.
+/// Combine fields with `|`. They go out as the `update_bits` mask of the request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-#[non_exhaustive]
-pub enum RmsUpdateBits {
-    /// Stream `auto_liq_threshold_current_value` updates.
-    AutoLiqThresholdCurrentValue,
-}
+pub struct RmsUpdates(i32);
 
-impl RmsUpdateBits {
-    /// The protobuf spelling, as the generated enum's `as_str_name` writes it.
-    pub fn as_str_name(&self) -> &'static str {
-        match self {
-            Self::AutoLiqThresholdCurrentValue => "AUTO_LIQ_THRESHOLD_CURRENT_VALUE",
-        }
+impl RmsUpdates {
+    /// `auto_liq_threshold_current_value` on
+    /// [`AccountRmsUpdates`](crate::rti::AccountRmsUpdates).
+    pub const AUTO_LIQ_THRESHOLD_CURRENT_VALUE: Self =
+        Self(RmsUpdateBits::AutoLiqThresholdCurrentValue as i32);
+
+    pub(crate) fn bits(self) -> i32 {
+        self.0
     }
 }
 
-impl fmt::Display for RmsUpdateBits {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str_name())
+impl BitOr for RmsUpdates {
+    type Output = Self;
+
+    fn bitor(self, rhs: Self) -> Self {
+        Self(self.0 | rhs.0)
     }
 }
 
-impl From<RmsUpdateBits> for request_account_rms_updates::UpdateBits {
-    fn from(bits: RmsUpdateBits) -> Self {
-        match bits {
-            RmsUpdateBits::AutoLiqThresholdCurrentValue => Self::AutoLiqThresholdCurrentValue,
-        }
+impl BitOrAssign for RmsUpdates {
+    fn bitor_assign(&mut self, rhs: Self) {
+        self.0 |= rhs.0;
     }
 }
 
@@ -1483,6 +1442,17 @@ impl From<OrderPriceField> for request_modify_order::PriceField {
     }
 }
 
+impl From<TimeBarType> for request_time_bar_update::BarType {
+    fn from(bar_type: TimeBarType) -> Self {
+        match bar_type {
+            TimeBarType::SecondBar => Self::SecondBar,
+            TimeBarType::MinuteBar => Self::MinuteBar,
+            TimeBarType::DailyBar => Self::DailyBar,
+            TimeBarType::WeeklyBar => Self::WeeklyBar,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1498,6 +1468,17 @@ mod tests {
                 let bits = UpdateBits::try_from(bit).expect("template 100 lacks a 105 bit");
                 assert_eq!(underlying.as_str_name(), bits.as_str_name());
             }
+        }
+    }
+
+    /// Time bar updates (template 200) take the replay's `TimeBarType`, so each
+    /// one must land on the update variant with the same name and wire value.
+    #[test]
+    fn every_time_bar_type_maps_to_the_same_update_bar_type() {
+        for bar_type in (1..).map_while(|value| TimeBarType::try_from(value).ok()) {
+            let update = request_time_bar_update::BarType::from(bar_type);
+            assert_eq!(update as i32, bar_type as i32);
+            assert_eq!(update.as_str_name(), bar_type.as_str_name());
         }
     }
 

@@ -241,7 +241,7 @@ async fn load_time_bars_all_asks_the_server_to_lift_the_record_cap() {
             .load_time_bars_all(
                 "ESZ6".to_string(),
                 "CME".to_string(),
-                BarType::MinuteBar,
+                TimeBarType::MinuteBar,
                 1,
                 1,
                 1000,
@@ -345,7 +345,7 @@ async fn load_time_bar_replay_sends_the_request_as_given() {
                 TimeBarReplayRequest::new()
                     .symbol("ESZ6")
                     .exchange("CME")
-                    .bar_type(BarType::DailyBar)
+                    .bar_type(TimeBarType::DailyBar)
                     .bar_type_period(1)
                     .start_time_sec(20260901)
                     .end_time_sec(20260914)
@@ -770,4 +770,82 @@ async fn a_load_dropped_while_waiting_for_room_in_the_queue_is_never_sent() {
 
     assert!(plant.request_receiver.try_recv().is_err());
     assert_wire_silent(&mut client).await;
+}
+
+/// Each subscribe/unsubscribe pair shares one command, so a swapped `Request`
+/// would only show up on the wire.
+#[tokio::test]
+async fn bar_update_pairs_send_subscribe_then_unsubscribe() {
+    use crate::rti::{
+        RequestTickBarUpdate, RequestTimeBarUpdate, request_tick_bar_update,
+        request_time_bar_update,
+    };
+
+    let (handle, actor, mut client) = running_plant_with_handle().await;
+
+    let time = handle.clone();
+    tokio::spawn(async move {
+        time.subscribe_time_bar_updates("ESZ6", "CME", TimeBarType::MinuteBar, 5)
+            .await
+    });
+    let sent = RequestTimeBarUpdate::decode(read_wire_request(&mut client).await.as_slice())
+        .expect("a time bar update request");
+    assert_eq!(
+        sent.request,
+        Some(request_time_bar_update::Request::Subscribe.into())
+    );
+    assert_eq!(
+        sent.bar_type,
+        Some(request_time_bar_update::BarType::MinuteBar.into())
+    );
+
+    let time = handle.clone();
+    tokio::spawn(async move {
+        time.unsubscribe_time_bar_updates("ESZ6", "CME", TimeBarType::MinuteBar, 5)
+            .await
+    });
+    let sent = RequestTimeBarUpdate::decode(read_wire_request(&mut client).await.as_slice())
+        .expect("a time bar update request");
+    assert_eq!(
+        sent.request,
+        Some(request_time_bar_update::Request::Unsubscribe.into())
+    );
+
+    let tick = handle.clone();
+    tokio::spawn(async move {
+        tick.subscribe_tick_bar_updates(
+            "ESZ6",
+            "CME",
+            request_tick_bar_update::BarType::TickBar,
+            request_tick_bar_update::BarSubType::Regular,
+            "1",
+        )
+        .await
+    });
+    let sent = RequestTickBarUpdate::decode(read_wire_request(&mut client).await.as_slice())
+        .expect("a tick bar update request");
+    assert_eq!(
+        sent.request,
+        Some(request_tick_bar_update::Request::Subscribe.into())
+    );
+
+    tokio::spawn(async move {
+        handle
+            .unsubscribe_tick_bar_updates(
+                "ESZ6",
+                "CME",
+                request_tick_bar_update::BarType::TickBar,
+                request_tick_bar_update::BarSubType::Regular,
+                "1",
+            )
+            .await
+    });
+    let sent = RequestTickBarUpdate::decode(read_wire_request(&mut client).await.as_slice())
+        .expect("a tick bar update request");
+    assert_eq!(
+        sent.request,
+        Some(request_tick_bar_update::Request::Unsubscribe.into())
+    );
+
+    actor.abort();
 }

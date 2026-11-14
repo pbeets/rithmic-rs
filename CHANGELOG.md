@@ -49,6 +49,22 @@ Guide gives them no template id.
   `Vec<UpdateBits>` and request type. `unsubscribe_by_underlying` is new.
   Template 105 does not list `ADJUSTED_CLOSE`, since Rithmic added it to
   template 100 only. The bit is sent as-is and the server decides.
+- Every feed that can be stopped now has a `subscribe_*`/`unsubscribe_*` pair,
+  and the unsubscribe takes the same arguments. The new methods are
+  `subscribe_easy_to_borrow_list`, `unsubscribe_easy_to_borrow_list`,
+  `unsubscribe_account_rms_updates`, `unsubscribe_time_bar_updates` and
+  `unsubscribe_tick_bar_updates`. They replace `get_easy_to_borrow_list(request)`,
+  the `subscribe` flag on `subscribe_account_rms_updates`, and the `Request`
+  argument on the two bar update methods.
+- `subscribe_account_rms_updates` takes `Option<RmsUpdates>`, a set combined
+  with `|`, in place of `Vec<RmsUpdateBits>`. `EasyToBorrowRequest` and
+  `RmsUpdateBits` are removed.
+- Time bar updates take `TimeBarType`, like the time bar loaders, in place of
+  `rti::request_time_bar_update::BarType`.
+- `get_front_month_contract(symbol, exchange)` drops `need_updates`. Use the new
+  `subscribe_front_month_contract` for roll updates.
+- `get_trade_routes()` drops `subscribe_for_updates` and always asks for route
+  updates, as login does.
 
 ### Added
 

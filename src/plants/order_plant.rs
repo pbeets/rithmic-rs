@@ -28,11 +28,11 @@ use crate::{
         trade_routes::TradeRouteCache,
     },
     request_handler::{PendingReplay, RequestResult, Responder},
-    rti::{TradeRoute, messages::RithmicMessage, request_login::SysInfraType},
-    types::{
-        EasyToBorrowRequest, EntitlementKind, FillHistoryRange, PlaybackKind, RmsUpdateBits,
-        SessionConfig,
+    rti::{
+        TradeRoute, messages::RithmicMessage, request_easy_to_borrow_list::Request,
+        request_login::SysInfraType,
     },
+    types::{EntitlementKind, FillHistoryRange, PlaybackKind, RmsUpdates, SessionConfig},
 };
 
 /// Subscription channel capacity used when the config sets none.
@@ -107,7 +107,6 @@ pub(crate) enum OrderPlantCommand {
         response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
     },
     GetTradeRoutes {
-        subscribe_for_updates: bool,
         response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
     },
     /// Apply a `TradeRoute` (350) update to the route cache. Sends nothing.
@@ -164,8 +163,8 @@ pub(crate) enum OrderPlantCommand {
         account: Arc<RithmicAccount>,
         response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
     },
-    GetEasyToBorrowList {
-        request_type: EasyToBorrowRequest,
+    EasyToBorrowList {
+        request_type: Request,
         response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
     },
     ModifyOrderReferenceData {
@@ -221,9 +220,9 @@ pub(crate) enum OrderPlantCommand {
         account: Arc<RithmicAccount>,
         response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
     },
-    SubscribeAccountRmsUpdates {
+    AccountRmsUpdates {
         subscribe: bool,
-        update_bits: Vec<RmsUpdateBits>,
+        data: Option<RmsUpdates>,
         account: Arc<RithmicAccount>,
         response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
     },
@@ -688,13 +687,10 @@ impl PlantKind for OrderPlant {
                 response_sender,
             ),
 
-            OrderPlantCommand::GetTradeRoutes {
-                subscribe_for_updates,
-                response_sender,
-            } => cx.send_for(
-                |api| api.request_trade_routes(subscribe_for_updates),
-                response_sender,
-            ),
+            // Asks for updates like login does, so this never turns them off.
+            OrderPlantCommand::GetTradeRoutes { response_sender } => {
+                cx.send_for(|api| api.request_trade_routes(true), response_sender)
+            }
 
             OrderPlantCommand::RecordTradeRouteUpdate(update) => {
                 self.trade_routes.record_update(&update);
@@ -814,7 +810,7 @@ impl PlantKind for OrderPlant {
                 response_sender,
             ),
 
-            OrderPlantCommand::GetEasyToBorrowList {
+            OrderPlantCommand::EasyToBorrowList {
                 request_type,
                 response_sender,
             } => cx.send_for(
@@ -922,13 +918,13 @@ impl PlantKind for OrderPlant {
                 response_sender,
             ),
 
-            OrderPlantCommand::SubscribeAccountRmsUpdates {
+            OrderPlantCommand::AccountRmsUpdates {
                 subscribe,
-                update_bits,
+                data,
                 account,
                 response_sender,
             } => cx.send_for(
-                |api| api.request_account_rms_updates(subscribe, update_bits, &account),
+                |api| api.request_account_rms_updates(subscribe, data, &account),
                 response_sender,
             ),
 
@@ -1541,18 +1537,12 @@ impl RithmicOrderPlantHandle {
     ///
     /// This only reports the routes. It does not change the routes orders go
     /// out on; see [`record_trade_route`](Self::record_trade_route) for that.
-    /// [`login`](Self::login) already subscribes to route updates.
-    ///
-    /// # Arguments
-    /// * `subscribe_for_updates` - Whether to receive `TradeRoute` updates when routes change
-    pub async fn get_trade_routes(
-        &self,
-        subscribe_for_updates: bool,
-    ) -> Result<Vec<RithmicResponse>, RithmicError> {
+    /// [`login`](Self::login) already subscribes to route updates, so there is
+    /// no separate subscribe call.
+    pub async fn get_trade_routes(&self) -> Result<Vec<RithmicResponse>, RithmicError> {
         let (tx, rx) = oneshot::channel::<Result<Vec<RithmicResponse>, RithmicError>>();
 
         let command = OrderPlantCommand::GetTradeRoutes {
-            subscribe_for_updates,
             response_sender: tx,
         };
 
@@ -1943,25 +1933,36 @@ impl RithmicOrderPlantHandle {
 
     /// Get the easy-to-borrow list for short selling, one response per symbol.
     ///
-    /// With [`EasyToBorrowRequest::Subscribe`], later changes arrive on the
-    /// subscription receiver as `UpdateEasyToBorrowList`.
-    ///
-    /// # Arguments
-    /// * `request_type` - Subscribe to the list, or unsubscribe from updates
-    pub async fn get_easy_to_borrow_list(
+    /// Later changes arrive on the subscription receiver as
+    /// [`RithmicMessage::UpdateEasyToBorrowList`]. Stop them with
+    /// [`unsubscribe_easy_to_borrow_list`](Self::unsubscribe_easy_to_borrow_list).
+    pub async fn subscribe_easy_to_borrow_list(
         &self,
-        request_type: EasyToBorrowRequest,
     ) -> Result<Vec<RithmicResponse>, RithmicError> {
+        await_all_responses(self.easy_to_borrow_list(Request::Subscribe).await).await
+    }
+
+    /// Stop the updates
+    /// [`subscribe_easy_to_borrow_list`](Self::subscribe_easy_to_borrow_list)
+    /// started. Returns the acknowledgement.
+    pub async fn unsubscribe_easy_to_borrow_list(&self) -> Result<RithmicResponse, RithmicError> {
+        await_first_response(self.easy_to_borrow_list(Request::Unsubscribe).await).await
+    }
+
+    async fn easy_to_borrow_list(
+        &self,
+        request_type: Request,
+    ) -> oneshot::Receiver<Result<Vec<RithmicResponse>, RithmicError>> {
         let (tx, rx) = oneshot::channel::<Result<Vec<RithmicResponse>, RithmicError>>();
 
-        let command = OrderPlantCommand::GetEasyToBorrowList {
+        let command = OrderPlantCommand::EasyToBorrowList {
             request_type,
             response_sender: tx,
         };
 
         let _ = self.sender.send(command).await;
 
-        await_all_responses(rx).await
+        rx
     }
 
     /// Change the user tag on a working order.
@@ -2249,27 +2250,41 @@ impl RithmicOrderPlantHandle {
         await_all_responses(rx).await
     }
 
-    /// Subscribe to, or unsubscribe from, RMS updates for this account.
+    /// Subscribe to RMS updates for this account.
     ///
     /// Updates arrive on the subscription receiver as
     /// [`RithmicMessage::AccountRmsUpdates`].
     ///
     /// # Arguments
-    /// * `subscribe` - true to subscribe, false to unsubscribe
-    /// * `update_bits` - which RMS fields to stream. Passing
-    ///   `vec![RmsUpdateBits::AutoLiqThresholdCurrentValue]` streams
-    ///   `auto_liq_threshold_current_value`; an empty `Vec` leaves the field
-    ///   off the request.
+    /// * `data` - The [`RmsUpdates`] fields to stream, or `None` to leave
+    ///   `update_bits` off the request
     pub async fn subscribe_account_rms_updates(
         &self,
+        data: Option<RmsUpdates>,
+    ) -> Result<RithmicResponse, RithmicError> {
+        self.account_rms_updates(true, data).await
+    }
+
+    /// Stop the updates
+    /// [`subscribe_account_rms_updates`](Self::subscribe_account_rms_updates)
+    /// started. Pass the same `data` you subscribed with.
+    pub async fn unsubscribe_account_rms_updates(
+        &self,
+        data: Option<RmsUpdates>,
+    ) -> Result<RithmicResponse, RithmicError> {
+        self.account_rms_updates(false, data).await
+    }
+
+    async fn account_rms_updates(
+        &self,
         subscribe: bool,
-        update_bits: Vec<RmsUpdateBits>,
+        data: Option<RmsUpdates>,
     ) -> Result<RithmicResponse, RithmicError> {
         let (tx, rx) = oneshot::channel::<Result<Vec<RithmicResponse>, RithmicError>>();
 
-        let command = OrderPlantCommand::SubscribeAccountRmsUpdates {
+        let command = OrderPlantCommand::AccountRmsUpdates {
             subscribe,
-            update_bits,
+            data,
             account: self.account.clone(),
             response_sender: tx,
         };

@@ -61,6 +61,37 @@ Coming from 2.x, work through the 3.0.0 guide below first, then this list.
   `subscribe_by_underlying(.., data)` or `unsubscribe_by_underlying(.., data)`.
   Template 105 does not list `ADJUSTED_CLOSE`, so that bit is sent as-is and
   the server decides what to do with it.
+- Calls that started or stopped a feed by argument are now a `subscribe_*` and
+  `unsubscribe_*` pair. Each unsubscribe takes the same arguments as its
+  subscribe:
+
+  | Old call | New call |
+  |---|---|
+  | `get_easy_to_borrow_list(EasyToBorrowRequest::Subscribe)` | `subscribe_easy_to_borrow_list()` |
+  | `get_easy_to_borrow_list(EasyToBorrowRequest::Unsubscribe)` | `unsubscribe_easy_to_borrow_list()` |
+  | `subscribe_account_rms_updates(true, bits)` | `subscribe_account_rms_updates(data)` |
+  | `subscribe_account_rms_updates(false, bits)` | `unsubscribe_account_rms_updates(data)` |
+  | `subscribe_time_bar_updates(.., period, Request::Subscribe)` | `subscribe_time_bar_updates(.., period)` |
+  | `subscribe_time_bar_updates(.., period, Request::Unsubscribe)` | `unsubscribe_time_bar_updates(.., period)` |
+  | `subscribe_tick_bar_updates(.., specifier, Request::Subscribe)` | `subscribe_tick_bar_updates(.., specifier)` |
+  | `subscribe_tick_bar_updates(.., specifier, Request::Unsubscribe)` | `unsubscribe_tick_bar_updates(.., specifier)` |
+  | `get_front_month_contract(symbol, exchange, false)` | `get_front_month_contract(symbol, exchange)` |
+  | `get_front_month_contract(symbol, exchange, true)` | `subscribe_front_month_contract(symbol, exchange)` |
+  | `get_trade_routes(subscribe_for_updates)` | `get_trade_routes()` |
+
+  `subscribe_easy_to_borrow_list` returns every reply as a `Vec`, as before.
+  The unsubscribe returns one `RithmicResponse`.
+- The RMS `data` is an `Option<RmsUpdates>`: `vec![]` becomes `None`, and
+  `vec![RmsUpdateBits::AutoLiqThresholdCurrentValue]` becomes
+  `Some(RmsUpdates::AUTO_LIQ_THRESHOLD_CURRENT_VALUE)`. Combine fields with
+  `|`. `RmsUpdates` has no serde support.
+- `EasyToBorrowRequest` and `RmsUpdateBits` are removed.
+- `subscribe_time_bar_updates` and `unsubscribe_time_bar_updates` take
+  `TimeBarType`, the same type as the time bar loaders. Replace
+  `rti::request_time_bar_update::BarType::MinuteBar` with
+  `TimeBarType::MinuteBar`. Tick bar updates keep the `rti` types.
+- `get_trade_routes()` always asks for route updates, as login does. Front
+  month and trade route updates have no unsubscribe.
 
 # Migrating to 3.0.0
 

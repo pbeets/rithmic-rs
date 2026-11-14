@@ -132,7 +132,7 @@ async fn requests(handle: &RithmicTickerPlantHandle, symbol: &str, exchange: &st
 
 /// The crate never times out a request. Add your own where you need one.
 async fn caller_timeout(handle: &RithmicTickerPlantHandle) {
-    let request = handle.get_front_month_contract("ES", "CME", false);
+    let request = handle.get_front_month_contract("ES", "CME");
 
     match timeout(Duration::from_secs(10), request).await {
         Ok(Ok(resp)) => match &resp.error {
