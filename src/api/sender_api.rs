@@ -1772,6 +1772,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn order_and_modify_requests_send_only_quantity_64() {
         let mut api = RithmicSenderApi::new(&test_config());
         let account = default_account();

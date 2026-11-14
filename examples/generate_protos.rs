@@ -1,5 +1,45 @@
 //! Regenerates `src/rti.rs` from the `.proto` files in `src/raw-proto/`.
 //! Run via: `cargo run --example generate_protos && cargo fmt`
+
+// Template version 5.55 deprecated these 32-bit fields. Each has a `_64` twin.
+const DEPRECATED_32_BIT_FIELDS: &[&str] = &[
+    "BestBidOffer.bid_size",
+    "BestBidOffer.bid_implicit_size",
+    "BestBidOffer.ask_size",
+    "BestBidOffer.ask_implicit_size",
+    "DepthByOrder.depth_size",
+    "ExchangeOrderNotification.quantity",
+    "ExchangeOrderNotification.confirmed_size",
+    "ExchangeOrderNotification.modified_size",
+    "ExchangeOrderNotification.cancelled_size",
+    "ExchangeOrderNotification.fill_size",
+    "ExchangeOrderNotification.total_fill_size",
+    "ExchangeOrderNotification.total_unfilled_size",
+    "LastTrade.trade_size",
+    "OrderBook.bid_size",
+    "OrderBook.impl_bid_size",
+    "OrderBook.ask_size",
+    "OrderBook.impl_ask_size",
+    "RequestBracketOrder.quantity",
+    "RequestBracketOrder.target_quantity",
+    "RequestBracketOrder.stop_quantity",
+    "RequestModifyOrder.quantity",
+    "RequestNewOrder.quantity",
+    "RequestOCOOrder.quantity",
+    "ResponseDepthByOrderSnapshot.depth_size",
+    "ResponseGetVolumeAtPrice.volume_at_price",
+    "ResponseVolumeProfileMinuteBars.profile_no_aggressor_volume",
+    "ResponseVolumeProfileMinuteBars.profile_bid_volume",
+    "ResponseVolumeProfileMinuteBars.profile_ask_volume",
+    "ResponseVolumeProfileMinuteBars.profile_no_aggressor_trades",
+    "ResponseVolumeProfileMinuteBars.profile_bid_aggressor_trades",
+    "ResponseVolumeProfileMinuteBars.profile_ask_aggressor_trades",
+    "RithmicOrderNotification.quantity",
+    "RithmicOrderNotification.quan_release_pending",
+    "RithmicOrderNotification.total_fill_size",
+    "RithmicOrderNotification.total_unfilled_size",
+];
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let manifest_dir = std::path::PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").map_err(
         |_| "CARGO_MANIFEST_DIR not set: run this via `cargo run --example generate_protos`",
@@ -27,6 +67,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ".rti.ResponseListExchangePermissions.entitlement_flag",
         "#[deprecated = \"use level_1_market_data and level_2_market_data instead\"]",
     );
+
+    for path in DEPRECATED_32_BIT_FIELDS {
+        let (_, field) = path.split_once('.').expect("Message.field");
+        let note = format!("#[deprecated = \"use {field}_64 instead\"]");
+        config.field_attribute(format!(".rti.{path}"), note);
+    }
+
     config.out_dir(&src_dir);
     config.compile_protos(&protos, &[&proto_dir])?;
 
