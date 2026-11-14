@@ -15,6 +15,7 @@ use crate::{
     },
     request_handler::RequestResult,
     rti::{messages::RithmicMessage, request_login::SysInfraType, request_pn_l_position_updates},
+    types::SessionConfig,
 };
 
 /// Default subscription channel capacity.
@@ -44,6 +45,10 @@ pub(crate) enum PnlPlantCommand {
     },
     UnsubscribePnlUpdates {
         account: Arc<RithmicAccount>,
+        response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
+    },
+    SetSessionConfig {
+        config: SessionConfig,
         response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
     },
 }
@@ -270,6 +275,14 @@ impl PlantKind for PnlPlant {
                         &account,
                     )
                 },
+                response_sender,
+            ),
+
+            PnlPlantCommand::SetSessionConfig {
+                config,
+                response_sender,
+            } => cx.send_for(
+                |api| api.request_session_config("pnl", &config),
                 response_sender,
             ),
 
@@ -506,6 +519,31 @@ impl RithmicPnlPlantHandle {
 
         let command = PnlPlantCommand::UnsubscribePnlUpdates {
             account: self.account.clone(),
+            response_sender: tx,
+        };
+
+        let _ = self.sender.send(command).await;
+
+        await_first_response(rx).await
+    }
+
+    /// Configure this PnL plant session (template 24).
+    ///
+    /// Rithmic applies only `add_proto_srvr_timestamp` here, and only on a
+    /// `user_type` `Fcm` or `Ib` login. Without that flag, updates carry no
+    /// `proto_srvr_rcvd_*` stamps.
+    ///
+    /// # Returns
+    /// The server's acknowledgement. A refusal is `Ok` with
+    /// [`error`](RithmicResponse::error) set.
+    pub async fn set_session_config(
+        &self,
+        config: SessionConfig,
+    ) -> Result<RithmicResponse, RithmicError> {
+        let (tx, rx) = oneshot::channel::<Result<Vec<RithmicResponse>, RithmicError>>();
+
+        let command = PnlPlantCommand::SetSessionConfig {
+            config,
             response_sender: tx,
         };
 

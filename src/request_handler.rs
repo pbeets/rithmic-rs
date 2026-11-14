@@ -40,14 +40,25 @@ pub(crate) trait RequestTag {
     fn caller_stopped_waiting(&self) -> bool;
 }
 
-/// Tells the plant to send `RequestResumeBars` with `key`, so the server
-/// continues the reply for `request_id`.
+/// Tells the plant to send `request` with `key`, so the server continues
+/// the reply for `request_id`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Resume {
     /// The replay whose reply is to be continued.
     pub(crate) request_id: String,
     /// The `request_key` the notice carried.
     pub(crate) key: String,
+    /// Which request continues this kind of reply.
+    pub(crate) request: ResumeRequest,
+}
+
+/// The request that continues a paused reply.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ResumeRequest {
+    /// `RequestResumeBars` (template 210), for history bar replays.
+    ResumeBars,
+    /// `RequestFlowControl` (template 22), for a flow-controlled fill history.
+    FlowControl,
 }
 
 /// What the plant must do with a response the handler has routed.
@@ -85,7 +96,7 @@ pub(crate) struct RithmicRequestHandler<T> {
     /// minute later. That final response removes the entry.
     late_continuations: HashMap<String, u64>,
 
-    /// In-flight `RequestResumeBars` ids, mapped to the replay each continues.
+    /// In-flight resume request ids, mapped to the replay each continues.
     resumes: HashMap<String, String>,
 }
 
@@ -106,7 +117,7 @@ impl<T: RequestTag> RithmicRequestHandler<T> {
         self.handle_map.insert(request_id, tag);
     }
 
-    /// Record that `resume_id` is the `RequestResumeBars` sent to continue
+    /// Record that `resume_id` is the resume request sent to continue
     /// `request_id`'s reply, so its acknowledgement is matched to that reply.
     pub(crate) fn register_resume(&mut self, resume_id: String, request_id: String) {
         self.resumes.insert(resume_id, request_id);
@@ -145,7 +156,7 @@ impl<T: RequestTag> RithmicRequestHandler<T> {
         }
 
         match response.message {
-            RithmicMessage::ResponseResumeBars(_)
+            RithmicMessage::ResponseResumeBars(_) | RithmicMessage::ResponseFlowControl(_)
                 if self.resumes.contains_key(&response.request_id) =>
             {
                 self.handle_resume_ack(response);
@@ -218,7 +229,7 @@ impl<T: RequestTag> RithmicRequestHandler<T> {
         Some(Routed::Reply(tag, Ok(reply)))
     }
 
-    /// Handle the answer to a `RequestResumeBars`. A refusal fails the replay,
+    /// Handle the answer to a resume request. A refusal fails the replay,
     /// so partial data is never returned as complete.
     fn handle_resume_ack(&mut self, ack: RithmicResponse) {
         let Some(replay) = self.resumes.remove(&ack.request_id) else {
@@ -247,7 +258,7 @@ impl<T: RequestTag> RithmicRequestHandler<T> {
         self.late_continuations.insert(request_id.into(), 0);
     }
 
-    /// Whether any `RequestResumeBars` is awaiting its acknowledgement.
+    /// Whether any resume request is awaiting its acknowledgement.
     #[cfg(test)]
     pub(crate) fn resuming(&self) -> bool {
         !self.resumes.is_empty()
@@ -308,7 +319,10 @@ impl<T: RequestTag> RithmicRequestHandler<T> {
 
         let rp_code = response.rp_code().unwrap_or(&[]);
 
-        if matches!(response.message, RithmicMessage::ResponseResumeBars(_)) {
+        if matches!(
+            response.message,
+            RithmicMessage::ResponseResumeBars(_) | RithmicMessage::ResponseFlowControl(_)
+        ) {
             info!(
                 "request_id {}: a resume acknowledgement nothing is waiting on, rp_code {:?}",
                 response.request_id, rp_code
@@ -321,6 +335,7 @@ impl<T: RequestTag> RithmicRequestHandler<T> {
             RithmicMessage::ResponseTimeBarReplay(_)
                 | RithmicMessage::ResponseTickBarReplay(_)
                 | RithmicMessage::ResponseVolumeProfileMinuteBars(_)
+                | RithmicMessage::ResponseShowFillHistory(_)
         ) || response.error.is_some();
 
         if rp_code.is_empty()
@@ -1051,6 +1066,7 @@ mod tests {
             Some(Resume {
                 request_id: "7".to_string(),
                 key: "0".to_string(),
+                request: ResumeRequest::ResumeBars,
             })
         );
         assert!(
@@ -1109,6 +1125,7 @@ mod tests {
             Some(Resume {
                 request_id: "7".to_string(),
                 key: "0".to_string(),
+                request: ResumeRequest::ResumeBars,
             })
         );
 
@@ -1124,6 +1141,7 @@ mod tests {
             Some(Resume {
                 request_id: "7".to_string(),
                 key: "0".to_string(),
+                request: ResumeRequest::ResumeBars,
             }),
             "data re-arms the key the server reuses"
         );

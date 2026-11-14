@@ -799,6 +799,74 @@ mod tests {
         assert!(!reply[0].is_truncated() && !reply[1].is_truncated());
     }
 
+    /// A flow-controlled fill history pauses with a `request_key` frame; the
+    /// plant answers with `RequestFlowControl` and keeps the caller waiting.
+    #[tokio::test]
+    async fn a_paused_fill_history_is_continued_with_flow_control() {
+        use crate::rti::{RequestFlowControl, ResponseFlowControl, ResponseShowFillHistory};
+        use prost::Message as _;
+
+        let reader = make_dormant_ws_reader().await;
+        let (mut plant, _sub_rx) = make_test_plant(MockMessageSink::ready(), reader);
+        let mut rx = plant.core.request_handler.register_test_replay("fh-1");
+
+        fn frame_of(message: &impl prost::Message) -> Message {
+            let mut framed = (message.encoded_len() as u32).to_be_bytes().to_vec();
+            message.encode(&mut framed).unwrap();
+            Message::Binary(framed.into())
+        }
+
+        let fill = |rq_handler_rp_code: &[&str], rp_code: &[&str], key: Option<&str>| {
+            let message = ResponseShowFillHistory {
+                template_id: 3513,
+                user_msg: vec!["fh-1".to_string()],
+                rq_handler_rp_code: rq_handler_rp_code.iter().map(|c| c.to_string()).collect(),
+                rp_code: rp_code.iter().map(|c| c.to_string()).collect(),
+                request_key: key.map(str::to_string),
+                fill_id: key.is_none().then(|| "f".to_string()),
+                ..Default::default()
+            };
+            frame_of(&message)
+        };
+
+        plant
+            .handle_rithmic_message(Ok(fill(&["0"], &[], None)))
+            .await;
+        plant
+            .handle_rithmic_message(Ok(fill(&[], &[], Some("k1"))))
+            .await;
+        assert!(rx.try_recv().is_err(), "the caller keeps waiting");
+
+        let Some(Message::Binary(bytes)) = plant.rithmic_sender.sent_messages.last() else {
+            panic!("the flow control request was sent");
+        };
+        let request = RequestFlowControl::decode(&bytes[4..]).unwrap();
+        assert_eq!(request.template_id, 22);
+        assert_eq!(request.request_key.as_deref(), Some("k1"));
+
+        let ack = ResponseFlowControl {
+            template_id: 23,
+            user_msg: request.user_msg.clone(),
+            rp_code: vec!["0".to_string()],
+        };
+        plant.handle_rithmic_message(Ok(frame_of(&ack))).await;
+        assert!(!plant.core.request_handler.resuming(), "the ack is matched");
+
+        plant
+            .handle_rithmic_message(Ok(fill(&["0"], &[], None)))
+            .await;
+        plant
+            .handle_rithmic_message(Ok(fill(&[], &["0"], None)))
+            .await;
+
+        let reply = rx.try_recv().unwrap().unwrap();
+        assert_eq!(
+            reply.len(),
+            3,
+            "two fills and the end; the pause is not data"
+        );
+    }
+
     /// A template-11 login reply for request `id`, framed as it arrives off
     /// the wire.
     fn login_reply_frame(id: &str, rp_code: &[&str]) -> Message {

@@ -44,7 +44,7 @@ pub use triggers::{RithmicIfTouchedTrigger, TrailingStop};
 pub(crate) fn validate_instrument(
     symbol: &str,
     exchange: &str,
-    quantity: i32,
+    quantity: u64,
 ) -> Result<(), RithmicError> {
     if symbol.is_empty() {
         return Err(RithmicError::InvalidArgument(

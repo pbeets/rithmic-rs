@@ -382,11 +382,11 @@ pub use plants::{
 };
 
 pub use types::{
-    BracketOperationType, BracketType, EasyToBorrowRequest, FillHistoryRange, ManualOrAutoEntry,
-    MarketDataUsageCapacity, OrderCondition, OrderPriceField, OrderSide, OrderType,
-    ParseMarketDataUsageCapacityError, ParseOrderSideError, ParseOrderTypeError,
-    ParseTimeInForceError, RmsUpdateBits, TickBarReplayRequest, TimeBarReplayRequest, TimeBarType,
-    TimeInForce, VolumeProfileMinuteBarsRequest,
+    BracketOperationType, BracketType, EasyToBorrowRequest, EntitlementKind, FillHistoryRange,
+    ManualOrAutoEntry, MarketDataUsageCapacity, OrderCondition, OrderPriceField, OrderSide,
+    OrderType, ParseMarketDataUsageCapacityError, ParseOrderSideError, ParseOrderTypeError,
+    ParseTimeInForceError, PlaybackKind, RmsUpdateBits, SessionConfig, TickBarReplayRequest,
+    TimeBarReplayRequest, TimeBarType, TimeInForce, VolumeProfileMinuteBarsRequest,
 };
 
 pub use util::{

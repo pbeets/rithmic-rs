@@ -9,7 +9,7 @@
 
 Unofficial rust client for connecting to Rithmic's R | Protocol API.
 
-Supported version: **0.89.0.0** (template 5.42)
+Supported version: **0.90.0.0** (template 5.55)
 
 ## Quick Start
 
@@ -72,7 +72,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     while let Ok(update) = handle.subscription_receiver.recv().await {
         match update.message {
             RithmicMessage::LastTrade(t) => {
-                println!("trade {:?} @ {:?}", t.trade_size, t.trade_price);
+                println!("trade {:?} @ {:?}", t.trade_size_64, t.trade_price);
             }
 
             RithmicMessage::BestBidOffer(q) => {

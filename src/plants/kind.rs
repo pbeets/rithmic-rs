@@ -139,7 +139,7 @@ impl<'a, T> Cx<'a, T> {
         }
     }
 
-    /// Send the history replay `build` makes, collecting its reply in `replay`.
+    /// Send the replay `build` makes, collecting its reply in `replay`.
     pub(crate) fn send_replay(
         &mut self,
         build: impl FnOnce(&mut RithmicSenderApi) -> (Vec<u8>, String),

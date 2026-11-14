@@ -18,22 +18,23 @@ use crate::{
         RequestAccountRmsUpdates, RequestAuxilliaryReferenceData, RequestBracketOrder,
         RequestCancelAllOrders, RequestCancelOrder, RequestDepthByOrderSnapshot,
         RequestDepthByOrderUpdates, RequestEasyToBorrowList, RequestExitPosition,
-        RequestFrontMonthContract, RequestGetInstrumentByUnderlying, RequestGetUserInfo,
-        RequestGetVolumeAtPrice, RequestGiveTickSizeTypeTable, RequestHeartbeat, RequestLinkOrders,
-        RequestListAcceptedAgreements, RequestListExchangePermissions,
-        RequestListUnacceptedAgreements, RequestLogin, RequestLoginInfo, RequestLogout,
-        RequestMarketDataUpdate, RequestMarketDataUpdateByUnderlying, RequestModifyOrder,
-        RequestModifyOrderReferenceData, RequestNewOrder, RequestOcoOrder,
-        RequestOrderSessionConfig, RequestPnLPositionSnapshot, RequestPnLPositionUpdates,
-        RequestProductCodes, RequestProductRmsInfo, RequestReferenceData, RequestReplayExecutions,
-        RequestResumeBars, RequestRithmicSystemGatewayInfo, RequestRithmicSystemInfo,
-        RequestSearchSymbols, RequestSetRithmicMrktDataSelfCertStatus, RequestShowAgreement,
-        RequestShowBracketStops, RequestShowBrackets, RequestShowFillHistory,
+        RequestFlowControl, RequestFrontMonthContract, RequestGetInstrumentByUnderlying,
+        RequestGetUserInfo, RequestGetVolumeAtPrice, RequestGiveTickSizeTypeTable,
+        RequestHeartbeat, RequestLinkOrders, RequestListAcceptedAgreements,
+        RequestListExchangePermissions, RequestListUnacceptedAgreements, RequestLogin,
+        RequestLoginInfo, RequestLogout, RequestMarketDataUpdate,
+        RequestMarketDataUpdateByUnderlying, RequestModifyOrder, RequestModifyOrderReferenceData,
+        RequestNewOrder, RequestOcoOrder, RequestOrderSessionConfig, RequestPlaybackAccUsers,
+        RequestPnLPositionSnapshot, RequestPnLPositionUpdates, RequestProductCodes,
+        RequestProductRmsInfo, RequestReferenceData, RequestReplayExecutions, RequestResumeBars,
+        RequestRithmicSystemGatewayInfo, RequestRithmicSystemInfo, RequestSearchSymbols,
+        RequestSessionConfig, RequestSetRithmicMrktDataSelfCertStatus, RequestShowAccUserHistory,
+        RequestShowAgreement, RequestShowBracketStops, RequestShowBrackets, RequestShowFillHistory,
         RequestShowOrderHistory, RequestShowOrderHistoryDates, RequestShowOrderHistoryDetail,
         RequestShowOrderHistorySummary, RequestShowOrders, RequestSubscribeForOrderUpdates,
         RequestSubscribeToBracketUpdates, RequestTickBarReplay, RequestTickBarUpdate,
         RequestTimeBarReplay, RequestTimeBarUpdate, RequestTradeRoutes,
-        RequestUpdateStopBracketLevel, RequestUpdateTargetBracketLevel,
+        RequestUpdateStopBracketLevel, RequestUpdateTargetBracketLevel, RequestUserEntitlements,
         RequestVolumeProfileMinuteBars, request_account_rms_updates, request_bracket_order,
         request_cancel_all_orders, request_cancel_order, request_depth_by_order_updates,
         request_easy_to_borrow_list, request_exit_position,
@@ -45,20 +46,26 @@ use crate::{
         request_tick_bar_update, request_time_bar_replay, request_time_bar_update,
     },
     types::{
-        EasyToBorrowRequest, FillHistoryRange, OrderType, RmsUpdateBits, TickBarReplayRequest,
-        TimeBarReplayRequest, VolumeProfileMinuteBarsRequest,
+        EasyToBorrowRequest, EntitlementKind, FillHistoryRange, OrderType, PlaybackKind,
+        RmsUpdateBits, SessionConfig, TickBarReplayRequest, TimeBarReplayRequest,
+        VolumeProfileMinuteBarsRequest,
     },
 };
 
 /// Template version sent on every login. It names the `src/raw-proto/` set,
-/// which the R | Protocol API 0.89.0.0 change log labels 5.42. Bump it when
+/// which the R | Protocol API 0.90.0.0 change log labels 5.55. Bump it when
 /// those protos are regenerated.
-pub(crate) const TEMPLATE_VERSION: &str = "5.42";
+pub(crate) const TEMPLATE_VERSION: &str = "5.55";
 
 /// An empty caller-supplied identifier carries no more information than an
 /// absent field, so it is left off the wire rather than sent as `""`.
 fn omit_if_empty(value: String) -> Option<String> {
     (!value.is_empty()).then_some(value)
+}
+
+/// Rithmic's spelling for an on/off string field.
+fn enabled_or_disabled(enabled: bool) -> String {
+    if enabled { "enabled" } else { "disabled" }.to_string()
 }
 
 /// Slot `i` prices leg `i`, so once any leg has a price the rest get `0.0`.
@@ -82,6 +89,7 @@ fn zero_fill_prices(prices: Vec<Option<f64>>) -> Vec<f64> {
 pub(crate) struct RithmicSenderApi {
     app_name: String,
     app_version: String,
+    user: String,
     message_id_counter: u64,
 }
 
@@ -90,6 +98,7 @@ impl RithmicSenderApi {
         RithmicSenderApi {
             app_name: config.app_name.clone(),
             app_version: config.app_version.clone(),
+            user: config.user.clone(),
             message_id_counter: 0,
         }
     }
@@ -419,7 +428,7 @@ impl RithmicSenderApi {
             trade_route: Some(trade_route.into()),
             exchange: Some(order.exchange.clone()),
             symbol: Some(order.symbol.clone()),
-            quantity: Some(order.quantity),
+            quantity_64: Some(order.quantity),
             price: order.price,
             transaction_type: Some(
                 request_new_order::TransactionType::from(order.transaction_type).into(),
@@ -458,6 +467,7 @@ impl RithmicSenderApi {
                 .as_ref()
                 .map(|trigger| request_new_order::PriceField::from(trigger.price_field).into()),
             if_touched_price: order.if_touched.as_ref().and_then(|trigger| trigger.price),
+            ..Default::default()
         };
 
         self.request_to_buf(req, id)
@@ -485,7 +495,7 @@ impl RithmicSenderApi {
             user_type: Some(
                 request_bracket_order::UserType::from(user_type_or_trader(scope)).into(),
             ),
-            quantity: Some(bracket_order.quantity),
+            quantity_64: Some(bracket_order.quantity),
             transaction_type: Some(
                 request_bracket_order::TransactionType::from(bracket_order.action).into(),
             ),
@@ -503,9 +513,9 @@ impl RithmicSenderApi {
                 .map(|kind| request_bracket_order::BracketType::from(kind).into()),
             break_even_ticks: bracket_order.break_even_ticks,
             break_even_trigger_ticks: bracket_order.break_even_trigger_ticks,
-            target_quantity: bracket_order.target_quantity,
+            target_quantity_64: bracket_order.target_quantity,
             target_ticks: bracket_order.target_ticks,
-            stop_quantity: bracket_order.stop_quantity,
+            stop_quantity_64: bracket_order.stop_quantity,
             stop_ticks: bracket_order.stop_ticks,
             trailing_stop_trigger_ticks: bracket_order.trailing_stop_trigger_ticks,
             trailing_stop_by_last_trade_price: bracket_order.trailing_stop_by_last_trade_price,
@@ -549,6 +559,7 @@ impl RithmicSenderApi {
             order_operation_type: bracket_order
                 .operation_type
                 .map(|op| op.as_str_name().to_string()),
+            ..Default::default()
         };
 
         self.request_to_buf(req, id)
@@ -576,7 +587,7 @@ impl RithmicSenderApi {
             exchange: Some(order.exchange.clone()),
             symbol: Some(order.symbol.clone()),
             price_type: Some(price_type.into()),
-            quantity: Some(order.quantity),
+            quantity_64: Some(order.quantity),
             price: order.price,
             user_msg: vec![id.clone()],
             // The same four types `RithmicOrder::validate` demands a trigger for
@@ -613,6 +624,7 @@ impl RithmicSenderApi {
                 .as_ref()
                 .map(|trigger| request_modify_order::PriceField::from(trigger.price_field).into()),
             if_touched_price: order.if_touched.as_ref().and_then(|trigger| trigger.price),
+            ..Default::default()
         };
 
         self.request_to_buf(req, id)
@@ -872,6 +884,42 @@ impl RithmicSenderApi {
             template_id: 210,
             user_msg: vec![id.clone()],
             request_key: Some(request_key.to_string()),
+        };
+
+        self.request_to_buf(req, id)
+    }
+
+    /// Ask for the next batch of a flow-controlled reply. `request_key` comes
+    /// from the frame that paused it.
+    pub fn request_flow_control(&mut self, request_key: &str) -> (Vec<u8>, String) {
+        let id = self.get_next_message_id();
+
+        let req = RequestFlowControl {
+            template_id: 22,
+            user_msg: vec![id.clone()],
+            request_key: Some(request_key.to_string()),
+        };
+
+        self.request_to_buf(req, id)
+    }
+
+    /// Order plant settings when `session_type` is `"op"`, PnL plant settings
+    /// when it is `"pnl"`.
+    pub fn request_session_config(
+        &mut self,
+        session_type: &str,
+        config: &SessionConfig,
+    ) -> (Vec<u8>, String) {
+        let id = self.get_next_message_id();
+
+        let req = RequestSessionConfig {
+            template_id: 24,
+            user_msg: vec![id.clone()],
+            session_type: Some(session_type.to_string()),
+            add_proto_srvr_timestamp: config.add_proto_srvr_timestamp.map(enabled_or_disabled),
+            should_defer_request: config.should_defer_request,
+            push_user_updates: config.push_user_updates.map(enabled_or_disabled),
+            push_account_updates: config.push_account_updates.map(enabled_or_disabled),
         };
 
         self.request_to_buf(req, id)
@@ -1321,7 +1369,7 @@ impl RithmicSenderApi {
             account_id: Some(account.account_id.clone()),
             symbol,
             exchange,
-            quantity,
+            quantity_64: quantity,
             price,
             trigger_price,
             transaction_type,
@@ -1335,6 +1383,7 @@ impl RithmicSenderApi {
             cancel_at_ssboe: timing.cancel_at_ssboe,
             cancel_at_usecs: timing.cancel_at_usecs,
             cancel_after_secs: timing.cancel_after_secs,
+            ..Default::default()
         };
 
         Ok(self.request_to_buf(req, id))
@@ -1411,6 +1460,7 @@ impl RithmicSenderApi {
             template_id: 3502,
             user_msg: vec![id.clone()],
             should_defer_request,
+            ..Default::default()
         };
 
         self.request_to_buf(req, id)
@@ -1438,8 +1488,8 @@ impl RithmicSenderApi {
         self.request_to_buf(req, id)
     }
 
-    /// A user's profile; `None` asks about the logged-in user. Only the FCM
-    /// and IB ids are read from `account`.
+    /// A user's profile; `None` sends the login user. Only the FCM and IB
+    /// ids are read from `account`.
     pub fn request_get_user_info(
         &mut self,
         user: Option<&str>,
@@ -1452,18 +1502,38 @@ impl RithmicSenderApi {
             user_msg: vec![id.clone()],
             fcm_id: Some(account.fcm_id.clone()),
             ib_id: Some(account.ib_id.clone()),
-            user: user.map(str::to_string),
+            user: Some(user.unwrap_or(&self.user).to_string()),
         };
 
         self.request_to_buf(req, id)
     }
 
-    /// Fills in `range`. Rithmic rejects a `max_record_count` above 10,000;
-    /// `None` leaves the cap to the server.
+    /// Fills in `range`. Rithmic rejects a `max_record_count` outside
+    /// 1..=10,000; `None` leaves the cap to the server.
     pub fn request_show_fill_history(
         &mut self,
         range: FillHistoryRange,
         max_record_count: Option<i32>,
+        account: &RithmicAccount,
+    ) -> (Vec<u8>, String) {
+        self.fill_history(range, max_record_count, None, account)
+    }
+
+    /// Every fill in `range`, sent in batches with flow control on. Rithmic
+    /// requires `max_record_count` to be unset when flow control is on.
+    pub fn request_load_fill_history(
+        &mut self,
+        range: FillHistoryRange,
+        account: &RithmicAccount,
+    ) -> (Vec<u8>, String) {
+        self.fill_history(range, None, Some("enabled".to_string()), account)
+    }
+
+    fn fill_history(
+        &mut self,
+        range: FillHistoryRange,
+        max_record_count: Option<i32>,
+        flow_control: Option<String>,
         account: &RithmicAccount,
     ) -> (Vec<u8>, String) {
         let id = self.get_next_message_id();
@@ -1478,6 +1548,74 @@ impl RithmicSenderApi {
             start_index: Some(range.start()),
             finish_index: Some(range.finish()),
             max_record_count,
+            flow_control,
+        };
+
+        self.request_to_buf(req, id)
+    }
+
+    /// `None` sends the login user; Rithmic rejects the request without one.
+    pub fn request_user_entitlements(
+        &mut self,
+        user: Option<&str>,
+        kind: EntitlementKind,
+    ) -> (Vec<u8>, String) {
+        let id = self.get_next_message_id();
+
+        let req = RequestUserEntitlements {
+            template_id: 3516,
+            user_msg: vec![id.clone()],
+            user: Some(user.unwrap_or(&self.user).to_string()),
+            entitlements: Some(kind.as_str_name().to_string()),
+        };
+
+        self.request_to_buf(req, id)
+    }
+
+    /// Account and user changes from `start_index_sec`. `None` leaves
+    /// `finish_index_sec` off.
+    pub fn request_playback_acc_users(
+        &mut self,
+        kind: PlaybackKind,
+        start_index_sec: i32,
+        finish_index_sec: Option<i32>,
+    ) -> (Vec<u8>, String) {
+        let id = self.get_next_message_id();
+
+        let req = RequestPlaybackAccUsers {
+            template_id: 3518,
+            user_msg: vec![id.clone()],
+            playback: Some(kind.as_str_name().to_string()),
+            start_index: Some(start_index_sec),
+            finish_index: finish_index_sec,
+        };
+
+        self.request_to_buf(req, id)
+    }
+
+    /// Change history of `account`, or of `user` when one is given. Rithmic
+    /// needs the account ids for the first and only `user_target` for the
+    /// second.
+    pub fn request_show_acc_user_history(
+        &mut self,
+        user: Option<&str>,
+        start_index_sec: i32,
+        finish_index_sec: i32,
+        account: &RithmicAccount,
+    ) -> (Vec<u8>, String) {
+        let id = self.get_next_message_id();
+
+        let account_ids = |field: &String| user.is_none().then(|| field.clone());
+
+        let req = RequestShowAccUserHistory {
+            template_id: 3520,
+            user_msg: vec![id.clone()],
+            fcm_id: account_ids(&account.fcm_id),
+            ib_id: account_ids(&account.ib_id),
+            account_id: account_ids(&account.account_id),
+            user_target: user.map(str::to_string),
+            start_index: Some(start_index_sec),
+            finish_index: Some(finish_index_sec),
         };
 
         self.request_to_buf(req, id)
@@ -1628,9 +1766,43 @@ mod tests {
             .release_at(35900, 125000)
             .cancel_at(37000, 750000)
             .cancel_after_secs(120)
-            .operation_type(BracketOperationType::Oca)
+            .operation_type(BracketOperationType::Fca)
             .build()
             .expect("valid bracket")
+    }
+
+    #[test]
+    fn order_and_modify_requests_send_only_quantity_64() {
+        let mut api = RithmicSenderApi::new(&test_config());
+        let account = default_account();
+        let order = RithmicOrder::new()
+            .symbol("ESZ6")
+            .exchange("CME")
+            .quantity(u64::MAX)
+            .price_type(OrderType::Market)
+            .build()
+            .expect("valid market order");
+
+        let (buf, _) = api.request_order(&order, &account, "globex");
+        let request: RequestNewOrder = decode_request(&buf);
+
+        assert_eq!(request.quantity_64, Some(u64::MAX));
+        assert_eq!(request.quantity, None);
+
+        let modify = RithmicModifyOrder::new()
+            .id("basket-1")
+            .symbol("ESZ6")
+            .exchange("CME")
+            .quantity(u64::MAX)
+            .price_type(OrderType::Market)
+            .build()
+            .expect("valid market modification");
+
+        let (buf, _) = api.request_modify_order(&modify, &account);
+        let request: RequestModifyOrder = decode_request(&buf);
+
+        assert_eq!(request.quantity_64, Some(u64::MAX));
+        assert_eq!(request.quantity, None);
     }
 
     #[test]
@@ -1709,15 +1881,15 @@ mod tests {
             request.bracket_type,
             Some(request_bracket_order::BracketType::TargetAndStopStatic as i32)
         );
-        assert_eq!(request.target_quantity, vec![1]);
+        assert_eq!(request.target_quantity_64, vec![1]);
         assert_eq!(request.target_ticks, vec![20]);
-        assert_eq!(request.stop_quantity, vec![1]);
+        assert_eq!(request.stop_quantity_64, vec![1]);
         assert_eq!(request.stop_ticks, vec![10]);
         assert_eq!(request.price, Some(5000.0));
         assert_eq!(request.trigger_price, None);
         assert_eq!(request.user_tag.as_deref(), Some("bracket-1"));
         // An unset operation type must stay off the wire: a server-side default
-        // is not the same request as an explicit OCA.
+        // is not the same request as an explicit one.
         assert_eq!(request.order_operation_type, None);
     }
 
@@ -1734,7 +1906,7 @@ mod tests {
         assert_eq!(request.account_id.as_deref(), Some("ACCOUNT_B"));
         assert_eq!(request.trade_route.as_deref(), Some("globex"));
         assert_eq!(request.user_tag.as_deref(), Some("advanced-bracket-1"));
-        assert_eq!(request.order_operation_type.as_deref(), Some("OCA"));
+        assert_eq!(request.order_operation_type.as_deref(), Some("FCA"));
     }
 
     #[test]
@@ -1748,6 +1920,16 @@ mod tests {
         assert_eq!(request.fcm_id.as_deref(), Some("FCM_A"));
         assert_eq!(request.ib_id.as_deref(), Some("IB_A"));
         assert_eq!(request.user.as_deref(), Some("someone_else"));
+    }
+
+    #[test]
+    fn user_info_defaults_to_the_login_user() {
+        let mut api = RithmicSenderApi::new(&test_config());
+
+        let (buf, _) = api.request_get_user_info(None, &default_account());
+        let request: RequestGetUserInfo = decode_request(&buf);
+
+        assert_eq!(request.user.as_deref(), Some("user"));
     }
 
     #[test]
@@ -1786,6 +1968,79 @@ mod tests {
         assert_eq!(request.start_index, Some(20_260_801));
         assert_eq!(request.finish_index, Some(20_260_804));
         assert_eq!(request.max_record_count, None);
+        assert_eq!(request.flow_control, None);
+    }
+
+    #[test]
+    fn load_fill_history_turns_on_flow_control_without_a_record_cap() {
+        let mut api = RithmicSenderApi::new(&test_config());
+        let range = FillHistoryRange::Ssboe {
+            start: 1_700_000_000,
+            finish: 1_700_003_600,
+        };
+
+        let (buf, _) = api.request_load_fill_history(range, &default_account());
+        let request: RequestShowFillHistory = decode_request(&buf);
+
+        assert_eq!(request.flow_control.as_deref(), Some("enabled"));
+        assert_eq!(request.max_record_count, None);
+        assert_eq!(request.start_index, Some(1_700_000_000));
+    }
+
+    #[test]
+    fn session_config_sends_set_flags_as_rithmic_keywords_and_leaves_unset_ones_off() {
+        let mut api = RithmicSenderApi::new(&test_config());
+        let config = SessionConfig::new()
+            .add_proto_srvr_timestamp(true)
+            .should_defer_request(false)
+            .push_account_updates(false);
+
+        let (buf, _) = api.request_session_config("op", &config);
+        let request: RequestSessionConfig = decode_request(&buf);
+
+        assert_eq!(request.session_type.as_deref(), Some("op"));
+        assert_eq!(request.add_proto_srvr_timestamp.as_deref(), Some("enabled"));
+        assert_eq!(request.should_defer_request, Some(false));
+        assert_eq!(request.push_account_updates.as_deref(), Some("disabled"));
+        assert_eq!(request.push_user_updates, None);
+    }
+
+    #[test]
+    fn user_entitlements_default_to_the_login_user() {
+        let mut api = RithmicSenderApi::new(&test_config());
+
+        let (buf, _) = api.request_user_entitlements(None, EntitlementKind::All);
+        let request: RequestUserEntitlements = decode_request(&buf);
+
+        assert_eq!(request.user.as_deref(), Some("user"));
+
+        let (buf, _) = api.request_user_entitlements(Some("other"), EntitlementKind::All);
+        let request: RequestUserEntitlements = decode_request(&buf);
+
+        assert_eq!(request.user.as_deref(), Some("other"));
+    }
+
+    #[test]
+    fn account_history_sends_account_ids_and_user_history_sends_only_the_user() {
+        let mut api = RithmicSenderApi::new(&test_config());
+
+        let (buf, _) = api.request_show_acc_user_history(None, 1, 2, &override_account());
+        let request: RequestShowAccUserHistory = decode_request(&buf);
+
+        assert_eq!(request.fcm_id.as_deref(), Some("FCM_B"));
+        assert_eq!(request.ib_id.as_deref(), Some("IB_B"));
+        assert_eq!(request.account_id.as_deref(), Some("ACCOUNT_B"));
+        assert_eq!(request.user_target, None);
+
+        let (buf, _) = api.request_show_acc_user_history(Some("trader"), 1, 2, &override_account());
+        let request: RequestShowAccUserHistory = decode_request(&buf);
+
+        assert_eq!(request.user_target.as_deref(), Some("trader"));
+        assert_eq!(request.fcm_id, None);
+        assert_eq!(request.ib_id, None);
+        assert_eq!(request.account_id, None);
+        assert_eq!(request.start_index, Some(1));
+        assert_eq!(request.finish_index, Some(2));
     }
 
     #[test]
@@ -1805,9 +2060,9 @@ mod tests {
             request.bracket_type,
             Some(request_bracket_order::BracketType::TargetAndStop as i32)
         );
-        assert_eq!(request.target_quantity, vec![2, 1]);
+        assert_eq!(request.target_quantity_64, vec![2, 1]);
         assert_eq!(request.target_ticks, vec![16, 24]);
-        assert_eq!(request.stop_quantity, vec![3]);
+        assert_eq!(request.stop_quantity_64, vec![3]);
         assert_eq!(request.stop_ticks, vec![8]);
         assert_eq!(request.if_touched_symbol.as_deref(), Some("NQM6"));
         assert_eq!(request.if_touched_exchange.as_deref(), Some("CME"));
@@ -2097,7 +2352,7 @@ mod tests {
             request.exchange,
             vec!["CME".to_string(), "CME".to_string(), "NYMEX".to_string()]
         );
-        assert_eq!(request.quantity, vec![1, 2, 3]);
+        assert_eq!(request.quantity_64, vec![1, 2, 3]);
         assert_eq!(request.price, vec![5000.0, 18000.0, 75.0]);
         assert_eq!(request.trigger_price, vec![0.0, 17990.0, 74.5]);
         assert_eq!(
@@ -2620,7 +2875,7 @@ mod tests {
         assert_eq!(request.price, Vec::<f64>::new());
         assert_eq!(request.trigger_price, Vec::<f64>::new());
         // The rest of the per-leg fields still describe both legs.
-        assert_eq!(request.quantity, vec![1, 1]);
+        assert_eq!(request.quantity_64, vec![1, 1]);
     }
 
     #[test]
@@ -3203,7 +3458,7 @@ mod tests {
         assert_eq!(request.if_touched_price, None);
     }
 
-    /// Expected ids are the Reference Guide's template tables (0.89; 504 and 508
+    /// Expected ids are the Reference Guide's template tables (0.90; 504 and 508
     /// from the 0.84 guide), not the numbers the builders hard-code.
     #[test]
     fn every_request_builder_sends_its_documented_template_id() {
@@ -3233,6 +3488,8 @@ mod tests {
             (16, api.request_rithmic_system_info()),
             (18, api.request_heartbeat()),
             (20, api.request_rithmic_system_gateway_info(None)),
+            (22, api.request_flow_control("key")),
+            (24, api.request_session_config("op", &SessionConfig::new())),
             (
                 100,
                 api.request_market_data_update(
@@ -3407,6 +3664,19 @@ mod tests {
             ),
             (3510, api.request_get_user_info(None, &account)),
             (3512, api.request_show_fill_history(fills, None, &account)),
+            (3512, api.request_load_fill_history(fills, &account)),
+            (
+                3516,
+                api.request_user_entitlements(None, EntitlementKind::All),
+            ),
+            (
+                3518,
+                api.request_playback_acc_users(PlaybackKind::All, 0, None),
+            ),
+            (
+                3520,
+                api.request_show_acc_user_history(None, 0, 1, &account),
+            ),
         ];
 
         for (expected, (buf, _)) in requests {

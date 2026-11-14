@@ -116,7 +116,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                         info!(
                             "Trade: {} @ {}",
-                            t.trade_size.unwrap_or(0),
+                            t.trade_size_64.unwrap_or(0),
                             t.trade_price.unwrap_or(0.0)
                         );
                     }

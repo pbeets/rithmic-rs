@@ -71,6 +71,7 @@ impl std::fmt::Debug for SubscriptionFilter {
 /// The account id an update carries, for the message types that have one.
 fn response_account_id(response: &RithmicResponse) -> Option<&str> {
     match &response.message {
+        RithmicMessage::AccountAndUserUpdate(update) => update.account_id.as_deref(),
         RithmicMessage::UserAccountUpdate(update) => update.account_id.as_deref(),
         RithmicMessage::AccountRmsUpdates(update) => update.account_id.as_deref(),
         RithmicMessage::BracketUpdates(update) => update.account_id.as_deref(),
@@ -91,8 +92,8 @@ mod tests {
         api::RithmicResponse,
         config::RithmicAccount,
         rti::{
-            AccountPnLPositionUpdate, ResponseAcceptAgreement, TradeRoute, UpdateEasyToBorrowList,
-            UserAccountUpdate, messages::RithmicMessage,
+            AccountAndUserUpdate, AccountPnLPositionUpdate, ResponseAcceptAgreement, TradeRoute,
+            UpdateEasyToBorrowList, UserAccountUpdate, messages::RithmicMessage,
         },
     };
 
@@ -109,6 +110,29 @@ mod tests {
             has_more: false,
             multi_response: false,
             source: "test".to_string(),
+        }
+    }
+
+    #[test]
+    fn account_and_user_updates_respect_account_scope() {
+        let (_, receiver) = broadcast::channel(16);
+        let filter = SubscriptionFilter::new(account("ACCOUNT_A"), receiver);
+
+        for (account_id, expected) in [
+            (Some("ACCOUNT_A"), true),
+            (Some("ACCOUNT_B"), false),
+            (None, true),
+        ] {
+            let update = AccountAndUserUpdate {
+                template_id: 358,
+                account_id: account_id.map(str::to_owned),
+                ..Default::default()
+            };
+            assert_eq!(
+                filter.should_forward(&response(RithmicMessage::AccountAndUserUpdate(update))),
+                expected,
+                "account {account_id:?}",
+            );
         }
     }
 

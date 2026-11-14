@@ -38,7 +38,9 @@ use crate::{
         session::{Session, answer_requesters},
         tag::{Tag, answer_caller},
     },
-    request_handler::{RequestResult, Responder, Resume, RithmicRequestHandler, Routed},
+    request_handler::{
+        RequestResult, Responder, Resume, ResumeRequest, RithmicRequestHandler, Routed,
+    },
     rti::messages::RithmicMessage,
 };
 
@@ -463,7 +465,7 @@ impl<K: PlantKind> PlantCore<K> {
         }
     }
 
-    /// Continue a replay the server truncated: send `RequestResumeBars` with
+    /// Continue a replay the server truncated: send the resume request with
     /// the key its notice carried. The server acknowledges on the resume's own
     /// id and streams the rest on the replay's id. The write is reported under
     /// the replay's id, so a failed write fails the replay's caller.
@@ -473,7 +475,10 @@ impl<K: PlantKind> PlantCore<K> {
             return;
         }
 
-        let (buf, resume_id) = self.sender_api.request_resume_bars(&resume.key);
+        let (buf, resume_id) = match resume.request {
+            ResumeRequest::ResumeBars => self.sender_api.request_resume_bars(&resume.key),
+            ResumeRequest::FlowControl => self.sender_api.request_flow_control(&resume.key),
+        };
         self.request_handler
             .register_resume(resume_id, resume.request_id.clone());
 

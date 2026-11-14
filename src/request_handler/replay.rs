@@ -1,10 +1,11 @@
-use super::{RequestResult, RequestTag, Resume, RithmicRequestHandler};
+use super::{RequestResult, RequestTag, Resume, ResumeRequest, RithmicRequestHandler};
 use crate::{RithmicError, RithmicResponse, rti::messages::RithmicMessage};
 use std::collections::HashSet;
 use tokio::sync::oneshot;
 use tracing::info;
 
-/// A history replay the plant is collecting for a caller.
+/// A history replay, or a flow-controlled fill history, the plant is
+/// collecting for a caller.
 ///
 /// Unlike other multi-part replies, a replay can be cut short by the server
 /// and continued on the same request id, so it keeps its own frames and the
@@ -42,13 +43,14 @@ impl PendingReplay {
     }
 }
 
-/// Whether this frame carries replay data (a `marker`, or tick bar
-/// timestamps).
+/// Whether this frame carries replay data (a `marker`, tick bar timestamps,
+/// or a fill).
 fn carries_replay_data(response: &RithmicResponse) -> bool {
     match &response.message {
         RithmicMessage::ResponseTimeBarReplay(m) => m.marker.is_some(),
         RithmicMessage::ResponseTickBarReplay(m) => !m.data_bar_ssboe.is_empty(),
         RithmicMessage::ResponseVolumeProfileMinuteBars(m) => m.marker.is_some(),
+        RithmicMessage::ResponseShowFillHistory(m) => m.fill_id.is_some(),
         _ => false,
     }
 }
@@ -196,9 +198,15 @@ impl<T: RequestTag> RithmicRequestHandler<T> {
                 key
             );
 
+            let request = match response.message {
+                RithmicMessage::ResponseShowFillHistory(_) => ResumeRequest::FlowControl,
+                _ => ResumeRequest::ResumeBars,
+            };
+
             return Some(Resume {
                 request_id: id,
                 key,
+                request,
             });
         }
 

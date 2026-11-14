@@ -61,16 +61,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         match &update.message {
             RithmicMessage::LastTrade(t) => info!(
                 "Trade: {} @ {}",
-                t.trade_size.unwrap_or(0),
+                t.trade_size_64.unwrap_or(0),
                 t.trade_price.unwrap_or(0.0)
             ),
 
             RithmicMessage::BestBidOffer(b) => info!(
                 "BBO: {}x{} / {}x{}",
-                b.bid_size.unwrap_or(0),
+                b.bid_size_64.unwrap_or(0),
                 b.bid_price.unwrap_or(0.0),
                 b.ask_price.unwrap_or(0.0),
-                b.ask_size.unwrap_or(0)
+                b.ask_size_64.unwrap_or(0)
             ),
 
             // A rejected heartbeat leaves the connection up; any other timeout ends it.

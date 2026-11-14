@@ -7,6 +7,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+The bundled protos move to R | Protocol API 0.90.0.0 (template version 5.55).
+Order quantities become `u64` and go out in Rithmic's new 64-bit fields.
+[MIGRATING.md](MIGRATING.md) covers each change. The new
+`change_password_on_behalf_of` messages are not generated, since the Reference
+Guide gives them no template id.
+
+### Behavior changes the compiler will not catch
+
+- Template 358 decodes as `RithmicMessage::AccountAndUserUpdate`. A
+  `UserAccountUpdate` arm still sees template 76 but no longer sees 358.
+- Order requests send only `quantity_64`, `target_quantity_64` and
+  `stop_quantity_64`. The 32-bit fields Rithmic deprecated are left unset.
+- `show_fill_history(.., Some(0))` returns `RithmicError::InvalidArgument`.
+  The 0.90.0.0 schema requires a cap from 1 to 10,000.
+
+### Breaking Changes
+
+- `RithmicOrder`, `RithmicModifyOrder`, `RithmicBracketOrder` and
+  `RithmicOcoOrderLeg` quantities are `u64`. Bracket `target_quantity` and
+  `stop_quantity` are `Vec<u64>`, and `targets()`/`stops()` take `(u64, i32)`
+  pairs. Tick distances stay `i32`.
+- `RithmicMessage::DepthByOrderEndEvent` and template 161 are gone. Rithmic
+  removed the schema.
+- `rti::last_trade::PresenceBits::PrecentChange` is now `PercentChange`, after
+  Rithmic fixed the spelling. The value is still 4.
+- `BracketOperationType::Oca` is gone. The 0.90.0.0 proto no longer lists `OCA`
+  as an `order_operation_type`.
+
+### Added
+
+- `RithmicMessage::AccountAndUserUpdate` for template 358, filtered by account
+  like `UserAccountUpdate`.
+- 64-bit size fields in `rti`, such as `trade_size_64`, `bid_size_64` and
+  `fill_size_64`. Rithmic deprecated the 32-bit ones, which are still
+  generated.
+- `RithmicMessage` variants for the new account/user history, entitlement,
+  session config and flow control replies.
+- Order plant `set_session_config(SessionConfig)` (template 24), with the new
+  `push_user_updates` and `push_account_updates` flags. PnL plant
+  `set_session_config` sends the same request with session type `pnl`.
+- Order plant `load_fill_history(range)`: fill history with Rithmic's flow
+  control on and no record cap. The plant sends `RequestFlowControl`
+  (template 22) each time the server pauses. The pause handling is inferred
+  from the protos and has not been seen live.
+- Order plant `get_user_entitlements` (3516), `playback_account_users` (3518),
+  and `show_account_history` / `show_user_history` (3520), with the
+  `EntitlementKind` and `PlaybackKind` enums.
+
+### Deprecated
+
+- `RithmicOrderPlantHandle::get_order_session_config()`: Rithmic deprecated
+  template 3502 in favor of session config. Use `set_session_config()`.
+
+### Fixed
+
+- `get_user_info(None)` sends the login user. It used to leave `user` off,
+  which Rithmic rejected with `["1001", "user field is missing."]`.
+
 ## [3.3.0]
 
 The order plant's agreement methods are gone. They moved to the new repository
