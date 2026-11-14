@@ -59,6 +59,20 @@ Guide gives them no template id.
 
 - `RithmicOrderPlantHandle::get_order_session_config()`: Rithmic deprecated
   template 3502 in favor of session config. Use `set_session_config()`.
+- The 35 32-bit size and quantity fields in `rti` that Rithmic deprecated, such
+  as `LastTrade::trade_size` and `RithmicOrderNotification::total_fill_size`.
+  Each note names its `_64` replacement.
+
+### Removed
+
+- The request-timeout items deprecated in 3.1.0: `DEFAULT_REQUEST_TIMEOUT`,
+  `RithmicError::RequestTimeout`, and `request_timeout` on `RithmicConfig` and
+  `RithmicConfigBuilder`. `RITHMIC_REQUEST_TIMEOUT_SECS` is no longer read.
+  3.2.0 said these would stay, but that was before a 4.0 was planned.
+- `RithmicConfig::retry_timeout` and `RithmicConfigBuilder::retry_timeout()`,
+  deprecated in 3.3.0. Use `connect_total_timeout()`.
+- `RithmicHistoryPlantHandle::resume_bars()`, deprecated in 3.2.0. The `load_*`
+  methods resume cut-short replays themselves.
 
 ### Fixed
 

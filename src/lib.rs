@@ -361,8 +361,6 @@ pub use prost;
 
 pub use config::{ConfigError, RithmicAccount, RithmicConfig, RithmicConfigBuilder, RithmicEnv};
 pub use error::{RithmicError, RithmicRequestError};
-#[allow(deprecated)]
-pub use request_handler::DEFAULT_REQUEST_TIMEOUT;
 pub use ws::ConnectStrategy;
 
 pub use api::{

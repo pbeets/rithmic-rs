@@ -118,14 +118,6 @@ pub enum RithmicError {
     /// The plant answered with no response at all where one was expected. A
     /// defensive case; you should not see it.
     EmptyResponse,
-    /// Deprecated and never returned: the library does not time out requests.
-    /// For a deadline, wrap the call in [`tokio::time::timeout`], which reports
-    /// expiry as its own `Elapsed`. Kept so existing code keeps compiling.
-    #[deprecated(
-        since = "3.1.0",
-        note = "the library no longer times out requests; wrap the call in tokio::time::timeout"
-    )]
-    RequestTimeout,
     /// The server turned the request down, with the code and message it gave.
     /// Request-level only, not a reason to reconnect.
     ///
@@ -194,14 +186,12 @@ impl RithmicError {
 }
 
 impl fmt::Display for RithmicError {
-    #[allow(deprecated)]
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             RithmicError::ConnectionFailed(msg) => write!(f, "connection failed: {msg}"),
             RithmicError::ConnectionClosed => write!(f, "connection closed"),
             RithmicError::SendFailed => write!(f, "WebSocket send failed"),
             RithmicError::EmptyResponse => write!(f, "empty response"),
-            RithmicError::RequestTimeout => write!(f, "request timed out"),
 
             RithmicError::RequestRejected(err) => {
                 let detail = err.to_string();
@@ -261,7 +251,6 @@ impl std::error::Error for RithmicError {
 }
 
 #[cfg(test)]
-#[allow(deprecated)]
 mod tests {
     use std::error::Error;
 
@@ -455,13 +444,6 @@ mod tests {
             err.to_string(),
             "no trade route for exchange CBOT; cached: C[31mME"
         );
-    }
-
-    #[test]
-    fn request_timeout_is_not_a_connection_issue() {
-        // Otherwise callers that reconnect on `is_connection_issue()` would tear
-        // down a live session, and its subscriptions, over one lost request.
-        assert!(!RithmicError::RequestTimeout.is_connection_issue());
     }
 
     #[test]

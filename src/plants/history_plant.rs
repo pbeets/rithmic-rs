@@ -45,10 +45,6 @@ pub(crate) enum HistoryPlantCommand {
         query: ReplayQuery,
         response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
     },
-    ResumeBars {
-        request_key: String,
-        response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
-    },
     SubscribeTimeBarUpdates {
         symbol: String,
         exchange: String,
@@ -328,11 +324,6 @@ impl PlantKind for HistoryPlant {
                 },
                 PendingReplay::new(response_sender),
             ),
-
-            HistoryPlantCommand::ResumeBars {
-                request_key,
-                response_sender,
-            } => cx.send_for(|api| api.request_resume_bars(&request_key), response_sender),
 
             HistoryPlantCommand::SubscribeTimeBarUpdates {
                 symbol,
@@ -1027,44 +1018,6 @@ impl RithmicHistoryPlantHandle {
         request: VolumeProfileMinuteBarsRequest,
     ) -> Result<Vec<RithmicResponse>, RithmicError> {
         self.replay(ReplayQuery::Volume(request)).await
-    }
-
-    /// Deprecated: the plant resumes truncated replays itself, as described on
-    /// [`load_ticks_all`](Self::load_ticks_all), so there is no need to call this.
-    ///
-    /// Ask the server to continue a replay it cut short.
-    ///
-    /// The `load_*` methods do this automatically and never return the notice
-    /// that carries the key, so there is normally nothing to pass here; it is
-    /// kept for compatibility. Called by hand, it returns only the server's
-    /// acknowledgement, and the rest of the replay is discarded.
-    ///
-    /// Not the same as the `resume_bars` request flag, which lifts the
-    /// 10,000-record cap.
-    ///
-    /// # Arguments
-    /// * `request_key` - The key from the server's truncation notice
-    ///
-    /// # Returns
-    /// The server's acknowledgement, `ResponseResumeBars`.
-    #[deprecated(
-        since = "3.2.0",
-        note = "the plant resumes truncated replays itself; the continuation this requests is counted, not delivered"
-    )]
-    pub async fn resume_bars(
-        &self,
-        request_key: String,
-    ) -> Result<Vec<RithmicResponse>, RithmicError> {
-        let (tx, rx) = oneshot::channel::<Result<Vec<RithmicResponse>, RithmicError>>();
-
-        let command = HistoryPlantCommand::ResumeBars {
-            request_key,
-            response_sender: tx,
-        };
-
-        let _ = self.sender.send(command).await;
-
-        await_all_responses(rx).await
     }
 
     /// Start or stop a live feed of time bars as they complete.
