@@ -391,3 +391,31 @@ pub use util::{
     InstrumentInfo, InstrumentInfoError, OrderStatus, UnknownTemplateMessage,
     rithmic_to_unix_nanos, rithmic_to_unix_nanos_precise,
 };
+
+/// Generated messages can't be built with a struct literal, so a proto refresh
+/// that adds fields stays non-breaking:
+///
+/// ```compile_fail,E0639
+/// let _ = rithmic_rs::rti::LastTrade { ..Default::default() };
+/// ```
+///
+/// Generated enums need a wildcard arm for the same reason:
+///
+/// ```compile_fail,E0004
+/// use rithmic_rs::rti::request_market_data_update::Request;
+///
+/// fn name(request: Request) -> &'static str {
+///     match request {
+///         Request::Subscribe => "subscribe",
+///         Request::Unsubscribe => "unsubscribe",
+///     }
+/// }
+/// ```
+///
+/// Order commands are built with `new()` and setters:
+///
+/// ```compile_fail,E0639
+/// let _ = rithmic_rs::RithmicOrder { ..Default::default() };
+/// ```
+#[cfg(doctest)]
+pub struct NonExhaustiveSeals;
