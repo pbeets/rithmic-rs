@@ -35,9 +35,9 @@ use crate::{
         RequestSubscribeToBracketUpdates, RequestTickBarReplay, RequestTickBarUpdate,
         RequestTimeBarReplay, RequestTimeBarUpdate, RequestTradeRoutes,
         RequestUpdateStopBracketLevel, RequestUpdateTargetBracketLevel, RequestUserEntitlements,
-        RequestVolumeProfileMinuteBars, request_account_rms_updates, request_bracket_order,
-        request_cancel_all_orders, request_cancel_order, request_depth_by_order_updates,
-        request_easy_to_borrow_list, request_exit_position,
+        RequestVolumeProfileMinuteBars, request_bracket_order, request_cancel_all_orders,
+        request_cancel_order, request_depth_by_order_updates, request_easy_to_borrow_list,
+        request_exit_position,
         request_login::SysInfraType,
         request_market_data_update::Request,
         request_market_data_update_by_underlying, request_modify_order, request_new_order,
@@ -46,8 +46,8 @@ use crate::{
         request_tick_bar_update, request_time_bar_replay, request_time_bar_update,
     },
     types::{
-        EasyToBorrowRequest, EntitlementKind, FillHistoryRange, MarketData, OrderType,
-        PlaybackKind, RmsUpdateBits, SessionConfig, TickBarReplayRequest, TimeBarReplayRequest,
+        EntitlementKind, FillHistoryRange, MarketData, OrderType, PlaybackKind, RmsUpdates,
+        SessionConfig, TickBarReplayRequest, TimeBarReplayRequest, TimeBarType,
         VolumeProfileMinuteBarsRequest,
     },
 };
@@ -1182,7 +1182,7 @@ impl RithmicSenderApi {
         &mut self,
         symbol: &str,
         exchange: &str,
-        bar_type: request_time_bar_update::BarType,
+        bar_type: TimeBarType,
         bar_type_period: i32,
         request: request_time_bar_update::Request,
     ) -> (Vec<u8>, String) {
@@ -1193,7 +1193,7 @@ impl RithmicSenderApi {
             user_msg: vec![id.clone()],
             symbol: Some(symbol.to_string()),
             exchange: Some(exchange.to_string()),
-            bar_type: Some(bar_type.into()),
+            bar_type: Some(request_time_bar_update::BarType::from(bar_type).into()),
             bar_type_period: Some(bar_type_period),
             request: Some(request.into()),
         };
@@ -1230,24 +1230,14 @@ impl RithmicSenderApi {
     }
 
     /// Subscribe to account risk-limit updates, or unsubscribe when `subscribe`
-    /// is false. `update_bits` are OR-ed into one mask; an empty `Vec` omits it.
+    /// is false. `None` leaves `update_bits` off the request.
     pub fn request_account_rms_updates(
         &mut self,
         subscribe: bool,
-        update_bits: Vec<RmsUpdateBits>,
+        data: Option<RmsUpdates>,
         account: &RithmicAccount,
     ) -> (Vec<u8>, String) {
         let id = self.get_next_message_id();
-
-        // An empty selection leaves the field off the wire entirely; sending an
-        // explicit 0 is a different message from omitting the field.
-        let bits = if update_bits.is_empty() {
-            None
-        } else {
-            Some(update_bits.into_iter().fold(0i32, |acc, f| {
-                acc | request_account_rms_updates::UpdateBits::from(f) as i32
-            }))
-        };
 
         let req = RequestAccountRmsUpdates {
             template_id: 3508,
@@ -1263,7 +1253,7 @@ impl RithmicSenderApi {
                 }
                 .to_string(),
             ),
-            update_bits: bits,
+            update_bits: data.map(RmsUpdates::bits),
         };
 
         self.request_to_buf(req, id)
@@ -1400,14 +1390,14 @@ impl RithmicSenderApi {
 
     pub fn request_easy_to_borrow_list(
         &mut self,
-        request_type: EasyToBorrowRequest,
+        request_type: request_easy_to_borrow_list::Request,
     ) -> (Vec<u8>, String) {
         let id = self.get_next_message_id();
 
         let req = RequestEasyToBorrowList {
             template_id: 348,
             user_msg: vec![id.clone()],
-            request: Some(request_easy_to_borrow_list::Request::from(request_type).into()),
+            request: Some(request_type.into()),
         };
 
         self.request_to_buf(req, id)
@@ -2207,7 +2197,7 @@ mod tests {
     fn account_rms_updates_override_uses_supplied_account() {
         let mut api = RithmicSenderApi::new(&test_config());
 
-        let (buf, _) = api.request_account_rms_updates(true, vec![], &override_account());
+        let (buf, _) = api.request_account_rms_updates(true, None, &override_account());
         let request: RequestAccountRmsUpdates = decode_request(&buf);
 
         assert_eq!(request.fcm_id.as_deref(), Some("FCM_B"));
@@ -2216,14 +2206,14 @@ mod tests {
     }
 
     #[test]
-    fn account_rms_updates_omits_update_bits_when_empty() {
+    fn account_rms_updates_omits_update_bits_when_none() {
         let mut api = RithmicSenderApi::new(&test_config());
 
-        let (buf, _) = api.request_account_rms_updates(true, vec![], &default_account());
+        let (buf, _) = api.request_account_rms_updates(true, None, &default_account());
         let request: RequestAccountRmsUpdates = decode_request(&buf);
         assert_eq!(request.update_bits, None);
 
-        let (buf, _) = api.request_account_rms_updates(false, vec![], &default_account());
+        let (buf, _) = api.request_account_rms_updates(false, None, &default_account());
         let request: RequestAccountRmsUpdates = decode_request(&buf);
         assert_eq!(request.update_bits, None);
         assert_eq!(request.request.as_deref(), Some("unsubscribe"));
@@ -2235,7 +2225,7 @@ mod tests {
 
         let (buf, _) = api.request_account_rms_updates(
             true,
-            vec![RmsUpdateBits::AutoLiqThresholdCurrentValue],
+            Some(RmsUpdates::AUTO_LIQ_THRESHOLD_CURRENT_VALUE),
             &default_account(),
         );
         let request: RequestAccountRmsUpdates = decode_request(&buf);
@@ -2245,10 +2235,11 @@ mod tests {
     }
 
     #[test]
-    fn easy_to_borrow_list_maps_the_request_enum_by_name() {
+    fn easy_to_borrow_list_sends_the_request_type() {
         let mut api = RithmicSenderApi::new(&test_config());
 
-        let (buf, _) = api.request_easy_to_borrow_list(EasyToBorrowRequest::Subscribe);
+        let (buf, _) =
+            api.request_easy_to_borrow_list(request_easy_to_borrow_list::Request::Subscribe);
         let request: RequestEasyToBorrowList = decode_request(&buf);
         assert_eq!(request.template_id, 348);
         assert_eq!(
@@ -2256,7 +2247,8 @@ mod tests {
             Some(request_easy_to_borrow_list::Request::Subscribe as i32)
         );
 
-        let (buf, _) = api.request_easy_to_borrow_list(EasyToBorrowRequest::Unsubscribe);
+        let (buf, _) =
+            api.request_easy_to_borrow_list(request_easy_to_borrow_list::Request::Unsubscribe);
         let request: RequestEasyToBorrowList = decode_request(&buf);
         assert_eq!(
             request.request,
@@ -3520,7 +3512,7 @@ mod tests {
                 api.request_time_bar_update(
                     "ESZ6",
                     "CME",
-                    request_time_bar_update::BarType::SecondBar,
+                    TimeBarType::SecondBar,
                     1,
                     request_time_bar_update::Request::Subscribe,
                 ),
@@ -3611,7 +3603,7 @@ mod tests {
             ),
             (
                 348,
-                api.request_easy_to_borrow_list(EasyToBorrowRequest::Subscribe),
+                api.request_easy_to_borrow_list(request_easy_to_borrow_list::Request::Subscribe),
             ),
             (
                 400,
@@ -3642,10 +3634,7 @@ mod tests {
                 api.request_exit_position(&RithmicExitPosition::default(), &account),
             ),
             (3506, api.request_replay_executions(0, 1, &account)),
-            (
-                3508,
-                api.request_account_rms_updates(false, vec![], &account),
-            ),
+            (3508, api.request_account_rms_updates(false, None, &account)),
             (3510, api.request_get_user_info(None, &account)),
             (3512, api.request_show_fill_history(fills, None, &account)),
             (3512, api.request_load_fill_history(fills, &account)),

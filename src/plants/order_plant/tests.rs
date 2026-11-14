@@ -930,7 +930,6 @@ fn only_the_plant_writes_its_scope_and_routes() {
     let (response_sender, mut routes) = oneshot::channel();
 
     let effects = core.on_event(Event::Command(OrderPlantCommand::GetTradeRoutes {
-        subscribe_for_updates: false,
         response_sender,
     }));
 
@@ -1651,4 +1650,55 @@ async fn subscribe_all_retains_every_account() {
     }
 
     plant.connection_handle.await.unwrap();
+}
+
+/// Login asks for route updates; a later `get_trade_routes` must not cancel them.
+#[tokio::test]
+async fn get_trade_routes_keeps_route_updates_on() {
+    let (mut plant, _sender, mut client) = scoped_plant_with_wire().await;
+
+    let routes: crate::rti::RequestTradeRoutes =
+        sent_request(&mut plant, &mut client, |response_sender| {
+            OrderPlantCommand::GetTradeRoutes { response_sender }
+        })
+        .await;
+
+    assert_eq!(routes.subscribe_for_updates, Some(true));
+}
+
+/// Each subscribe/unsubscribe pair shares one command, so a swapped request
+/// would only show up on the wire.
+#[tokio::test]
+async fn subscription_pairs_send_subscribe_then_unsubscribe() {
+    use crate::rti::{
+        RequestAccountRmsUpdates, RequestEasyToBorrowList, request_easy_to_borrow_list,
+    };
+
+    let (plant, mut client) = running_plant().await;
+    let handle = plant.get_handle(&test_account());
+
+    let call = handle.clone();
+    tokio::spawn(async move { call.subscribe_easy_to_borrow_list().await });
+    let sent: RequestEasyToBorrowList = read_request(&mut client, 348, "easy-to-borrow").await;
+    assert_eq!(
+        sent.request,
+        Some(request_easy_to_borrow_list::Request::Subscribe.into())
+    );
+
+    let call = handle.clone();
+    tokio::spawn(async move { call.unsubscribe_easy_to_borrow_list().await });
+    let sent: RequestEasyToBorrowList = read_request(&mut client, 348, "easy-to-borrow").await;
+    assert_eq!(
+        sent.request,
+        Some(request_easy_to_borrow_list::Request::Unsubscribe.into())
+    );
+
+    let call = handle.clone();
+    tokio::spawn(async move { call.subscribe_account_rms_updates(None).await });
+    let sent: RequestAccountRmsUpdates = read_request(&mut client, 3508, "account RMS").await;
+    assert_eq!(sent.request.as_deref(), Some("subscribe"));
+
+    tokio::spawn(async move { handle.unsubscribe_account_rms_updates(None).await });
+    let sent: RequestAccountRmsUpdates = read_request(&mut client, 3508, "account RMS").await;
+    assert_eq!(sent.request.as_deref(), Some("unsubscribe"));
 }

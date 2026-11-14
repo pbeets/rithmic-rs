@@ -24,6 +24,6 @@ pub use commands::{
 
 // Re-export the crate-owned order enums so `api::ManualOrAutoEntry` also resolves
 pub use crate::types::{
-    BracketOperationType, BracketType, EasyToBorrowRequest, FillHistoryRange, ManualOrAutoEntry,
-    OrderCondition, OrderPriceField, OrderSide, OrderType, RmsUpdateBits, TimeInForce,
+    BracketOperationType, BracketType, FillHistoryRange, ManualOrAutoEntry, OrderCondition,
+    OrderPriceField, OrderSide, OrderType, TimeInForce,
 };

@@ -31,9 +31,7 @@ pub async fn front_month(
 
     let product = env::var("PRODUCT").unwrap_or_else(|_| "ES".to_string());
 
-    let response = handle
-        .get_front_month_contract(&product, exchange, false)
-        .await?;
+    let response = handle.get_front_month_contract(&product, exchange).await?;
 
     match &response.message {
         RithmicMessage::ResponseFrontMonthContract(fm) => fm.trading_symbol.clone(),

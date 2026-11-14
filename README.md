@@ -150,7 +150,7 @@ handle.subscribe("ESZ6", "CME", more).await?;
 
 // Symbol discovery
 let symbols = handle.search_symbols("ES", Some("CME"), None, None, None).await?;
-let front_month = handle.get_front_month_contract("ES", "CME", false).await?;
+let front_month = handle.get_front_month_contract("ES", "CME").await?;
 ```
 
 ### Order Plant

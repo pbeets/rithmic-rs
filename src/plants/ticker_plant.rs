@@ -1199,12 +1199,32 @@ impl RithmicTickerPlantHandle {
     /// # Arguments
     /// * `symbol` - The product symbol (e.g., "ES" for E-mini S&P 500)
     /// * `exchange` - The exchange code (e.g., "CME")
-    /// * `need_updates` - If true, [`RithmicMessage::FrontMonthContractUpdate`]
-    ///   messages arrive on `subscription_receiver` when the front month changes
     ///
     /// # Returns
     /// A [`RithmicMessage::ResponseFrontMonthContract`].
     pub async fn get_front_month_contract(
+        &self,
+        symbol: &str,
+        exchange: &str,
+    ) -> Result<RithmicResponse, RithmicError> {
+        self.front_month_contract(symbol, exchange, false).await
+    }
+
+    /// Get the current front month contract, as
+    /// [`get_front_month_contract`](Self::get_front_month_contract) does, and
+    /// stream each roll after it.
+    ///
+    /// Rolls arrive on `subscription_receiver` as
+    /// [`RithmicMessage::FrontMonthContractUpdate`]. There is no unsubscribe.
+    pub async fn subscribe_front_month_contract(
+        &self,
+        symbol: &str,
+        exchange: &str,
+    ) -> Result<RithmicResponse, RithmicError> {
+        self.front_month_contract(symbol, exchange, true).await
+    }
+
+    async fn front_month_contract(
         &self,
         symbol: &str,
         exchange: &str,

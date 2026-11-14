@@ -19,9 +19,11 @@ use crate::{
     request_handler::{PendingReplay, RequestResult},
     rti::{
         messages::RithmicMessage, request_login::SysInfraType, request_tick_bar_update,
-        request_time_bar_replay::BarType, request_time_bar_update,
+        request_time_bar_update,
     },
-    types::{TickBarReplayRequest, TimeBarReplayRequest, VolumeProfileMinuteBarsRequest},
+    types::{
+        TickBarReplayRequest, TimeBarReplayRequest, TimeBarType, VolumeProfileMinuteBarsRequest,
+    },
 };
 
 /// Default subscription channel capacity.
@@ -48,7 +50,7 @@ pub(crate) enum HistoryPlantCommand {
     SubscribeTimeBarUpdates {
         symbol: String,
         exchange: String,
-        bar_type: request_time_bar_update::BarType,
+        bar_type: TimeBarType,
         bar_type_period: i32,
         request: request_time_bar_update::Request,
         response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
@@ -820,7 +822,7 @@ impl RithmicHistoryPlantHandle {
         &self,
         symbol: String,
         exchange: String,
-        bar_type: BarType,
+        bar_type: TimeBarType,
         bar_type_period: i32,
         start_time_sec: i32,
         end_time_sec: i32,
@@ -874,7 +876,7 @@ impl RithmicHistoryPlantHandle {
         &self,
         symbol: String,
         exchange: String,
-        bar_type: BarType,
+        bar_type: TimeBarType,
         bar_type_period: i32,
         start_time_sec: i32,
         end_time_sec: i32,
@@ -987,25 +989,60 @@ impl RithmicHistoryPlantHandle {
         self.replay(ReplayQuery::Volume(request)).await
     }
 
-    /// Start or stop a live feed of time bars as they complete.
+    /// Start a live feed of time bars as they complete.
     ///
     /// Unlike the loaders, this does not return the bars. It returns the
     /// server's acknowledgement, and the bars themselves then arrive on
     /// [`subscription_receiver`](Self::subscription_receiver) as
-    /// [`RithmicMessage::TimeBar`] when they close. Pass `Request::Unsubscribe`
-    /// to stop.
+    /// [`RithmicMessage::TimeBar`] when they close.
     ///
     /// # Arguments
     /// * `symbol` - The trading symbol, e.g. `"ESZ6"`
     /// * `exchange` - The exchange code, e.g. `"CME"`
-    /// * `bar_type` - `SecondBar`, `MinuteBar`, `DailyBar` or `WeeklyBar`
+    /// * `bar_type` - The bar unit: second, minute, day or week
     /// * `bar_type_period` - How many of those units per bar
-    /// * `request` - `Subscribe` or `Unsubscribe`
     pub async fn subscribe_time_bar_updates(
         &self,
         symbol: &str,
         exchange: &str,
-        bar_type: request_time_bar_update::BarType,
+        bar_type: TimeBarType,
+        bar_type_period: i32,
+    ) -> Result<RithmicResponse, RithmicError> {
+        self.time_bar_updates(
+            symbol,
+            exchange,
+            bar_type,
+            bar_type_period,
+            request_time_bar_update::Request::Subscribe,
+        )
+        .await
+    }
+
+    /// Stop a feed started by
+    /// [`subscribe_time_bar_updates`](Self::subscribe_time_bar_updates). Pass
+    /// the same arguments you subscribed with.
+    pub async fn unsubscribe_time_bar_updates(
+        &self,
+        symbol: &str,
+        exchange: &str,
+        bar_type: TimeBarType,
+        bar_type_period: i32,
+    ) -> Result<RithmicResponse, RithmicError> {
+        self.time_bar_updates(
+            symbol,
+            exchange,
+            bar_type,
+            bar_type_period,
+            request_time_bar_update::Request::Unsubscribe,
+        )
+        .await
+    }
+
+    async fn time_bar_updates(
+        &self,
+        symbol: &str,
+        exchange: &str,
+        bar_type: TimeBarType,
         bar_type_period: i32,
         request: request_time_bar_update::Request,
     ) -> Result<RithmicResponse, RithmicError> {
@@ -1025,7 +1062,7 @@ impl RithmicHistoryPlantHandle {
         await_first_response(rx).await
     }
 
-    /// Start or stop a live feed of tick bars as they complete.
+    /// Start a live feed of tick bars as they complete.
     ///
     /// Works like [`subscribe_time_bar_updates`](Self::subscribe_time_bar_updates):
     /// the acknowledgement comes back from this call, the bars arrive on
@@ -1039,8 +1076,48 @@ impl RithmicHistoryPlantHandle {
     /// * `bar_sub_type` - `Regular` or `Custom`
     /// * `bar_type_specifier` - The bar size as a string, e.g. `"1"`; for
     ///   `TickBar`, trades per bar
-    /// * `request` - `Subscribe` or `Unsubscribe`
     pub async fn subscribe_tick_bar_updates(
+        &self,
+        symbol: &str,
+        exchange: &str,
+        bar_type: request_tick_bar_update::BarType,
+        bar_sub_type: request_tick_bar_update::BarSubType,
+        bar_type_specifier: &str,
+    ) -> Result<RithmicResponse, RithmicError> {
+        self.tick_bar_updates(
+            symbol,
+            exchange,
+            bar_type,
+            bar_sub_type,
+            bar_type_specifier,
+            request_tick_bar_update::Request::Subscribe,
+        )
+        .await
+    }
+
+    /// Stop a feed started by
+    /// [`subscribe_tick_bar_updates`](Self::subscribe_tick_bar_updates). Pass
+    /// the same arguments you subscribed with.
+    pub async fn unsubscribe_tick_bar_updates(
+        &self,
+        symbol: &str,
+        exchange: &str,
+        bar_type: request_tick_bar_update::BarType,
+        bar_sub_type: request_tick_bar_update::BarSubType,
+        bar_type_specifier: &str,
+    ) -> Result<RithmicResponse, RithmicError> {
+        self.tick_bar_updates(
+            symbol,
+            exchange,
+            bar_type,
+            bar_sub_type,
+            bar_type_specifier,
+            request_tick_bar_update::Request::Unsubscribe,
+        )
+        .await
+    }
+
+    async fn tick_bar_updates(
         &self,
         symbol: &str,
         exchange: &str,
