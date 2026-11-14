@@ -313,36 +313,20 @@ pub struct BestBidOffer {
     pub is_snapshot: ::core::option::Option<bool>,
     #[prost(double, optional, tag = "100022")]
     pub bid_price: ::core::option::Option<f64>,
-    /// deprecated, use bid_size_64 instead
-    #[prost(int32, optional, tag = "100030")]
-    #[deprecated = "use bid_size_64 instead"]
-    pub bid_size: ::core::option::Option<i32>,
     #[prost(uint64, optional, tag = "159000")]
     pub bid_size_64: ::core::option::Option<u64>,
     #[prost(int32, optional, tag = "154403")]
     pub bid_orders: ::core::option::Option<i32>,
-    /// deprecated, use bid_implicit_size_64 instead
-    #[prost(int32, optional, tag = "154867")]
-    #[deprecated = "use bid_implicit_size_64 instead"]
-    pub bid_implicit_size: ::core::option::Option<i32>,
     #[prost(uint64, optional, tag = "159001")]
     pub bid_implicit_size_64: ::core::option::Option<u64>,
     #[prost(string, optional, tag = "100266")]
     pub bid_time: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(double, optional, tag = "100025")]
     pub ask_price: ::core::option::Option<f64>,
-    /// deprecated, use ask_size_64 instead
-    #[prost(int32, optional, tag = "100031")]
-    #[deprecated = "use ask_size_64 instead"]
-    pub ask_size: ::core::option::Option<i32>,
     #[prost(uint64, optional, tag = "159002")]
     pub ask_size_64: ::core::option::Option<u64>,
     #[prost(int32, optional, tag = "154404")]
     pub ask_orders: ::core::option::Option<i32>,
-    /// deprecated, use ask_implicit_size instead
-    #[prost(int32, optional, tag = "154868")]
-    #[deprecated = "use ask_implicit_size_64 instead"]
-    pub ask_implicit_size: ::core::option::Option<i32>,
     #[prost(uint64, optional, tag = "159003")]
     pub ask_implicit_size_64: ::core::option::Option<u64>,
     #[prost(string, optional, tag = "100267")]
@@ -457,10 +441,6 @@ pub struct DepthByOrder {
     pub prev_depth_price: ::prost::alloc::vec::Vec<f64>,
     #[prost(bool, repeated, packed = "false", tag = "154930")]
     pub prev_depth_price_flag: ::prost::alloc::vec::Vec<bool>,
-    /// deprecated, use depth_size_64 instead
-    #[prost(int32, repeated, packed = "false", tag = "154406")]
-    #[deprecated = "use depth_size_64 instead"]
-    pub depth_size: ::prost::alloc::vec::Vec<i32>,
     #[prost(uint64, repeated, packed = "false", tag = "159009")]
     pub depth_size_64: ::prost::alloc::vec::Vec<u64>,
     #[prost(uint64, repeated, packed = "false", tag = "153613")]
@@ -672,10 +652,6 @@ pub struct ExchangeOrderNotification {
     pub instrument_type: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(string, optional, tag = "156969")]
     pub commission_fill_rate: ::core::option::Option<::prost::alloc::string::String>,
-    /// deprecated, use quantity_64 instead
-    #[prost(int32, optional, tag = "112004")]
-    #[deprecated = "use quantity_64 instead"]
-    pub quantity: ::core::option::Option<i32>,
     #[prost(uint64, optional, tag = "159017")]
     pub quantity_64: ::core::option::Option<u64>,
     #[prost(double, optional, tag = "110306")]
@@ -718,10 +694,6 @@ pub struct ExchangeOrderNotification {
         tag = "157087"
     )]
     pub bracket_type: ::core::option::Option<i32>,
-    /// deprecated, use confirmed_size_64 instead
-    #[prost(int32, optional, tag = "110329")]
-    #[deprecated = "use confirmed_size_64 instead"]
-    pub confirmed_size: ::core::option::Option<i32>,
     #[prost(uint64, optional, tag = "159021")]
     pub confirmed_size_64: ::core::option::Option<u64>,
     #[prost(string, optional, tag = "110326")]
@@ -730,10 +702,6 @@ pub struct ExchangeOrderNotification {
     pub confirmed_date: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(string, optional, tag = "110330")]
     pub confirmed_id: ::core::option::Option<::prost::alloc::string::String>,
-    /// deprecated, use modified_size_64 instead
-    #[prost(int32, optional, tag = "149267")]
-    #[deprecated = "use modified_size_64 instead"]
-    pub modified_size: ::core::option::Option<i32>,
     #[prost(uint64, optional, tag = "159022")]
     pub modified_size_64: ::core::option::Option<u64>,
     #[prost(string, optional, tag = "149268")]
@@ -742,10 +710,6 @@ pub struct ExchangeOrderNotification {
     pub modified_date: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(string, optional, tag = "149244")]
     pub modify_id: ::core::option::Option<::prost::alloc::string::String>,
-    /// deprecated, use cancelled_size_64 instead
-    #[prost(int32, optional, tag = "110318")]
-    #[deprecated = "use cancelled_size_64 instead"]
-    pub cancelled_size: ::core::option::Option<i32>,
     #[prost(uint64, optional, tag = "159023")]
     pub cancelled_size_64: ::core::option::Option<u64>,
     #[prost(string, optional, tag = "110319")]
@@ -756,10 +720,6 @@ pub struct ExchangeOrderNotification {
     pub cancelled_id: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(double, optional, tag = "110307")]
     pub fill_price: ::core::option::Option<f64>,
-    /// deprecated, use fill_size_64 instead
-    #[prost(int32, optional, tag = "110308")]
-    #[deprecated = "use fill_size_64 instead"]
-    pub fill_size: ::core::option::Option<i32>,
     #[prost(uint64, optional, tag = "159024")]
     pub fill_size_64: ::core::option::Option<u64>,
     #[prost(string, optional, tag = "110309")]
@@ -780,16 +740,8 @@ pub struct ExchangeOrderNotification {
     pub ask_price: ::prost::alloc::vec::Vec<f64>,
     #[prost(uint64, repeated, packed = "false", tag = "100031")]
     pub ask_size: ::prost::alloc::vec::Vec<u64>,
-    /// deprecated, use total_fill_size_64 instead
-    #[prost(int32, optional, tag = "154111")]
-    #[deprecated = "use total_fill_size_64 instead"]
-    pub total_fill_size: ::core::option::Option<i32>,
     #[prost(uint64, optional, tag = "159019")]
     pub total_fill_size_64: ::core::option::Option<u64>,
-    /// deprecated, use total_unfilled_size_64 instead
-    #[prost(int32, optional, tag = "154112")]
-    #[deprecated = "use total_unfilled_size_64 instead"]
-    pub total_unfilled_size: ::core::option::Option<i32>,
     #[prost(uint64, optional, tag = "159020")]
     pub total_unfilled_size_64: ::core::option::Option<u64>,
     #[prost(string, optional, tag = "149266")]
@@ -1251,10 +1203,6 @@ pub struct LastTrade {
     pub is_snapshot: ::core::option::Option<bool>,
     #[prost(double, optional, tag = "100006")]
     pub trade_price: ::core::option::Option<f64>,
-    /// deprecated, use trade_size_64 instead
-    #[prost(int32, optional, tag = "100178")]
-    #[deprecated = "use trade_size_64 instead"]
-    pub trade_size: ::core::option::Option<i32>,
     #[prost(uint64, optional, tag = "159008")]
     pub trade_size_64: ::core::option::Option<u64>,
     #[prost(enumeration = "last_trade::TransactionType", optional, tag = "112003")]
@@ -1427,34 +1375,18 @@ pub struct OrderBook {
     pub update_type: ::core::option::Option<i32>,
     #[prost(double, repeated, packed = "false", tag = "154282")]
     pub bid_price: ::prost::alloc::vec::Vec<f64>,
-    /// deprecated, use bid_size_64 instead
-    #[prost(int32, repeated, packed = "false", tag = "154283")]
-    #[deprecated = "use bid_size_64 instead"]
-    pub bid_size: ::prost::alloc::vec::Vec<i32>,
     #[prost(uint64, repeated, packed = "false", tag = "159004")]
     pub bid_size_64: ::prost::alloc::vec::Vec<u64>,
     #[prost(int32, repeated, packed = "false", tag = "154401")]
     pub bid_orders: ::prost::alloc::vec::Vec<i32>,
-    /// deprecated, use impl_bid_size_64 instead
-    #[prost(int32, repeated, packed = "false", tag = "154412")]
-    #[deprecated = "use impl_bid_size_64 instead"]
-    pub impl_bid_size: ::prost::alloc::vec::Vec<i32>,
     #[prost(uint64, repeated, packed = "false", tag = "159005")]
     pub impl_bid_size_64: ::prost::alloc::vec::Vec<u64>,
     #[prost(double, repeated, packed = "false", tag = "154284")]
     pub ask_price: ::prost::alloc::vec::Vec<f64>,
-    /// deprecated, use ask_size_64 instead
-    #[prost(int32, repeated, packed = "false", tag = "154285")]
-    #[deprecated = "use ask_size_64 instead"]
-    pub ask_size: ::prost::alloc::vec::Vec<i32>,
     #[prost(uint64, repeated, packed = "false", tag = "159006")]
     pub ask_size_64: ::prost::alloc::vec::Vec<u64>,
     #[prost(int32, repeated, packed = "false", tag = "154402")]
     pub ask_orders: ::prost::alloc::vec::Vec<i32>,
-    /// deprecated, use impl_ask_size_64 instead
-    #[prost(int32, repeated, packed = "false", tag = "154415")]
-    #[deprecated = "use impl_ask_size_64 instead"]
-    pub impl_ask_size: ::prost::alloc::vec::Vec<i32>,
     #[prost(uint64, repeated, packed = "false", tag = "159007")]
     pub impl_ask_size_64: ::prost::alloc::vec::Vec<u64>,
     #[prost(int32, optional, tag = "150100")]
@@ -1892,10 +1824,6 @@ pub struct RequestBracketOrder {
     pub symbol: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(string, optional, tag = "110101")]
     pub exchange: ::core::option::Option<::prost::alloc::string::String>,
-    /// deprecated, use quantity_64 instead
-    #[prost(int32, optional, tag = "112004")]
-    #[deprecated = "use quantity_64 instead"]
-    pub quantity: ::core::option::Option<i32>,
     #[prost(uint64, optional, tag = "159017")]
     pub quantity_64: ::core::option::Option<u64>,
     #[prost(double, optional, tag = "110306")]
@@ -1947,16 +1875,8 @@ pub struct RequestBracketOrder {
     pub break_even_ticks: ::core::option::Option<i32>,
     #[prost(int32, optional, tag = "157172")]
     pub break_even_trigger_ticks: ::core::option::Option<i32>,
-    /// deprecated, use target_quantity_64 instead
-    #[prost(int32, repeated, packed = "false", tag = "154457")]
-    #[deprecated = "use target_quantity_64 instead"]
-    pub target_quantity: ::prost::alloc::vec::Vec<i32>,
     #[prost(uint64, repeated, packed = "false", tag = "159025")]
     pub target_quantity_64: ::prost::alloc::vec::Vec<u64>,
-    /// deprecated, use stop_quantity_64 instead
-    #[prost(int32, repeated, packed = "false", tag = "154459")]
-    #[deprecated = "use stop_quantity_64 instead"]
-    pub stop_quantity: ::prost::alloc::vec::Vec<i32>,
     #[prost(uint64, repeated, packed = "false", tag = "159026")]
     pub stop_quantity_64: ::prost::alloc::vec::Vec<u64>,
     #[prost(int32, repeated, packed = "false", tag = "154458")]
@@ -3145,10 +3065,6 @@ pub struct RequestModifyOrder {
     pub symbol: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(string, optional, tag = "110101")]
     pub exchange: ::core::option::Option<::prost::alloc::string::String>,
-    /// deprecated, use quantity_64 instead
-    #[prost(int32, optional, tag = "112004")]
-    #[deprecated = "use quantity_64 instead"]
-    pub quantity: ::core::option::Option<i32>,
     #[prost(uint64, optional, tag = "159017")]
     pub quantity_64: ::core::option::Option<u64>,
     #[prost(double, optional, tag = "110306")]
@@ -3378,10 +3294,6 @@ pub struct RequestNewOrder {
     pub symbol: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(string, optional, tag = "110101")]
     pub exchange: ::core::option::Option<::prost::alloc::string::String>,
-    /// deprecated, use quantity_64 instead
-    #[prost(int32, optional, tag = "112004")]
-    #[deprecated = "use quantity_64 instead"]
-    pub quantity: ::core::option::Option<i32>,
     #[prost(uint64, optional, tag = "159017")]
     pub quantity_64: ::core::option::Option<u64>,
     #[prost(double, optional, tag = "110306")]
@@ -3659,10 +3571,6 @@ pub struct RequestOcoOrder {
     pub symbol: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
     #[prost(string, repeated, tag = "110101")]
     pub exchange: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
-    /// deprecated, use quantity_64 instead
-    #[prost(int32, repeated, packed = "false", tag = "112004")]
-    #[deprecated = "use quantity_64 instead"]
-    pub quantity: ::prost::alloc::vec::Vec<i32>,
     #[prost(uint64, repeated, packed = "false", tag = "159017")]
     pub quantity_64: ::prost::alloc::vec::Vec<u64>,
     #[prost(double, repeated, packed = "false", tag = "110306")]
@@ -5482,10 +5390,6 @@ pub struct ResponseDepthByOrderSnapshot {
     pub depth_side: ::core::option::Option<i32>,
     #[prost(double, optional, tag = "154405")]
     pub depth_price: ::core::option::Option<f64>,
-    /// deprecated, use depth_size_64 instead
-    #[prost(int32, repeated, packed = "false", tag = "154406")]
-    #[deprecated = "use depth_size_64 instead"]
-    pub depth_size: ::prost::alloc::vec::Vec<i32>,
     #[prost(uint64, repeated, packed = "false", tag = "159009")]
     pub depth_size_64: ::prost::alloc::vec::Vec<u64>,
     #[prost(uint64, repeated, packed = "false", tag = "153613")]
@@ -5884,10 +5788,6 @@ pub struct ResponseGetVolumeAtPrice {
     pub exchange: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(double, repeated, packed = "false", tag = "100006")]
     pub trade_price: ::prost::alloc::vec::Vec<f64>,
-    /// deprecated, use volume_at_price_64 instead
-    #[prost(int32, repeated, packed = "false", tag = "156980")]
-    #[deprecated = "use volume_at_price_64 instead"]
-    pub volume_at_price: ::prost::alloc::vec::Vec<i32>,
     #[prost(uint64, repeated, packed = "false", tag = "159010")]
     pub volume_at_price_64: ::prost::alloc::vec::Vec<u64>,
     #[prost(int32, optional, tag = "150100")]
@@ -6053,14 +5953,6 @@ pub struct ResponseListExchangePermissions {
     /// level_2 (order book) entitlement status
     #[prost(string, optional, tag = "153509")]
     pub level_2_market_data: ::core::option::Option<::prost::alloc::string::String>,
-    /// deprecated. use level_1_market_data, level_2_market_data fields instead.
-    #[prost(
-        enumeration = "response_list_exchange_permissions::EntitlementFlag",
-        optional,
-        tag = "153400"
-    )]
-    #[deprecated = "use level_1_market_data and level_2_market_data instead"]
-    pub entitlement_flag: ::core::option::Option<i32>,
 }
 /// Nested message and enum types in `ResponseListExchangePermissions`.
 pub mod response_list_exchange_permissions {
@@ -7539,40 +7431,16 @@ pub struct ResponseVolumeProfileMinuteBars {
     pub low_price: ::core::option::Option<f64>,
     #[prost(double, repeated, packed = "false", tag = "119216")]
     pub profile_price: ::prost::alloc::vec::Vec<f64>,
-    /// deprecated, use profile_no_aggressor_volume_64 instead
-    #[prost(int32, repeated, packed = "false", tag = "119217")]
-    #[deprecated = "use profile_no_aggressor_volume_64 instead"]
-    pub profile_no_aggressor_volume: ::prost::alloc::vec::Vec<i32>,
     #[prost(uint64, repeated, packed = "false", tag = "159011")]
     pub profile_no_aggressor_volume_64: ::prost::alloc::vec::Vec<u64>,
-    /// deprecated, use profile_bid_volume_64 instead
-    #[prost(int32, repeated, packed = "false", tag = "119218")]
-    #[deprecated = "use profile_bid_volume_64 instead"]
-    pub profile_bid_volume: ::prost::alloc::vec::Vec<i32>,
     #[prost(uint64, repeated, packed = "false", tag = "159012")]
     pub profile_bid_volume_64: ::prost::alloc::vec::Vec<u64>,
-    /// deprecated, use profile_ask_volume_64 instead
-    #[prost(int32, repeated, packed = "false", tag = "119219")]
-    #[deprecated = "use profile_ask_volume_64 instead"]
-    pub profile_ask_volume: ::prost::alloc::vec::Vec<i32>,
     #[prost(uint64, repeated, packed = "false", tag = "159013")]
     pub profile_ask_volume_64: ::prost::alloc::vec::Vec<u64>,
-    /// deprecated, use profile_no_aggressor_trades_64 instead
-    #[prost(int32, repeated, packed = "false", tag = "119220")]
-    #[deprecated = "use profile_no_aggressor_trades_64 instead"]
-    pub profile_no_aggressor_trades: ::prost::alloc::vec::Vec<i32>,
     #[prost(uint64, repeated, packed = "false", tag = "159014")]
     pub profile_no_aggressor_trades_64: ::prost::alloc::vec::Vec<u64>,
-    /// deprecated, use profile_bid_aggressor_trades_64 instead
-    #[prost(int32, repeated, packed = "false", tag = "119221")]
-    #[deprecated = "use profile_bid_aggressor_trades_64 instead"]
-    pub profile_bid_aggressor_trades: ::prost::alloc::vec::Vec<i32>,
     #[prost(uint64, repeated, packed = "false", tag = "159015")]
     pub profile_bid_aggressor_trades_64: ::prost::alloc::vec::Vec<u64>,
-    /// deprecated, use profile_ask_aggressor_trades_64 instead
-    #[prost(int32, repeated, packed = "false", tag = "119222")]
-    #[deprecated = "use profile_ask_aggressor_trades_64 instead"]
-    pub profile_ask_aggressor_trades: ::prost::alloc::vec::Vec<i32>,
     #[prost(uint64, repeated, packed = "false", tag = "159016")]
     pub profile_ask_aggressor_trades_64: ::prost::alloc::vec::Vec<u64>,
 }
@@ -7631,16 +7499,8 @@ pub struct RithmicOrderNotification {
     pub completion_reason: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(string, optional, tag = "156969")]
     pub commission_fill_rate: ::core::option::Option<::prost::alloc::string::String>,
-    /// deprecated, use quantity_64 instead
-    #[prost(int32, optional, tag = "112004")]
-    #[deprecated = "use quantity_64 instead"]
-    pub quantity: ::core::option::Option<i32>,
     #[prost(uint64, optional, tag = "159017")]
     pub quantity_64: ::core::option::Option<u64>,
-    /// deprecated, use quan_release_pending_64 instead
-    #[prost(int32, optional, tag = "112027")]
-    #[deprecated = "use quan_release_pending_64 instead"]
-    pub quan_release_pending: ::core::option::Option<i32>,
     #[prost(uint64, optional, tag = "159018")]
     pub quan_release_pending_64: ::core::option::Option<u64>,
     #[prost(double, optional, tag = "110306")]
@@ -7685,16 +7545,8 @@ pub struct RithmicOrderNotification {
     pub bracket_type: ::core::option::Option<i32>,
     #[prost(double, optional, tag = "110322")]
     pub avg_fill_price: ::core::option::Option<f64>,
-    /// deprecated, use total_fill_size_64 instead
-    #[prost(int32, optional, tag = "154111")]
-    #[deprecated = "use total_fill_size_64 instead"]
-    pub total_fill_size: ::core::option::Option<i32>,
     #[prost(uint64, optional, tag = "159019")]
     pub total_fill_size_64: ::core::option::Option<u64>,
-    /// deprecated, use total_unfilled_size_64 instead
-    #[prost(int32, optional, tag = "154112")]
-    #[deprecated = "use total_unfilled_size_64 instead"]
-    pub total_unfilled_size: ::core::option::Option<i32>,
     #[prost(uint64, optional, tag = "159020")]
     pub total_unfilled_size_64: ::core::option::Option<u64>,
     #[prost(int32, optional, tag = "157064")]

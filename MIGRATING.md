@@ -11,8 +11,10 @@ guide below still applies.
   so negative quantities are rejected.
 - Requests send only `quantity_64`, `target_quantity_64` and
   `stop_quantity_64`. Read sizes from the `*_64` fields, such as
-  `trade_size_64`, `bid_size_64` and `fill_size_64`. Reading a 32-bit one now
-  gives a deprecation warning.
+  `trade_size_64`, `bid_size_64` and `fill_size_64`. The 32-bit fields Rithmic
+  deprecated are no longer generated.
+- `ResponseListExchangePermissions::entitlement_flag` is no longer generated.
+  Read `level_1_market_data` and `level_2_market_data` instead.
 - `show_fill_history()` accepts `None` or a cap in `1..=10_000`; `Some(0)` is now
   rejected locally.
 - Match template 358 as `RithmicMessage::AccountAndUserUpdate`.
