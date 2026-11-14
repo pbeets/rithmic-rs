@@ -29,7 +29,7 @@ fn subscribe(response_sender: Responder) -> TickerPlantCommand {
     TickerPlantCommand::Subscribe {
         symbol: "ESZ6".to_string(),
         exchange: "CME".to_string(),
-        fields: vec![UpdateBits::LastTrade],
+        data: MarketData::LAST_TRADE | MarketData::ORDER_BOOK,
         request_type: Request::Subscribe,
         response_sender,
     }
@@ -60,7 +60,7 @@ async fn subscribe_through_the_handle_after_close_requested_reports_connection_c
 
     let err = tokio::time::timeout(
         std::time::Duration::from_secs(5),
-        handle.subscribe("ESZ6", "CME"),
+        handle.subscribe("ESZ6", "CME", MarketData::LAST_TRADE),
     )
     .await
     .expect("subscribe must be answered, not left waiting")
@@ -89,7 +89,10 @@ async fn subscribe_sends_the_symbol_and_fields_while_the_connection_is_open() {
     assert_eq!(request.symbol.as_deref(), Some("ESZ6"));
     assert_eq!(request.exchange.as_deref(), Some("CME"));
     assert_eq!(request.request, Some(Request::Subscribe as i32));
-    assert_eq!(request.update_bits, Some(UpdateBits::LastTrade as u32));
+    assert_eq!(
+        request.update_bits,
+        Some(UpdateBits::LastTrade as u32 | UpdateBits::OrderBook as u32)
+    );
 }
 
 fn test_handle() -> (RithmicTickerPlantHandle, mpsc::Receiver<TickerPlantCommand>) {

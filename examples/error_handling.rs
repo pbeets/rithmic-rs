@@ -17,9 +17,9 @@ use tokio::{
 };
 
 use rithmic_rs::{
-    ConnectStrategy, OrderSide, OrderType, RithmicAccount, RithmicConfig, RithmicConfigBuilder,
-    RithmicEnv, RithmicError, RithmicHistoryPlant, RithmicOrder, RithmicOrderPlant,
-    RithmicResponse, RithmicTickerPlant, RithmicTickerPlantHandle,
+    ConnectStrategy, MarketData, OrderSide, OrderType, RithmicAccount, RithmicConfig,
+    RithmicConfigBuilder, RithmicEnv, RithmicError, RithmicHistoryPlant, RithmicOrder,
+    RithmicOrderPlant, RithmicResponse, RithmicTickerPlant, RithmicTickerPlantHandle,
     rti::{exchange_order_notification::NotifyType, messages::RithmicMessage},
 };
 
@@ -101,7 +101,10 @@ async fn login(handle: &RithmicTickerPlantHandle) -> bool {
 /// For most calls `Ok` does not mean it worked: check `resp.error`.
 /// Returns false when the connection is going and the caller should stop.
 async fn requests(handle: &RithmicTickerPlantHandle, symbol: &str, exchange: &str) -> bool {
-    match handle.subscribe(symbol, exchange).await {
+    match handle
+        .subscribe(symbol, exchange, MarketData::LAST_TRADE | MarketData::BBO)
+        .await
+    {
         Ok(resp) => match resp.error {
             // Branch on the code rather than parsing the message.
             Some(RithmicError::RequestRejected(err)) => {

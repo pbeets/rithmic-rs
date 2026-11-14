@@ -17,7 +17,7 @@ use std::{
 };
 
 use rithmic_rs::{
-    ConnectStrategy, RithmicConfig, RithmicEnv, RithmicError, RithmicTickerPlant,
+    ConnectStrategy, MarketData, RithmicConfig, RithmicEnv, RithmicError, RithmicTickerPlant,
     RithmicTickerPlantHandle, rti::messages::RithmicMessage,
 };
 
@@ -71,7 +71,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut connection_lost = false;
 
         for (symbol, exchange) in &subscriptions {
-            match handle.subscribe(symbol, exchange).await {
+            match handle
+                .subscribe(symbol, exchange, MarketData::LAST_TRADE | MarketData::BBO)
+                .await
+            {
                 Ok(resp) => match &resp.error {
                     Some(err) => {
                         warn!("Subscribe rejected for {symbol}/{exchange}: {err}, skipping")

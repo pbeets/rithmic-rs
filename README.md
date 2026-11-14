@@ -53,7 +53,7 @@ Stream live market data:
 
 ```rust
 use rithmic_rs::{
-    ConnectStrategy, RithmicConfig, RithmicEnv, RithmicTickerPlant,
+    ConnectStrategy, MarketData, RithmicConfig, RithmicEnv, RithmicTickerPlant,
     rti::messages::RithmicMessage,
 };
 
@@ -67,7 +67,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut handle = plant.get_handle();
 
     handle.login().await?;
-    handle.subscribe("ESZ6", "CME").await?; // use the current front month
+    // Use the current front month
+    handle
+        .subscribe("ESZ6", "CME", MarketData::LAST_TRADE | MarketData::BBO)
+        .await?;
 
     while let Ok(update) = handle.subscription_receiver.recv().await {
         match update.message {
@@ -127,17 +130,23 @@ This library uses the actor pattern where each Rithmic service runs independentl
 ### Ticker Plant
 
 ```rust
-// Subscribe to real-time quotes
-handle.subscribe("ESZ6", "CME").await?;
+use rithmic_rs::MarketData;
 
-// Unsubscribe when done
-handle.unsubscribe("ESZ6", "CME").await?;
+// Subscribe to trades and quotes; combine feeds with `|`
+let feeds = MarketData::LAST_TRADE | MarketData::BBO;
+handle.subscribe("ESZ6", "CME", feeds).await?;
 
-// Additional market data subscriptions
-handle.subscribe_instrument_status("ESZ6", "CME").await?;
-handle.subscribe_open_interest("ESZ6", "CME").await?;
-handle.subscribe_session_prices("ESZ6", "CME").await?;
-handle.subscribe_order_price_limits("ESZ6", "CME").await?;
+// Unsubscribe from the same feeds when done
+handle.unsubscribe("ESZ6", "CME", feeds).await?;
+
+// Market mode, open interest, session open/high/low and price limits
+let more = MarketData::MARKET_MODE
+    | MarketData::OPEN_INTEREST
+    | MarketData::OPEN
+    | MarketData::HIGH_LOW
+    | MarketData::HIGH_PRICE_LIMIT
+    | MarketData::LOW_PRICE_LIMIT;
+handle.subscribe("ESZ6", "CME", more).await?;
 
 // Symbol discovery
 let symbols = handle.search_symbols("ES", Some("CME"), None, None, None).await?;
@@ -295,7 +304,7 @@ A request the server turns down still returns `Ok`, with the reason in
 or a dropped connection.
 
 ```rust
-match handle.subscribe("ESZ6", "CME").await {
+match handle.subscribe("ESZ6", "CME", MarketData::LAST_TRADE).await {
     Ok(resp) => match &resp.error {
         Some(err) => eprintln!("rejected: {err}"),
         None => println!("subscribed"),

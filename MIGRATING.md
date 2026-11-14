@@ -42,6 +42,28 @@ guide below still applies.
 - Replace `load_ticks(symbol, exchange, start, end)` with `load_ticks_all()`,
   which takes the same arguments and has no 10,000-trade cap. To keep the cap,
   call `load_tick_bars(symbol, exchange, 1, start, end)`.
+- The ticker handle picks feeds with `MarketData`. Pass the feeds you want to
+  `subscribe` or `unsubscribe`, combined with `|`. Each old method maps to:
+
+  | Old method | `MarketData` feeds |
+  |---|---|
+  | `subscribe` | `LAST_TRADE \| BBO` |
+  | `subscribe_instrument_status` | `MARKET_MODE` |
+  | `subscribe_order_book_summary` | `ORDER_BOOK` |
+  | `subscribe_session_prices` | `OPEN \| HIGH_LOW` |
+  | `subscribe_quote_statistics` | `HIGH_BID_LOW_ASK` |
+  | `subscribe_indicator_prices` | `OPENING_INDICATOR \| CLOSING_INDICATOR` |
+  | `subscribe_open_interest` | `OPEN_INTEREST` |
+  | `subscribe_end_of_day_prices` | `CLOSE \| SETTLEMENT \| PROJECTED_SETTLEMENT \| ADJUSTED_CLOSE` |
+  | `subscribe_order_price_limits` | `HIGH_PRICE_LIMIT \| LOW_PRICE_LIMIT` |
+  | `subscribe_symbol_margin_rate` | `MARGIN_RATE` |
+
+  Each `unsubscribe_*` method maps the same way onto `unsubscribe`. The
+  depth-by-order methods are unchanged.
+- `subscribe_by_underlying(.., fields, request_type)` becomes
+  `subscribe_by_underlying(.., data)` or `unsubscribe_by_underlying(.., data)`.
+  Template 105 does not list `ADJUSTED_CLOSE`, so that bit is sent as-is and
+  the server decides what to do with it.
 
 # Migrating to 3.0.0
 
