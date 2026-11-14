@@ -53,7 +53,7 @@ async fn close_still_reaches_the_wire_after_close_requested() {
 }
 
 #[tokio::test]
-async fn load_ticks_through_the_handle_after_close_requested_reports_connection_closed() {
+async fn load_tick_bars_through_the_handle_after_close_requested_reports_connection_closed() {
     let (mut plant, command_sender, mut client) = plant_with_wire().await;
     plant.core.session = Session::Closing;
 
@@ -69,11 +69,11 @@ async fn load_ticks_through_the_handle_after_close_requested_reports_connection_
 
     let err = tokio::time::timeout(
         std::time::Duration::from_secs(5),
-        handle.load_ticks("ESZ6".to_string(), "CME".to_string(), 1, 1000),
+        handle.load_tick_bars("ESZ6".to_string(), "CME".to_string(), 1, 1, 1000),
     )
     .await
-    .expect("load_ticks must be answered, not left waiting")
-    .expect_err("load_ticks must fail once close was requested");
+    .expect("load_tick_bars must be answered, not left waiting")
+    .expect_err("load_tick_bars must fail once close was requested");
 
     assert!(matches!(err, RithmicError::ConnectionClosed));
     assert_wire_silent(&mut client).await;
@@ -206,12 +206,12 @@ async fn load_ticks_all_asks_the_server_to_lift_the_record_cap() {
 }
 
 #[tokio::test]
-async fn load_ticks_leaves_the_cap_in_place() {
+async fn load_tick_bars_leaves_the_cap_in_place() {
     let (handle, actor, mut client) = running_plant_with_handle().await;
 
     let loader = tokio::spawn(async move {
         handle
-            .load_ticks("ESZ6".to_string(), "CME".to_string(), 1, 1000)
+            .load_tick_bars("ESZ6".to_string(), "CME".to_string(), 1, 1, 1000)
             .await
     });
 

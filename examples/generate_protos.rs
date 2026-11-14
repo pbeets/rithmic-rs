@@ -1,5 +1,47 @@
 //! Regenerates `src/rti.rs` from the `.proto` files in `src/raw-proto/`.
 //! Run via: `cargo run --example generate_protos && cargo fmt`
+
+// Fields Rithmic deprecated, left out of the generated code. Template version
+// 5.42 replaced entitlement_flag; 5.55 gave each 32-bit size a `_64` twin.
+const RETIRED_FIELDS: &[&str] = &[
+    "ResponseListExchangePermissions.entitlement_flag",
+    "BestBidOffer.bid_size",
+    "BestBidOffer.bid_implicit_size",
+    "BestBidOffer.ask_size",
+    "BestBidOffer.ask_implicit_size",
+    "DepthByOrder.depth_size",
+    "ExchangeOrderNotification.quantity",
+    "ExchangeOrderNotification.confirmed_size",
+    "ExchangeOrderNotification.modified_size",
+    "ExchangeOrderNotification.cancelled_size",
+    "ExchangeOrderNotification.fill_size",
+    "ExchangeOrderNotification.total_fill_size",
+    "ExchangeOrderNotification.total_unfilled_size",
+    "LastTrade.trade_size",
+    "OrderBook.bid_size",
+    "OrderBook.impl_bid_size",
+    "OrderBook.ask_size",
+    "OrderBook.impl_ask_size",
+    "RequestBracketOrder.quantity",
+    "RequestBracketOrder.target_quantity",
+    "RequestBracketOrder.stop_quantity",
+    "RequestModifyOrder.quantity",
+    "RequestNewOrder.quantity",
+    "RequestOCOOrder.quantity",
+    "ResponseDepthByOrderSnapshot.depth_size",
+    "ResponseGetVolumeAtPrice.volume_at_price",
+    "ResponseVolumeProfileMinuteBars.profile_no_aggressor_volume",
+    "ResponseVolumeProfileMinuteBars.profile_bid_volume",
+    "ResponseVolumeProfileMinuteBars.profile_ask_volume",
+    "ResponseVolumeProfileMinuteBars.profile_no_aggressor_trades",
+    "ResponseVolumeProfileMinuteBars.profile_bid_aggressor_trades",
+    "ResponseVolumeProfileMinuteBars.profile_ask_aggressor_trades",
+    "RithmicOrderNotification.quantity",
+    "RithmicOrderNotification.quan_release_pending",
+    "RithmicOrderNotification.total_fill_size",
+    "RithmicOrderNotification.total_unfilled_size",
+];
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let manifest_dir = std::path::PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").map_err(
         |_| "CARGO_MANIFEST_DIR not set: run this via `cargo run --example generate_protos`",
@@ -21,14 +63,40 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Rithmic adds fields to existing messages in most template releases, so a
     // generated type without this makes every proto refresh a semver-major event here.
     config.type_attribute(".", "#[non_exhaustive]");
-    // Rithmic deprecated entitlement_flag in template version 5.42 in favor of
-    // the level_1_market_data / level_2_market_data fields.
-    config.field_attribute(
-        ".rti.ResponseListExchangePermissions.entitlement_flag",
-        "#[deprecated = \"use level_1_market_data and level_2_market_data instead\"]",
-    );
     config.out_dir(&src_dir);
-    config.compile_protos(&protos, &[&proto_dir])?;
+    let mut fds = config.load_fds(&protos, &[&proto_dir])?;
+
+    for path in RETIRED_FIELDS {
+        let (message, field) = path.split_once('.').expect("Message.field");
+        let mut removed = false;
+
+        for file in &mut fds.file {
+            let Some(m) = file.message_type.iter().position(|d| d.name() == message) else {
+                continue;
+            };
+            let fields = &mut file.message_type[m].field;
+            let Some(f) = fields.iter().position(|d| d.name() == field) else {
+                continue;
+            };
+            fields.remove(f);
+            removed = true;
+
+            // Doc comments are matched to fields by index, at path [4, m, 2, f, ..].
+            let (m, f) = (m as i32, f as i32);
+            if let Some(info) = file.source_code_info.as_mut() {
+                info.location.retain(|l| !l.path.starts_with(&[4, m, 2, f]));
+                for l in &mut info.location {
+                    if l.path.len() >= 4 && l.path[..3] == [4, m, 2] && l.path[3] > f {
+                        l.path[3] -= 1;
+                    }
+                }
+            }
+        }
+
+        assert!(removed, "{path} is no longer in the protos");
+    }
+
+    config.compile_fds(fds)?;
 
     let rti_path = src_dir.join("rti.rs");
     let code = std::fs::read_to_string(&rti_path)?;

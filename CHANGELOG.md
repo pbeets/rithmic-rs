@@ -18,7 +18,7 @@ Guide gives them no template id.
 - Template 358 decodes as `RithmicMessage::AccountAndUserUpdate`. A
   `UserAccountUpdate` arm still sees template 76 but no longer sees 358.
 - Order requests send only `quantity_64`, `target_quantity_64` and
-  `stop_quantity_64`. The 32-bit fields Rithmic deprecated are left unset.
+  `stop_quantity_64`.
 - `show_fill_history(.., Some(0))` returns `RithmicError::InvalidArgument`.
   The 0.90.0.0 schema requires a cap from 1 to 10,000.
 
@@ -34,14 +34,20 @@ Guide gives them no template id.
   Rithmic fixed the spelling. The value is still 4.
 - `BracketOperationType::Oca` is gone. The 0.90.0.0 proto no longer lists `OCA`
   as an `order_operation_type`.
+- The 35 32-bit size and quantity fields Rithmic deprecated in 0.90.0.0 are no
+  longer generated in `rti`, such as `LastTrade::trade_size` and
+  `RithmicOrderNotification::total_fill_size`. Use the `_64` field of the same
+  name.
+- `ResponseListExchangePermissions::entitlement_flag` is no longer generated.
+  Rithmic deprecated it in template version 5.42. Use `level_1_market_data`
+  and `level_2_market_data`.
 
 ### Added
 
 - `RithmicMessage::AccountAndUserUpdate` for template 358, filtered by account
   like `UserAccountUpdate`.
 - 64-bit size fields in `rti`, such as `trade_size_64`, `bid_size_64` and
-  `fill_size_64`. Rithmic deprecated the 32-bit ones, which are still
-  generated.
+  `fill_size_64`.
 - `RithmicMessage` variants for the new account/user history, entitlement,
   session config and flow control replies.
 - Order plant `set_session_config(SessionConfig)` (template 24), with the new
@@ -59,6 +65,20 @@ Guide gives them no template id.
 
 - `RithmicOrderPlantHandle::get_order_session_config()`: Rithmic deprecated
   template 3502 in favor of session config. Use `set_session_config()`.
+
+### Removed
+
+- The request-timeout items deprecated in 3.1.0: `DEFAULT_REQUEST_TIMEOUT`,
+  `RithmicError::RequestTimeout`, and `request_timeout` on `RithmicConfig` and
+  `RithmicConfigBuilder`. `RITHMIC_REQUEST_TIMEOUT_SECS` is no longer read.
+  3.2.0 said these would stay, but that was before a 4.0 was planned.
+- `RithmicConfig::retry_timeout` and `RithmicConfigBuilder::retry_timeout()`,
+  deprecated in 3.3.0. Use `connect_total_timeout()`.
+- `RithmicHistoryPlantHandle::resume_bars()`, deprecated in 3.2.0. The `load_*`
+  methods resume cut-short replays themselves.
+- `RithmicHistoryPlantHandle::load_ticks()`. It stopped at 10,000 trades
+  without saying so. Use `load_ticks_all()`, or `load_tick_bars()` with
+  `bar_length = 1` for the capped replay.
 
 ### Fixed
 

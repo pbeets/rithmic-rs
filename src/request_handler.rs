@@ -1,10 +1,6 @@
+use std::collections::{HashMap, hash_map::Entry};
 use tokio::sync::oneshot;
 use tracing::{error, info, warn};
-
-use std::{
-    collections::{HashMap, hash_map::Entry},
-    time::Duration,
-};
 
 use crate::{
     api::{receiver_api::RithmicResponse, rp_code::response_rp_code_info},
@@ -15,15 +11,6 @@ use crate::{
 mod replay;
 
 pub(crate) use replay::PendingReplay;
-
-/// Deprecated and has no effect: the library does not time out requests.
-/// Wrap the call in [`tokio::time::timeout`] to set a deadline of your own.
-/// Kept so existing code keeps compiling.
-#[deprecated(
-    since = "3.1.0",
-    note = "the library no longer times out requests; wrap the call in tokio::time::timeout"
-)]
-pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// What a request got back: every frame of its reply, or the error that
 /// ended it. The error is often ours, such as `ConnectionClosed`.

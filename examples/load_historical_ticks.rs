@@ -30,8 +30,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("Loading ticks for {symbol} from {start_time} to {end_time}");
 
     // `load_ticks_all` sets `resume_bars`, which lifts the server's 10,000
-    // record cap, so the whole window arrives in one request. `load_ticks`
-    // leaves the cap in place and returns at most 10,000 records.
+    // record cap, so the whole window arrives in one request.
     let responses = handle
         .load_ticks_all(symbol, exchange, start_time, end_time)
         .await?;

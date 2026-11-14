@@ -11,8 +11,10 @@ guide below still applies.
   so negative quantities are rejected.
 - Requests send only `quantity_64`, `target_quantity_64` and
   `stop_quantity_64`. Read sizes from the `*_64` fields, such as
-  `trade_size_64`, `bid_size_64` and `fill_size_64`; the 32-bit ones are
-  deprecated.
+  `trade_size_64`, `bid_size_64` and `fill_size_64`. The 32-bit fields Rithmic
+  deprecated are no longer generated.
+- `ResponseListExchangePermissions::entitlement_flag` is no longer generated.
+  Read `level_1_market_data` and `level_2_market_data` instead.
 - `show_fill_history()` accepts `None` or a cap in `1..=10_000`; `Some(0)` is now
   rejected locally.
 - Match template 358 as `RithmicMessage::AccountAndUserUpdate`.
@@ -28,6 +30,18 @@ guide below still applies.
 - `get_order_session_config(Some(defer))` is deprecated, as Rithmic deprecated
   template 3502. Call
   `set_session_config(SessionConfig::new().should_defer_request(defer))`.
+- The request-timeout items are gone: `DEFAULT_REQUEST_TIMEOUT`,
+  `RithmicError::RequestTimeout`, the `request_timeout` field and the
+  `request_timeout()` setter. They did nothing since 3.1.0, so delete them. For
+  a deadline, wrap the call in `tokio::time::timeout` (see
+  `examples/request_timeout.rs`). Nothing reads `RITHMIC_REQUEST_TIMEOUT_SECS`.
+- Replace `retry_timeout()` with `connect_total_timeout()`, and drop any use of
+  the `retry_timeout` field.
+- Delete calls to the history plant's `resume_bars()`. The `load_*` methods
+  already resume replays the server cuts short.
+- Replace `load_ticks(symbol, exchange, start, end)` with `load_ticks_all()`,
+  which takes the same arguments and has no 10,000-trade cap. To keep the cap,
+  call `load_tick_bars(symbol, exchange, 1, start, end)`.
 
 # Migrating to 3.0.0
 

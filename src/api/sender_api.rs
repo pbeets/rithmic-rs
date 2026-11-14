@@ -1772,7 +1772,7 @@ mod tests {
     }
 
     #[test]
-    fn order_and_modify_requests_send_only_quantity_64() {
+    fn order_and_modify_requests_keep_full_u64_quantity() {
         let mut api = RithmicSenderApi::new(&test_config());
         let account = default_account();
         let order = RithmicOrder::new()
@@ -1787,7 +1787,6 @@ mod tests {
         let request: RequestNewOrder = decode_request(&buf);
 
         assert_eq!(request.quantity_64, Some(u64::MAX));
-        assert_eq!(request.quantity, None);
 
         let modify = RithmicModifyOrder::new()
             .id("basket-1")
@@ -1802,7 +1801,6 @@ mod tests {
         let request: RequestModifyOrder = decode_request(&buf);
 
         assert_eq!(request.quantity_64, Some(u64::MAX));
-        assert_eq!(request.quantity, None);
     }
 
     #[test]

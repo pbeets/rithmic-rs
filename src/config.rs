@@ -26,8 +26,6 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
-#[allow(deprecated)]
-use crate::request_handler::DEFAULT_REQUEST_TIMEOUT;
 use crate::ws::DEFAULT_CONNECT_ATTEMPT_TIMEOUT;
 use std::{env, fmt, str::FromStr, time::Duration};
 
@@ -248,21 +246,6 @@ pub struct LoginConfig {
     pub os_platform: Option<String>,
 }
 
-const REQUEST_TIMEOUT_VAR: &str = "RITHMIC_REQUEST_TIMEOUT_SECS";
-
-/// Parse a duration given as a plain decimal count of seconds.
-///
-/// Stricter than `u64::from_str`, which also takes a sign and leading zeros:
-/// only canonical digits pass, so a mangled value cannot slip through as a
-/// plausible number.
-fn parse_whole_seconds(value: &str) -> Option<u64> {
-    let canonical = !value.is_empty()
-        && value.bytes().all(|b| b.is_ascii_digit())
-        && (value == "0" || !value.starts_with('0'));
-
-    if canonical { value.parse().ok() } else { None }
-}
-
 /// Where to connect and how to log in. One config can be shared by every
 /// plant you connect.
 ///
@@ -303,14 +286,6 @@ pub struct RithmicConfig {
     pub app_name: String,
     /// Application version string.
     pub app_version: String,
-    /// Deprecated and has no effect: the library does not time out requests.
-    /// Wrap the call in [`tokio::time::timeout`] to set a deadline of your
-    /// own. Kept, and still readable, so existing code keeps compiling.
-    #[deprecated(
-        since = "3.1.0",
-        note = "the library no longer times out requests; wrap the call in tokio::time::timeout"
-    )]
-    pub request_timeout: Duration,
     /// Capacity of each plant's subscription broadcast channel, or `None` for
     /// the default of 10,000 (64 for the repository plant). Set with
     /// [`RithmicConfigBuilder::subscription_capacity`], which explains what
@@ -327,15 +302,9 @@ pub struct RithmicConfig {
     /// `None`, the default, retries until connected. Set it with
     /// [`RithmicConfigBuilder::connect_total_timeout`].
     pub connect_total_timeout: Option<Duration>,
-    /// Deprecated and has no effect: use
-    /// [`connect_total_timeout`](Self::connect_total_timeout). The builder
-    /// leaves it `None`. Kept so existing code keeps compiling.
-    #[deprecated(since = "3.3.0", note = "has no effect; use connect_total_timeout")]
-    pub retry_timeout: Option<Duration>,
 }
 
 impl fmt::Debug for RithmicConfig {
-    #[allow(deprecated)]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("RithmicConfig")
             .field("url", &self.url)
@@ -346,7 +315,6 @@ impl fmt::Debug for RithmicConfig {
             .field("env", &self.env)
             .field("app_name", &self.app_name)
             .field("app_version", &self.app_version)
-            .field("request_timeout", &self.request_timeout)
             .field("subscription_capacity", &self.subscription_capacity)
             .field("connect_attempt_timeout", &self.connect_attempt_timeout)
             .field("connect_total_timeout", &self.connect_total_timeout)
@@ -391,9 +359,6 @@ impl RithmicConfig {
     ///   to. Defaults to "Rithmic Paper Trading" (Demo), "Rithmic 01" (Live),
     ///   or "Rithmic Test" (Test). Set it on Live to select another provider,
     ///   e.g. Thrive Trading.
-    /// - `RITHMIC_REQUEST_TIMEOUT_SECS`: no longer used. A value that is not
-    ///   whole seconds written as plain digits, such as `30s` or `007`, is
-    ///   logged as a warning; any value is ignored.
     ///
     /// # Example
     /// ```no_run
@@ -405,7 +370,6 @@ impl RithmicConfig {
     /// let account = RithmicAccount::from_env(RithmicEnv::Demo)?;
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    #[allow(deprecated)]
     pub fn from_env(env: RithmicEnv) -> Result<Self, ConfigError> {
         let prefix = env.var_prefix();
 
@@ -423,38 +387,6 @@ impl RithmicConfig {
         let app_name = require_env("RITHMIC_APP_NAME")?;
         let app_version = require_env("RITHMIC_APP_VERSION")?;
 
-        // The library ignores this value, so a malformed one is only worth a
-        // warning, not a failed config.
-        let request_timeout = match env::var(REQUEST_TIMEOUT_VAR) {
-            Err(env::VarError::NotPresent) => DEFAULT_REQUEST_TIMEOUT,
-
-            Err(env::VarError::NotUnicode(value)) => {
-                tracing::warn!(
-                    "ignoring {}: the value is not valid unicode ({:?})",
-                    REQUEST_TIMEOUT_VAR,
-                    value
-                );
-
-                DEFAULT_REQUEST_TIMEOUT
-            }
-
-            Ok(value) => match parse_whole_seconds(value.trim()) {
-                // Zero selects the default, consistent with the builder.
-                Some(0) => DEFAULT_REQUEST_TIMEOUT,
-                Some(secs) => Duration::from_secs(secs),
-
-                None => {
-                    tracing::warn!(
-                        "ignoring {}: expected whole seconds (digits only), got {:?}",
-                        REQUEST_TIMEOUT_VAR,
-                        value
-                    );
-
-                    DEFAULT_REQUEST_TIMEOUT
-                }
-            },
-        };
-
         Ok(Self {
             url,
             beta_url,
@@ -464,11 +396,9 @@ impl RithmicConfig {
             env,
             app_name,
             app_version,
-            request_timeout,
             subscription_capacity: None,
             connect_attempt_timeout: DEFAULT_CONNECT_ATTEMPT_TIMEOUT,
             connect_total_timeout: None,
-            retry_timeout: None,
         })
     }
 
@@ -509,7 +439,6 @@ pub struct RithmicConfigBuilder {
     system_name: Option<String>,
     app_name: Option<String>,
     app_version: Option<String>,
-    request_timeout: Duration,
     subscription_capacity: Option<usize>,
     connect_attempt_timeout: Duration,
     connect_total_timeout: Option<Duration>,
@@ -528,7 +457,6 @@ impl RithmicConfigBuilder {
     ///     .build()?;
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    #[allow(deprecated)]
     pub fn from_env(env: RithmicEnv) -> Result<Self, ConfigError> {
         let config = RithmicConfig::from_env(env)?;
 
@@ -541,7 +469,6 @@ impl RithmicConfigBuilder {
             system_name: Some(config.system_name),
             app_name: Some(config.app_name),
             app_version: Some(config.app_version),
-            request_timeout: config.request_timeout,
             subscription_capacity: config.subscription_capacity,
             connect_attempt_timeout: config.connect_attempt_timeout,
             connect_total_timeout: config.connect_total_timeout,
@@ -551,7 +478,6 @@ impl RithmicConfigBuilder {
     /// Create an empty builder for `env`. Only `system_name` starts filled
     /// in, with the environment's default ("Rithmic Paper Trading",
     /// "Rithmic 01" or "Rithmic Test").
-    #[allow(deprecated)]
     pub fn new(env: RithmicEnv) -> Self {
         let system_name = env.default_system_name().to_string();
 
@@ -564,7 +490,6 @@ impl RithmicConfigBuilder {
             system_name: Some(system_name),
             app_name: None,
             app_version: None,
-            request_timeout: DEFAULT_REQUEST_TIMEOUT,
             subscription_capacity: None,
             connect_attempt_timeout: DEFAULT_CONNECT_ATTEMPT_TIMEOUT,
             connect_total_timeout: None,
@@ -608,25 +533,6 @@ impl RithmicConfigBuilder {
     /// Set the application name registered with Rithmic. Required.
     pub fn app_name(mut self, app_name: impl Into<String>) -> Self {
         self.app_name = Some(app_name.into());
-        self
-    }
-
-    /// Deprecated and has no effect: the library does not time out requests.
-    /// Wrap the call in [`tokio::time::timeout`] to set a deadline of your
-    /// own. The value is still recorded on the config and still ignored. Kept
-    /// so existing code keeps compiling.
-    #[deprecated(
-        since = "3.1.0",
-        note = "the library no longer times out requests; wrap the call in tokio::time::timeout"
-    )]
-    #[allow(deprecated)]
-    pub fn request_timeout(mut self, request_timeout: Duration) -> Self {
-        self.request_timeout = if request_timeout.is_zero() {
-            DEFAULT_REQUEST_TIMEOUT
-        } else {
-            request_timeout
-        };
-
         self
     }
 
@@ -690,13 +596,6 @@ impl RithmicConfigBuilder {
         self
     }
 
-    /// Deprecated name for
-    /// [`connect_total_timeout`](Self::connect_total_timeout), which it calls.
-    #[deprecated(since = "3.3.0", note = "use connect_total_timeout")]
-    pub fn retry_timeout(self, timeout: Duration) -> Self {
-        self.connect_total_timeout(timeout)
-    }
-
     /// Set the application version sent at login. Required.
     pub fn app_version(mut self, app_version: impl Into<String>) -> Self {
         self.app_version = Some(app_version.into());
@@ -733,7 +632,6 @@ impl RithmicConfigBuilder {
     ///
     /// Returns [`ConfigError::MissingField`] if `url`, `beta_url`, `user`,
     /// `password`, `app_name` or `app_version` was never set.
-    #[allow(deprecated)]
     pub fn build(self) -> Result<RithmicConfig, ConfigError> {
         Ok(RithmicConfig {
             env: self.env,
@@ -758,22 +656,17 @@ impl RithmicConfigBuilder {
             app_version: self
                 .app_version
                 .ok_or_else(|| ConfigError::MissingField("app_version".to_string()))?,
-            request_timeout: self.request_timeout,
             subscription_capacity: self.subscription_capacity,
             connect_attempt_timeout: self.connect_attempt_timeout,
             connect_total_timeout: self.connect_total_timeout,
-            retry_timeout: None,
         })
     }
 }
 
 #[cfg(test)]
-#[allow(deprecated)]
 mod tests {
 
     use super::*;
-
-    use crate::request_handler::log_capture::capture;
 
     fn demo_env_vars() -> Vec<(&'static str, Option<&'static str>)> {
         vec![
@@ -868,101 +761,6 @@ mod tests {
         });
     }
 
-    #[test]
-    fn from_env_reads_the_request_timeout_when_set() {
-        let mut vars = demo_env_vars();
-        vars.push((REQUEST_TIMEOUT_VAR, Some("5")));
-
-        temp_env::with_vars(vars, || {
-            let config = RithmicConfig::from_env(RithmicEnv::Demo).unwrap();
-
-            assert_eq!(config.request_timeout, Duration::from_secs(5));
-        });
-    }
-
-    #[test]
-    fn from_env_defaults_the_request_timeout_when_unset() {
-        let mut vars = demo_env_vars();
-        vars.push((REQUEST_TIMEOUT_VAR, None));
-
-        temp_env::with_vars(vars, || {
-            let config = RithmicConfig::from_env(RithmicEnv::Demo).unwrap();
-
-            assert_eq!(config.request_timeout, DEFAULT_REQUEST_TIMEOUT);
-        });
-    }
-
-    #[test]
-    fn from_env_warns_about_and_ignores_an_unusable_request_timeout() {
-        for value in ["soon", "+30", "-30", "007", "30.5", "30s", ""] {
-            let mut vars = demo_env_vars();
-            vars.push((REQUEST_TIMEOUT_VAR, Some(value)));
-
-            temp_env::with_vars(vars, || {
-                let (config, logged) = capture(|| RithmicConfig::from_env(RithmicEnv::Demo));
-
-                let config = config.unwrap_or_else(|e| panic!("{value:?} failed from_env: {e}"));
-
-                assert_eq!(config.request_timeout, DEFAULT_REQUEST_TIMEOUT, "{value:?}");
-                assert!(
-                    logged.contains(REQUEST_TIMEOUT_VAR) && logged.contains(&format!("{value:?}")),
-                    "{value:?} should have been logged, got {logged:?}"
-                );
-            });
-        }
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn from_env_warns_about_and_ignores_a_non_unicode_request_timeout() {
-        use std::{ffi::OsStr, os::unix::ffi::OsStrExt};
-
-        let mut vars: Vec<(&str, Option<&OsStr>)> = demo_env_vars()
-            .into_iter()
-            .map(|(var, value)| (var, value.map(OsStr::new)))
-            .collect();
-
-        vars.push((REQUEST_TIMEOUT_VAR, Some(OsStr::from_bytes(b"3\xff0"))));
-
-        temp_env::with_vars(vars, || {
-            let (config, logged) = capture(|| RithmicConfig::from_env(RithmicEnv::Demo));
-
-            assert_eq!(config.unwrap().request_timeout, DEFAULT_REQUEST_TIMEOUT);
-            assert!(
-                logged.contains(REQUEST_TIMEOUT_VAR) && logged.contains("not valid unicode"),
-                "the non-unicode value should have been logged, got {logged:?}"
-            );
-        });
-    }
-
-    #[test]
-    fn from_env_treats_a_zero_request_timeout_as_the_default() {
-        let mut vars = demo_env_vars();
-        vars.push((REQUEST_TIMEOUT_VAR, Some("0")));
-
-        temp_env::with_vars(vars, || {
-            let config = RithmicConfig::from_env(RithmicEnv::Demo).unwrap();
-
-            assert_eq!(config.request_timeout, DEFAULT_REQUEST_TIMEOUT);
-        });
-    }
-
-    #[test]
-    fn the_builder_treats_a_zero_request_timeout_as_the_default() {
-        let config = RithmicConfig::builder(RithmicEnv::Demo)
-            .user("u")
-            .password("p")
-            .url("ws://localhost:9999")
-            .beta_url("ws://localhost:9998")
-            .app_name("a")
-            .app_version("1")
-            .request_timeout(Duration::ZERO)
-            .build()
-            .unwrap();
-
-        assert_eq!(config.request_timeout, DEFAULT_REQUEST_TIMEOUT);
-    }
-
     fn builder_with_required_fields() -> RithmicConfigBuilder {
         RithmicConfig::builder(RithmicEnv::Demo)
             .user("u")
@@ -1004,16 +802,6 @@ mod tests {
             config.connect_attempt_timeout,
             DEFAULT_CONNECT_ATTEMPT_TIMEOUT
         );
-    }
-
-    #[test]
-    fn the_deprecated_retry_timeout_setter_sets_the_total_timeout() {
-        let config = builder_with_required_fields()
-            .retry_timeout(Duration::from_secs(10))
-            .build()
-            .unwrap();
-
-        assert_eq!(config.connect_total_timeout, Some(Duration::from_secs(10)));
     }
 
     #[test]

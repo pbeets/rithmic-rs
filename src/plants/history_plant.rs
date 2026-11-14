@@ -45,10 +45,6 @@ pub(crate) enum HistoryPlantCommand {
         query: ReplayQuery,
         response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
     },
-    ResumeBars {
-        request_key: String,
-        response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
-    },
     SubscribeTimeBarUpdates {
         symbol: String,
         exchange: String,
@@ -115,14 +111,14 @@ pub(crate) enum ReplayQuery {
 /// - **Tick bars carry two timestamps.** `data_bar_ssboe` and `data_bar_usecs`
 ///   are two-element arrays holding the bar's open and close: index 0 is when
 ///   the bar started, index 1 is when it ended. For one-tick bars both describe
-///   the same trade. See [`load_ticks`](RithmicHistoryPlantHandle::load_ticks)
+///   the same trade. See [`load_ticks_all`](RithmicHistoryPlantHandle::load_ticks_all)
 ///   for a quirk in the first record's open.
 ///
 /// # Which loader do I want?
 ///
 /// | You want | Use | Records |
 /// |---|---|---|
-/// | Individual trades | [`load_ticks`] / [`load_ticks_all`] | one per trade |
+/// | Individual trades | [`load_ticks_all`] | one per trade |
 /// | Bars of N trades | [`load_tick_bars`] / [`load_tick_bars_all`] | one per N trades |
 /// | Bars of a fixed duration | [`load_time_bars`] / [`load_time_bars_all`] | one per interval |
 /// | Volume traded at each price | [`load_volume_profile_minute_bars`] | one per minute |
@@ -142,7 +138,6 @@ pub(crate) enum ReplayQuery {
 ///   Time bar replays can occasionally stop here without warning, so check the
 ///   last bar reaches the end of your window. See [`load_ticks_all`].
 ///
-/// [`load_ticks`]: RithmicHistoryPlantHandle::load_ticks
 /// [`load_ticks_all`]: RithmicHistoryPlantHandle::load_ticks_all
 /// [`load_tick_bars`]: RithmicHistoryPlantHandle::load_tick_bars
 /// [`load_tick_bars_all`]: RithmicHistoryPlantHandle::load_tick_bars_all
@@ -328,11 +323,6 @@ impl PlantKind for HistoryPlant {
                 },
                 PendingReplay::new(response_sender),
             ),
-
-            HistoryPlantCommand::ResumeBars {
-                request_key,
-                response_sender,
-            } => cx.send_for(|api| api.request_resume_bars(&request_key), response_sender),
 
             HistoryPlantCommand::SubscribeTimeBarUpdates {
                 symbol,
@@ -567,48 +557,10 @@ impl RithmicHistoryPlantHandle {
         let _ = self.sender.try_send(HistoryPlantCommand::Abort);
     }
 
-    /// Load individual trades for a symbol over a time window.
-    ///
-    /// Each response is one trade. This returns **at most 10,000 trades**, the
-    /// limit Rithmic puts on a single replay, and gives no sign when it has cut
-    /// the result short. For a window that may hold more, use
-    /// [`load_ticks_all`](Self::load_ticks_all).
-    ///
-    /// # First record's open time
-    ///
-    /// Rithmic stamps the **first** record's open time with the second you asked
-    /// for, at microsecond 0, rather than the trade's own time. Since the request
-    /// is second-granular, that open can read up to a second early. The close
-    /// time (index 1 of `data_bar_ssboe` / `data_bar_usecs`) is always the real
-    /// trade time, so prefer it if you are ordering or bucketing trades. The
-    /// crate passes the values through untouched.
-    ///
-    /// # Arguments
-    /// * `symbol` - The trading symbol, e.g. `"ESZ6"`
-    /// * `exchange` - The exchange code, e.g. `"CME"`
-    /// * `start_time_sec` - Window start, Unix seconds
-    /// * `end_time_sec` - Window end, Unix seconds
-    ///
-    /// # Returns
-    /// One response per trade, followed by an end marker carrying no data.
-    ///
-    /// # Example
-    /// See [`load_historical_ticks.rs`](https://github.com/pbeets/rithmic-rs/blob/main/examples/load_historical_ticks.rs).
-    pub async fn load_ticks(
-        &self,
-        symbol: String,
-        exchange: String,
-        start_time_sec: i32,
-        end_time_sec: i32,
-    ) -> Result<Vec<RithmicResponse>, RithmicError> {
-        self.load_tick_bars(symbol, exchange, 1, start_time_sec, end_time_sec)
-            .await
-    }
-
     /// Load bars that each aggregate a fixed number of trades.
     ///
     /// `bar_length = 5` gives one bar per five trades. `bar_length = 1` gives one
-    /// bar per trade, which is what [`load_ticks`](Self::load_ticks) is.
+    /// bar per trade.
     ///
     /// Returns **at most 10,000 bars**, with no sign when the result was cut
     /// short. Use [`load_tick_bars_all`](Self::load_tick_bars_all) for the whole
@@ -704,10 +656,10 @@ impl RithmicHistoryPlantHandle {
 
     /// Load every trade in the window, however many there are.
     ///
-    /// Same as [`load_ticks`](Self::load_ticks) but without the 10,000 record
-    /// limit, so you get the whole window in one call. This is usually what you
-    /// want: an hour of a liquid contract runs well past 10,000 trades, and the
-    /// capped version would silently hand you only the beginning of it.
+    /// Each response is one trade. There is no 10,000 record limit, so you get
+    /// the whole window in one call: an hour of a liquid contract runs well past
+    /// 10,000 trades. For the capped replay, call
+    /// [`load_tick_bars`](Self::load_tick_bars) with `bar_length = 1`.
     ///
     /// # How it works
     ///
@@ -742,8 +694,14 @@ impl RithmicHistoryPlantHandle {
     /// ES session runs to hundreds of thousands of records, so ask for the window
     /// you need rather than a day at a time.
     ///
-    /// The first record's open time carries the same quirk described on
-    /// [`load_ticks`](Self::load_ticks).
+    /// # First record's open time
+    ///
+    /// Rithmic stamps the **first** record's open time with the second you asked
+    /// for, at microsecond 0, rather than the trade's own time. Since the request
+    /// is second-granular, that open can read up to a second early. The close
+    /// time (index 1 of `data_bar_ssboe` / `data_bar_usecs`) is always the real
+    /// trade time, so prefer it if you are ordering or bucketing trades. The
+    /// crate passes the values through untouched.
     ///
     /// # Example
     /// See [`load_historical_ticks.rs`](https://github.com/pbeets/rithmic-rs/blob/main/examples/load_historical_ticks.rs).
@@ -1027,44 +985,6 @@ impl RithmicHistoryPlantHandle {
         request: VolumeProfileMinuteBarsRequest,
     ) -> Result<Vec<RithmicResponse>, RithmicError> {
         self.replay(ReplayQuery::Volume(request)).await
-    }
-
-    /// Deprecated: the plant resumes truncated replays itself, as described on
-    /// [`load_ticks_all`](Self::load_ticks_all), so there is no need to call this.
-    ///
-    /// Ask the server to continue a replay it cut short.
-    ///
-    /// The `load_*` methods do this automatically and never return the notice
-    /// that carries the key, so there is normally nothing to pass here; it is
-    /// kept for compatibility. Called by hand, it returns only the server's
-    /// acknowledgement, and the rest of the replay is discarded.
-    ///
-    /// Not the same as the `resume_bars` request flag, which lifts the
-    /// 10,000-record cap.
-    ///
-    /// # Arguments
-    /// * `request_key` - The key from the server's truncation notice
-    ///
-    /// # Returns
-    /// The server's acknowledgement, `ResponseResumeBars`.
-    #[deprecated(
-        since = "3.2.0",
-        note = "the plant resumes truncated replays itself; the continuation this requests is counted, not delivered"
-    )]
-    pub async fn resume_bars(
-        &self,
-        request_key: String,
-    ) -> Result<Vec<RithmicResponse>, RithmicError> {
-        let (tx, rx) = oneshot::channel::<Result<Vec<RithmicResponse>, RithmicError>>();
-
-        let command = HistoryPlantCommand::ResumeBars {
-            request_key,
-            response_sender: tx,
-        };
-
-        let _ = self.sender.send(command).await;
-
-        await_all_responses(rx).await
     }
 
     /// Start or stop a live feed of time bars as they complete.
