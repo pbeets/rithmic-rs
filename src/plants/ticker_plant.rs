@@ -14,12 +14,11 @@ use crate::{
     },
     request_handler::RequestResult,
     rti::{
-        messages::RithmicMessage,
-        request_depth_by_order_updates,
-        request_login::SysInfraType,
-        request_market_data_update::{Request, UpdateBits},
-        request_market_data_update_by_underlying, request_search_symbols,
+        messages::RithmicMessage, request_depth_by_order_updates, request_login::SysInfraType,
+        request_market_data_update::Request, request_market_data_update_by_underlying,
+        request_search_symbols,
     },
+    types::MarketData,
 };
 
 /// Default subscription channel capacity.
@@ -42,7 +41,7 @@ pub(crate) enum TickerPlantCommand {
     Subscribe {
         symbol: String,
         exchange: String,
-        fields: Vec<UpdateBits>,
+        data: MarketData,
         request_type: Request,
         response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
     },
@@ -79,7 +78,7 @@ pub(crate) enum TickerPlantCommand {
         underlying_symbol: String,
         exchange: String,
         expiration_date: Option<String>,
-        fields: Vec<request_market_data_update_by_underlying::UpdateBits>,
+        data: MarketData,
         request_type: request_market_data_update_by_underlying::Request,
         response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
     },
@@ -123,8 +122,8 @@ pub(crate) enum TickerPlantCommand {
 ///
 /// The feeds cover last trades, best bid and offer (BBO), order book depth,
 /// market mode, session prices, quote statistics, indicator prices, open
-/// interest, end-of-day prices, price limits and margin rates. See the
-/// `subscribe_*` methods on [`RithmicTickerPlantHandle`].
+/// interest, end-of-day prices, price limits and margin rates. Pick them with
+/// [`MarketData`] in [`subscribe`](RithmicTickerPlantHandle::subscribe).
 ///
 /// The plant runs on its own background task. [`connect`](Self::connect)
 /// opens the connection but does not log in. Log in through a handle first.
@@ -151,7 +150,7 @@ pub(crate) enum TickerPlantCommand {
 ///
 /// ```no_run
 /// use rithmic_rs::{
-///     RithmicConfig, RithmicEnv, ConnectStrategy, RithmicTickerPlant,
+///     RithmicConfig, RithmicEnv, ConnectStrategy, MarketData, RithmicTickerPlant,
 ///     rti::messages::RithmicMessage,
 /// };
 ///
@@ -170,7 +169,9 @@ pub(crate) enum TickerPlantCommand {
 ///     handle.login().await?;
 ///
 ///     // Subscribe to market data for a symbol
-///     handle.subscribe("ESZ6", "CME").await?;
+///     handle
+///         .subscribe("ESZ6", "CME", MarketData::LAST_TRADE | MarketData::BBO)
+///         .await?;
 ///
 ///     // Process incoming updates
 ///     loop {
@@ -350,11 +351,11 @@ impl PlantKind for TickerPlant {
             TickerPlantCommand::Subscribe {
                 symbol,
                 exchange,
-                fields,
+                data,
                 request_type,
                 response_sender,
             } => cx.send_for(
-                |api| api.request_market_data_update(&symbol, &exchange, fields, request_type),
+                |api| api.request_market_data_update(&symbol, &exchange, data, request_type),
                 response_sender,
             ),
 
@@ -425,7 +426,7 @@ impl PlantKind for TickerPlant {
                 underlying_symbol,
                 exchange,
                 expiration_date,
-                fields,
+                data,
                 request_type,
                 response_sender,
             } => cx.send_for(
@@ -434,7 +435,7 @@ impl PlantKind for TickerPlant {
                         &underlying_symbol,
                         &exchange,
                         expiration_date.as_deref(),
-                        fields,
+                        data,
                         request_type,
                     )
                 },
@@ -538,7 +539,7 @@ impl PlantKind for TickerPlant {
 ///
 /// # Updates
 ///
-/// A `subscribe_*` call returns only the acknowledgement. The data arrives
+/// A subscribe call returns only the acknowledgement. The data arrives
 /// on `subscription_receiver`, mixed with the connection events described on
 /// [`RithmicTickerPlant`]. Subscriptions end with the connection; after a
 /// reconnect, subscribe again.
@@ -707,30 +708,39 @@ impl RithmicTickerPlantHandle {
         let _ = self.sender.try_send(TickerPlantCommand::Abort);
     }
 
-    /// Subscribe to last trades and best bid/offer for a symbol.
+    /// Subscribe to market data for a symbol.
     ///
-    /// Updates arrive on `subscription_receiver` as
-    /// [`RithmicMessage::LastTrade`] and [`RithmicMessage::BestBidOffer`].
+    /// Updates arrive on `subscription_receiver`. Each [`MarketData`] constant
+    /// names the message its feed arrives as.
     ///
     /// # Arguments
     /// * `symbol` - The trading symbol (e.g., "ESZ6")
     /// * `exchange` - The exchange code (e.g., "CME")
+    /// * `data` - The feeds to turn on, combined with `|`
     ///
     /// # Returns
     /// The server's acknowledgement. A refusal is `Ok` with
     /// [`error`](RithmicResponse::error) set.
+    ///
+    /// # Example
+    /// ```no_run
+    /// # async fn run(handle: rithmic_rs::RithmicTickerPlantHandle) -> Result<(), rithmic_rs::RithmicError> {
+    /// use rithmic_rs::MarketData;
+    ///
+    /// handle
+    ///     .subscribe("ESZ6", "CME", MarketData::LAST_TRADE | MarketData::BBO)
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn subscribe(
         &self,
         symbol: &str,
         exchange: &str,
+        data: MarketData,
     ) -> Result<RithmicResponse, RithmicError> {
-        self.request_market_data_update(
-            symbol,
-            exchange,
-            vec![UpdateBits::LastTrade, UpdateBits::Bbo],
-            Request::Subscribe,
-        )
-        .await
+        self.request_market_data_update(symbol, exchange, data, Request::Subscribe)
+            .await
     }
 
     /// Subscribe to order book depth-by-order updates for a specific symbol
@@ -765,12 +775,12 @@ impl RithmicTickerPlantHandle {
         await_first_response(rx).await
     }
 
-    /// Unsubscribe from the last trades and best bid/offer that
-    /// [`subscribe`](Self::subscribe) asked for.
+    /// Unsubscribe from market data for a symbol.
     ///
     /// # Arguments
     /// * `symbol` - The trading symbol (e.g., "ESZ6")
     /// * `exchange` - The exchange code (e.g., "CME")
+    /// * `data` - The feeds to turn off, combined with `|`
     ///
     /// # Returns
     /// The server's acknowledgement. A refusal is `Ok` with
@@ -779,14 +789,10 @@ impl RithmicTickerPlantHandle {
         &self,
         symbol: &str,
         exchange: &str,
+        data: MarketData,
     ) -> Result<RithmicResponse, RithmicError> {
-        self.request_market_data_update(
-            symbol,
-            exchange,
-            vec![UpdateBits::LastTrade, UpdateBits::Bbo],
-            Request::Unsubscribe,
-        )
-        .await
+        self.request_market_data_update(symbol, exchange, data, Request::Unsubscribe)
+            .await
     }
 
     /// Unsubscribe from order book depth-by-order updates for a specific symbol
@@ -817,12 +823,12 @@ impl RithmicTickerPlantHandle {
         await_first_response(rx).await
     }
 
-    /// Send a market data (template 100) request for the given update bits.
+    /// Send a market data (template 100) request.
     async fn request_market_data_update(
         &self,
         symbol: &str,
         exchange: &str,
-        fields: Vec<UpdateBits>,
+        data: MarketData,
         request_type: Request,
     ) -> Result<RithmicResponse, RithmicError> {
         let (tx, rx) = oneshot::channel::<Result<Vec<RithmicResponse>, RithmicError>>();
@@ -830,7 +836,7 @@ impl RithmicTickerPlantHandle {
         let command = TickerPlantCommand::Subscribe {
             symbol: symbol.to_string(),
             exchange: exchange.to_string(),
-            fields,
+            data,
             request_type,
             response_sender: tx,
         };
@@ -838,480 +844,6 @@ impl RithmicTickerPlantHandle {
         let _ = self.sender.send(command).await;
 
         await_first_response(rx).await
-    }
-
-    /// Subscribe to instrument status updates for a specific symbol
-    ///
-    /// # Arguments
-    /// * `symbol` - The trading symbol (e.g., "ESZ6")
-    /// * `exchange` - The exchange code (e.g., "CME")
-    ///
-    /// # Returns
-    /// The server's acknowledgement. A refusal is `Ok` with
-    /// [`error`](RithmicResponse::error) set.
-    ///
-    /// # Updates
-    /// After subscribing, market mode changes arrive as [`RithmicMessage::MarketMode`]
-    /// on `subscription_receiver`.
-    pub async fn subscribe_instrument_status(
-        &self,
-        symbol: &str,
-        exchange: &str,
-    ) -> Result<RithmicResponse, RithmicError> {
-        self.request_market_data_update(
-            symbol,
-            exchange,
-            vec![UpdateBits::MarketMode],
-            Request::Subscribe,
-        )
-        .await
-    }
-
-    /// Unsubscribe from instrument status updates for a specific symbol
-    ///
-    /// # Arguments
-    /// * `symbol` - The trading symbol (e.g., "ESZ6")
-    /// * `exchange` - The exchange code (e.g., "CME")
-    ///
-    /// # Returns
-    /// The server's acknowledgement. A refusal is `Ok` with
-    /// [`error`](RithmicResponse::error) set.
-    pub async fn unsubscribe_instrument_status(
-        &self,
-        symbol: &str,
-        exchange: &str,
-    ) -> Result<RithmicResponse, RithmicError> {
-        self.request_market_data_update(
-            symbol,
-            exchange,
-            vec![UpdateBits::MarketMode],
-            Request::Unsubscribe,
-        )
-        .await
-    }
-
-    /// Subscribe to level-1 order book summary updates for a specific symbol.
-    ///
-    /// Sends `request_market_data_update` (proto 100) with `UpdateBits::OrderBook`
-    /// and delivers aggregated bid/ask summary ticks. For full depth-by-order, use
-    /// [`subscribe_depth_by_order_update`](Self::subscribe_depth_by_order_update)
-    /// (`request_depth_by_order_updates`, proto 104).
-    ///
-    /// # Arguments
-    /// * `symbol` - The trading symbol (e.g., "ESZ6")
-    /// * `exchange` - The exchange code (e.g., "CME")
-    ///
-    /// # Returns
-    /// The server's acknowledgement. A refusal is `Ok` with
-    /// [`error`](RithmicResponse::error) set.
-    ///
-    /// # Updates
-    /// After subscribing, aggregated bid/ask updates arrive as [`RithmicMessage::OrderBook`]
-    /// on `subscription_receiver`.
-    pub async fn subscribe_order_book_summary(
-        &self,
-        symbol: &str,
-        exchange: &str,
-    ) -> Result<RithmicResponse, RithmicError> {
-        self.request_market_data_update(
-            symbol,
-            exchange,
-            vec![UpdateBits::OrderBook],
-            Request::Subscribe,
-        )
-        .await
-    }
-
-    /// Unsubscribe from level-1 order book summary updates for a specific symbol.
-    ///
-    /// This reverses [`subscribe_order_book_summary`](Self::subscribe_order_book_summary).
-    /// To stop the depth-by-order stream, use
-    /// [`unsubscribe_depth_by_order_update`](Self::unsubscribe_depth_by_order_update).
-    ///
-    /// # Arguments
-    /// * `symbol` - The trading symbol (e.g., "ESZ6")
-    /// * `exchange` - The exchange code (e.g., "CME")
-    ///
-    /// # Returns
-    /// The server's acknowledgement. A refusal is `Ok` with
-    /// [`error`](RithmicResponse::error) set.
-    pub async fn unsubscribe_order_book_summary(
-        &self,
-        symbol: &str,
-        exchange: &str,
-    ) -> Result<RithmicResponse, RithmicError> {
-        self.request_market_data_update(
-            symbol,
-            exchange,
-            vec![UpdateBits::OrderBook],
-            Request::Unsubscribe,
-        )
-        .await
-    }
-
-    /// Subscribe to session price updates for a specific symbol
-    ///
-    /// # Arguments
-    /// * `symbol` - The trading symbol (e.g., "ESZ6")
-    /// * `exchange` - The exchange code (e.g., "CME")
-    ///
-    /// # Returns
-    /// The server's acknowledgement. A refusal is `Ok` with
-    /// [`error`](RithmicResponse::error) set.
-    ///
-    /// # Updates
-    /// After subscribing, intraday high, low, and open price updates arrive as
-    /// [`RithmicMessage::TradeStatistics`] on `subscription_receiver`.
-    pub async fn subscribe_session_prices(
-        &self,
-        symbol: &str,
-        exchange: &str,
-    ) -> Result<RithmicResponse, RithmicError> {
-        self.request_market_data_update(
-            symbol,
-            exchange,
-            vec![UpdateBits::Open, UpdateBits::HighLow],
-            Request::Subscribe,
-        )
-        .await
-    }
-
-    /// Unsubscribe from session price updates for a specific symbol
-    ///
-    /// # Arguments
-    /// * `symbol` - The trading symbol (e.g., "ESZ6")
-    /// * `exchange` - The exchange code (e.g., "CME")
-    ///
-    /// # Returns
-    /// The server's acknowledgement. A refusal is `Ok` with
-    /// [`error`](RithmicResponse::error) set.
-    pub async fn unsubscribe_session_prices(
-        &self,
-        symbol: &str,
-        exchange: &str,
-    ) -> Result<RithmicResponse, RithmicError> {
-        self.request_market_data_update(
-            symbol,
-            exchange,
-            vec![UpdateBits::Open, UpdateBits::HighLow],
-            Request::Unsubscribe,
-        )
-        .await
-    }
-
-    /// Subscribe to quote statistics updates for a specific symbol
-    ///
-    /// # Arguments
-    /// * `symbol` - The trading symbol (e.g., "ESZ6")
-    /// * `exchange` - The exchange code (e.g., "CME")
-    ///
-    /// # Returns
-    /// The server's acknowledgement. A refusal is `Ok` with
-    /// [`error`](RithmicResponse::error) set.
-    ///
-    /// # Updates
-    /// After subscribing, high bid / low ask updates arrive as
-    /// [`RithmicMessage::QuoteStatistics`] on `subscription_receiver`.
-    pub async fn subscribe_quote_statistics(
-        &self,
-        symbol: &str,
-        exchange: &str,
-    ) -> Result<RithmicResponse, RithmicError> {
-        self.request_market_data_update(
-            symbol,
-            exchange,
-            vec![UpdateBits::HighBidLowAsk],
-            Request::Subscribe,
-        )
-        .await
-    }
-
-    /// Unsubscribe from quote statistics updates for a specific symbol
-    ///
-    /// # Arguments
-    /// * `symbol` - The trading symbol (e.g., "ESZ6")
-    /// * `exchange` - The exchange code (e.g., "CME")
-    ///
-    /// # Returns
-    /// The server's acknowledgement. A refusal is `Ok` with
-    /// [`error`](RithmicResponse::error) set.
-    pub async fn unsubscribe_quote_statistics(
-        &self,
-        symbol: &str,
-        exchange: &str,
-    ) -> Result<RithmicResponse, RithmicError> {
-        self.request_market_data_update(
-            symbol,
-            exchange,
-            vec![UpdateBits::HighBidLowAsk],
-            Request::Unsubscribe,
-        )
-        .await
-    }
-
-    /// Subscribe to indicator price updates for a specific symbol
-    ///
-    /// # Arguments
-    /// * `symbol` - The trading symbol (e.g., "ESZ6")
-    /// * `exchange` - The exchange code (e.g., "CME")
-    ///
-    /// # Returns
-    /// The server's acknowledgement. A refusal is `Ok` with
-    /// [`error`](RithmicResponse::error) set.
-    ///
-    /// # Updates
-    /// After subscribing, opening and closing indicator prices arrive as
-    /// [`RithmicMessage::IndicatorPrices`] on `subscription_receiver`.
-    pub async fn subscribe_indicator_prices(
-        &self,
-        symbol: &str,
-        exchange: &str,
-    ) -> Result<RithmicResponse, RithmicError> {
-        self.request_market_data_update(
-            symbol,
-            exchange,
-            vec![UpdateBits::OpeningIndicator, UpdateBits::ClosingIndicator],
-            Request::Subscribe,
-        )
-        .await
-    }
-
-    /// Unsubscribe from indicator price updates for a specific symbol
-    ///
-    /// # Arguments
-    /// * `symbol` - The trading symbol (e.g., "ESZ6")
-    /// * `exchange` - The exchange code (e.g., "CME")
-    ///
-    /// # Returns
-    /// The server's acknowledgement. A refusal is `Ok` with
-    /// [`error`](RithmicResponse::error) set.
-    pub async fn unsubscribe_indicator_prices(
-        &self,
-        symbol: &str,
-        exchange: &str,
-    ) -> Result<RithmicResponse, RithmicError> {
-        self.request_market_data_update(
-            symbol,
-            exchange,
-            vec![UpdateBits::OpeningIndicator, UpdateBits::ClosingIndicator],
-            Request::Unsubscribe,
-        )
-        .await
-    }
-
-    /// Subscribe to open interest updates for a specific symbol
-    ///
-    /// # Arguments
-    /// * `symbol` - The trading symbol (e.g., "ESZ6")
-    /// * `exchange` - The exchange code (e.g., "CME")
-    ///
-    /// # Returns
-    /// The server's acknowledgement. A refusal is `Ok` with
-    /// [`error`](RithmicResponse::error) set.
-    ///
-    /// # Updates
-    /// After subscribing, open interest updates arrive as [`RithmicMessage::OpenInterest`]
-    /// on `subscription_receiver`.
-    pub async fn subscribe_open_interest(
-        &self,
-        symbol: &str,
-        exchange: &str,
-    ) -> Result<RithmicResponse, RithmicError> {
-        self.request_market_data_update(
-            symbol,
-            exchange,
-            vec![UpdateBits::OpenInterest],
-            Request::Subscribe,
-        )
-        .await
-    }
-
-    /// Unsubscribe from open interest updates for a specific symbol
-    ///
-    /// # Arguments
-    /// * `symbol` - The trading symbol (e.g., "ESZ6")
-    /// * `exchange` - The exchange code (e.g., "CME")
-    ///
-    /// # Returns
-    /// The server's acknowledgement. A refusal is `Ok` with
-    /// [`error`](RithmicResponse::error) set.
-    pub async fn unsubscribe_open_interest(
-        &self,
-        symbol: &str,
-        exchange: &str,
-    ) -> Result<RithmicResponse, RithmicError> {
-        self.request_market_data_update(
-            symbol,
-            exchange,
-            vec![UpdateBits::OpenInterest],
-            Request::Unsubscribe,
-        )
-        .await
-    }
-
-    /// Subscribe to end-of-day price updates for a specific symbol.
-    ///
-    /// Sends the `Close`, `Settlement`, `ProjectedSettlement`, and
-    /// `AdjustedClose` update bits.
-    ///
-    /// # Arguments
-    /// * `symbol` - The trading symbol (e.g., "ESZ6")
-    /// * `exchange` - The exchange code (e.g., "CME")
-    ///
-    /// # Returns
-    /// The server's acknowledgement. A refusal is `Ok` with
-    /// [`error`](RithmicResponse::error) set.
-    ///
-    /// # Updates
-    /// Updates arrive as [`RithmicMessage::EndOfDayPrices`] on
-    /// `subscription_receiver`.
-    pub async fn subscribe_end_of_day_prices(
-        &self,
-        symbol: &str,
-        exchange: &str,
-    ) -> Result<RithmicResponse, RithmicError> {
-        self.request_market_data_update(
-            symbol,
-            exchange,
-            vec![
-                UpdateBits::Close,
-                UpdateBits::Settlement,
-                UpdateBits::ProjectedSettlement,
-                UpdateBits::AdjustedClose,
-            ],
-            Request::Subscribe,
-        )
-        .await
-    }
-
-    /// Unsubscribe from end-of-day price updates for a specific symbol.
-    ///
-    /// This reverses [`subscribe_end_of_day_prices`](Self::subscribe_end_of_day_prices).
-    ///
-    /// # Arguments
-    /// * `symbol` - The trading symbol (e.g., "ESZ6")
-    /// * `exchange` - The exchange code (e.g., "CME")
-    ///
-    /// # Returns
-    /// The server's acknowledgement. A refusal is `Ok` with
-    /// [`error`](RithmicResponse::error) set.
-    pub async fn unsubscribe_end_of_day_prices(
-        &self,
-        symbol: &str,
-        exchange: &str,
-    ) -> Result<RithmicResponse, RithmicError> {
-        self.request_market_data_update(
-            symbol,
-            exchange,
-            vec![
-                UpdateBits::Close,
-                UpdateBits::Settlement,
-                UpdateBits::ProjectedSettlement,
-                UpdateBits::AdjustedClose,
-            ],
-            Request::Unsubscribe,
-        )
-        .await
-    }
-
-    /// Subscribe to order price limit updates for a specific symbol
-    ///
-    /// # Arguments
-    /// * `symbol` - The trading symbol (e.g., "ESZ6")
-    /// * `exchange` - The exchange code (e.g., "CME")
-    ///
-    /// # Returns
-    /// The server's acknowledgement. A refusal is `Ok` with
-    /// [`error`](RithmicResponse::error) set.
-    ///
-    /// # Updates
-    /// After subscribing, high and low price limit updates arrive as
-    /// [`RithmicMessage::OrderPriceLimits`] on `subscription_receiver`.
-    pub async fn subscribe_order_price_limits(
-        &self,
-        symbol: &str,
-        exchange: &str,
-    ) -> Result<RithmicResponse, RithmicError> {
-        self.request_market_data_update(
-            symbol,
-            exchange,
-            vec![UpdateBits::HighPriceLimit, UpdateBits::LowPriceLimit],
-            Request::Subscribe,
-        )
-        .await
-    }
-
-    /// Unsubscribe from order price limit updates for a specific symbol
-    ///
-    /// # Arguments
-    /// * `symbol` - The trading symbol (e.g., "ESZ6")
-    /// * `exchange` - The exchange code (e.g., "CME")
-    ///
-    /// # Returns
-    /// The server's acknowledgement. A refusal is `Ok` with
-    /// [`error`](RithmicResponse::error) set.
-    pub async fn unsubscribe_order_price_limits(
-        &self,
-        symbol: &str,
-        exchange: &str,
-    ) -> Result<RithmicResponse, RithmicError> {
-        self.request_market_data_update(
-            symbol,
-            exchange,
-            vec![UpdateBits::HighPriceLimit, UpdateBits::LowPriceLimit],
-            Request::Unsubscribe,
-        )
-        .await
-    }
-
-    /// Subscribe to symbol margin rate updates for a specific symbol
-    ///
-    /// # Arguments
-    /// * `symbol` - The trading symbol (e.g., "ESZ6")
-    /// * `exchange` - The exchange code (e.g., "CME")
-    ///
-    /// # Returns
-    /// The server's acknowledgement. A refusal is `Ok` with
-    /// [`error`](RithmicResponse::error) set.
-    ///
-    /// # Updates
-    /// After subscribing, margin rate updates arrive as [`RithmicMessage::SymbolMarginRate`]
-    /// on `subscription_receiver`.
-    pub async fn subscribe_symbol_margin_rate(
-        &self,
-        symbol: &str,
-        exchange: &str,
-    ) -> Result<RithmicResponse, RithmicError> {
-        self.request_market_data_update(
-            symbol,
-            exchange,
-            vec![UpdateBits::MarginRate],
-            Request::Subscribe,
-        )
-        .await
-    }
-
-    /// Unsubscribe from symbol margin rate updates for a specific symbol
-    ///
-    /// # Arguments
-    /// * `symbol` - The trading symbol (e.g., "ESZ6")
-    /// * `exchange` - The exchange code (e.g., "CME")
-    ///
-    /// # Returns
-    /// The server's acknowledgement. A refusal is `Ok` with
-    /// [`error`](RithmicResponse::error) set.
-    pub async fn unsubscribe_symbol_margin_rate(
-        &self,
-        symbol: &str,
-        exchange: &str,
-    ) -> Result<RithmicResponse, RithmicError> {
-        self.request_market_data_update(
-            symbol,
-            exchange,
-            vec![UpdateBits::MarginRate],
-            Request::Unsubscribe,
-        )
-        .await
     }
 
     /// Get the current depth-by-order book for a symbol.
@@ -1436,18 +968,20 @@ impl RithmicTickerPlantHandle {
         await_all_responses(rx).await
     }
 
-    /// Subscribe to, or unsubscribe from, market data for every instrument of
-    /// an underlying.
+    /// Subscribe to market data for every instrument of an underlying.
     ///
-    /// Updates arrive on `subscription_receiver`, as for the per-symbol
-    /// `subscribe_*` methods.
+    /// Updates arrive on `subscription_receiver`, as for
+    /// [`subscribe`](Self::subscribe).
+    ///
+    /// Rithmic added [`MarketData::ADJUSTED_CLOSE`] to template 100 only, so
+    /// this request (template 105) does not list it. The bit is still sent,
+    /// and the server decides whether to honor it.
     ///
     /// # Arguments
     /// * `underlying_symbol` - The underlying symbol (e.g., "ES")
     /// * `exchange` - The exchange code (e.g., "CME")
     /// * `expiration_date` - Only instruments with this expiration
-    /// * `fields` - The update kinds to turn on or off; they are sent as one bit mask
-    /// * `request_type` - `Subscribe` or `Unsubscribe`
+    /// * `data` - The feeds to turn on, combined with `|`
     ///
     /// # Returns
     /// The server's acknowledgement. A refusal is `Ok` with
@@ -1457,7 +991,53 @@ impl RithmicTickerPlantHandle {
         underlying_symbol: &str,
         exchange: &str,
         expiration_date: Option<&str>,
-        fields: Vec<request_market_data_update_by_underlying::UpdateBits>,
+        data: MarketData,
+    ) -> Result<RithmicResponse, RithmicError> {
+        self.request_market_data_update_by_underlying(
+            underlying_symbol,
+            exchange,
+            expiration_date,
+            data,
+            request_market_data_update_by_underlying::Request::Subscribe,
+        )
+        .await
+    }
+
+    /// Unsubscribe from market data for every instrument of an underlying.
+    ///
+    /// # Arguments
+    /// * `underlying_symbol` - The underlying symbol (e.g., "ES")
+    /// * `exchange` - The exchange code (e.g., "CME")
+    /// * `expiration_date` - Only instruments with this expiration
+    /// * `data` - The feeds to turn off, combined with `|`
+    ///
+    /// # Returns
+    /// The server's acknowledgement. A refusal is `Ok` with
+    /// [`error`](RithmicResponse::error) set.
+    pub async fn unsubscribe_by_underlying(
+        &self,
+        underlying_symbol: &str,
+        exchange: &str,
+        expiration_date: Option<&str>,
+        data: MarketData,
+    ) -> Result<RithmicResponse, RithmicError> {
+        self.request_market_data_update_by_underlying(
+            underlying_symbol,
+            exchange,
+            expiration_date,
+            data,
+            request_market_data_update_by_underlying::Request::Unsubscribe,
+        )
+        .await
+    }
+
+    /// Send a market data by underlying (template 105) request.
+    async fn request_market_data_update_by_underlying(
+        &self,
+        underlying_symbol: &str,
+        exchange: &str,
+        expiration_date: Option<&str>,
+        data: MarketData,
         request_type: request_market_data_update_by_underlying::Request,
     ) -> Result<RithmicResponse, RithmicError> {
         let (tx, rx) = oneshot::channel::<Result<Vec<RithmicResponse>, RithmicError>>();
@@ -1466,7 +1046,7 @@ impl RithmicTickerPlantHandle {
             underlying_symbol: underlying_symbol.to_string(),
             exchange: exchange.to_string(),
             expiration_date: expiration_date.map(|d| d.to_string()),
-            fields,
+            data,
             request_type,
             response_sender: tx,
         };

@@ -1,7 +1,6 @@
 # Migrating to Protocol API 0.90 (unreleased)
 
-The client now sends template version 5.55, and quantities are `u64`. The 3.0
-guide below still applies.
+Coming from 2.x, work through the 3.0.0 guide below first, then this list.
 
 - `RithmicOrder`, `RithmicModifyOrder`, `RithmicBracketOrder` and
   `RithmicOcoOrderLeg` quantities and their setters now take `u64`.
@@ -19,20 +18,18 @@ guide below still applies.
   rejected locally.
 - Match template 358 as `RithmicMessage::AccountAndUserUpdate`.
   `UserAccountUpdate` now matches only template 76.
-- Rithmic removed template 161, so `DepthByOrderEndEvent` and its
-  `RithmicMessage` variant are gone.
+- Remove code that uses `DepthByOrderEndEvent` or its `RithmicMessage`
+  variant. Template 161 no longer exists.
 - Rename `rti::last_trade::PresenceBits::PrecentChange` to `PercentChange`.
   `as_str_name()` now returns the corrected `PERCENT_CHANGE` spelling; the
   numeric value remains 4.
-- `BracketOperationType::Oca` is removed, since 0.90.0.0 no longer lists `OCA`.
-  Pick one of the remaining variants, or leave `operation_type` unset for the
-  server default.
-- `get_order_session_config(Some(defer))` is deprecated, as Rithmic deprecated
-  template 3502. Call
+- `BracketOperationType::Oca` is removed. Pick one of the remaining variants,
+  or leave `operation_type` unset for the server default.
+- `get_order_session_config(Some(defer))` is deprecated. Call
   `set_session_config(SessionConfig::new().should_defer_request(defer))`.
 - The request-timeout items are gone: `DEFAULT_REQUEST_TIMEOUT`,
   `RithmicError::RequestTimeout`, the `request_timeout` field and the
-  `request_timeout()` setter. They did nothing since 3.1.0, so delete them. For
+  `request_timeout()` setter. They had no effect, so delete them. For
   a deadline, wrap the call in `tokio::time::timeout` (see
   `examples/request_timeout.rs`). Nothing reads `RITHMIC_REQUEST_TIMEOUT_SECS`.
 - Replace `retry_timeout()` with `connect_total_timeout()`, and drop any use of
@@ -42,24 +39,42 @@ guide below still applies.
 - Replace `load_ticks(symbol, exchange, start, end)` with `load_ticks_all()`,
   which takes the same arguments and has no 10,000-trade cap. To keep the cap,
   call `load_tick_bars(symbol, exchange, 1, start, end)`.
+- The ticker handle picks feeds with `MarketData`. Pass the feeds you want to
+  `subscribe` or `unsubscribe`, combined with `|`. Each old method maps to:
+
+  | Old method | `MarketData` feeds |
+  |---|---|
+  | `subscribe` | `LAST_TRADE \| BBO` |
+  | `subscribe_instrument_status` | `MARKET_MODE` |
+  | `subscribe_order_book_summary` | `ORDER_BOOK` |
+  | `subscribe_session_prices` | `OPEN \| HIGH_LOW` |
+  | `subscribe_quote_statistics` | `HIGH_BID_LOW_ASK` |
+  | `subscribe_indicator_prices` | `OPENING_INDICATOR \| CLOSING_INDICATOR` |
+  | `subscribe_open_interest` | `OPEN_INTEREST` |
+  | `subscribe_end_of_day_prices` | `CLOSE \| SETTLEMENT \| PROJECTED_SETTLEMENT \| ADJUSTED_CLOSE` |
+  | `subscribe_order_price_limits` | `HIGH_PRICE_LIMIT \| LOW_PRICE_LIMIT` |
+  | `subscribe_symbol_margin_rate` | `MARGIN_RATE` |
+
+  Each `unsubscribe_*` method maps the same way onto `unsubscribe`. The
+  depth-by-order methods are unchanged.
+- `subscribe_by_underlying(.., fields, request_type)` becomes
+  `subscribe_by_underlying(.., data)` or `unsubscribe_by_underlying(.., data)`.
+  Template 105 does not list `ADJUSTED_CLOSE`, so that bit is sent as-is and
+  the server decides what to do with it.
 
 # Migrating to 3.0.0
 
-3.0.0 reshapes the order surface. Commands are built with `new()` and chained
-setters instead of struct literals, the generated protobuf enums are replaced by
-crate-owned ones, and every order call takes a command struct.
+Work through the sections in order. The compiler finds most of the work, and
+section 1 fixes most of the errors.
 
-Most of the work is mechanical and the compiler finds it. Work through the
-sections in order. Section 1 resolves most of the errors.
-
-Section 10 lists what the compiler will *not* find: six changes that compile
-untouched and alter what reaches the exchange. Read that one even if everything
+Section 10 lists six changes the compiler will *not* find. They compile
+untouched and change what reaches the exchange. Read it even if everything
 else builds.
 
 ## 1. Build commands with `new()` and setters
 
-The order command types are `#[non_exhaustive]`, so `..Default::default()` no
-longer compiles outside this crate. There is no separate builder type: `new()`
+The order command types are `#[non_exhaustive]`, so `..Default::default()` does
+not compile outside this crate. There is no separate builder type: `new()`
 takes no arguments and returns the command with its defaults filled in, every
 field has a setter of the same name, and `build()` runs `validate()` and returns
 `Result<Self, RithmicError>`.
@@ -108,10 +123,8 @@ let stop = TrailingStop::new().trail_by_ticks(15).trail_by_price_id(7).build()?;
 ### Other types that lost struct-literal syntax
 
 `RithmicConfig`, `RithmicAccount`, `LoginConfig`, `InstrumentInfo`,
-`InstrumentInfoError`, `RithmicEnv` and all 246 generated protobuf types are
-`#[non_exhaustive]`. Rithmic added fields to existing messages in 24 of the 35
-template releases in its change log; without the attribute, every proto refresh
-would be a major version bump here.
+`InstrumentInfoError`, `RithmicEnv` and every generated protobuf type are
+`#[non_exhaustive]`.
 
 - Config: use `RithmicConfig::builder(env)` or `RithmicConfigBuilder::from_env(env)`.
 - Generated types: `Default::default()` followed by field assignment.
@@ -123,11 +136,7 @@ be matched exhaustively or built as literals downstream.
 
 ## 2. Replace the generated enums
 
-Fourteen generated enum re-exports leave the curated surface. The generated
-per-request enums named the same concepts but were incompatible with each other,
-so the same order could not be expressed against two request types.
-
-Twelve are replaced outright:
+Fourteen generated enum re-exports are gone. Twelve are replaced outright:
 
 | removed | use instead |
 |---|---|
@@ -141,24 +150,20 @@ Two keep their names but now resolve to crate-owned enums: `BracketType`
 (was `rti::request_bracket_order::BracketType`) and `EasyToBorrowRequest`
 (was `rti::request_easy_to_borrow_list::Request`).
 
-Variant names are unchanged throughout, so the arms port over as written. Two
-things do not:
+Variant names are unchanged, so match arms port over as written. Also:
 
-- **The crate-owned enums are `#[non_exhaustive]`.** The generated enums were not,
-  so an exhaustive `match` that compiled at 2.0.0 now needs a `_` arm.
+- **The crate-owned enums are `#[non_exhaustive]`.** Add a `_` arm to every
+  exhaustive `match`.
 - **`OrderType` has six variants where `OcoPriceType` had four**, adding
   `MarketIfTouched` and `LimitIfTouched`.
-
-The prost-specific surface does not carry over either: `as i32`, `try_from`,
-`from_str_name` and the derived `Ord`/`PartialOrd`. `as_str_name` is still
-available.
+- **The prost methods are gone:** `as i32`, `try_from`, `from_str_name` and the
+  derived `Ord`/`PartialOrd`. `as_str_name` still works.
 
 ## 3. Rename handle methods
 
 Seven names change, covering ten methods (`list_system_info` exists on all four
-plants). Each method is now named after the request it sends. Signatures are
-unchanged except `adjust_target`, which also swaps `(id, ticks)` for a command
-struct (see section 6).
+plants). Signatures are unchanged except `adjust_target`, which also takes a
+command struct (see section 6).
 
 | old | new | handle |
 |---|---|---|
@@ -170,22 +175,15 @@ struct (see section 6).
 | `pnl_position_snapshots` | `get_pnl_position_snapshot` | pnl |
 | `adjust_profit` | `adjust_target` | order |
 
-`list_exchange_permissions` already existed on the order plant; the ticker method
-was renamed to match, and both remain, as two plants' handles onto the same request.
-`subscribe_order_book_summary`/`unsubscribe_order_book_summary` is a different
-request pair and is unchanged. `RithmicSenderApi::request_depth_by_order_snapshot`
-keeps its name, since every sender-api method is `request_*`.
+`RithmicSenderApi::request_depth_by_order_snapshot` keeps its name.
 
 ## 4. Prices are `Option<f64>`
 
 `price` on `RithmicOrder`, `RithmicOcoOrderLeg` and `RithmicModifyOrder` is now
 `Option<f64>`. Wrap existing values in `Some(..)`, and pass `None` for market
-orders. Those previously went out priced at `0.0`.
+orders. An unset price is left out of the request.
 
-An unset price is now left out of the request entirely. It can no longer reach the
-wire as `0.0` or stand in as a `0.0` trigger.
-
-A modify still restates the whole order, so set `price` to the order's current
+A modify restates the whole order, so set `price` to the order's current
 price when only the quantity is changing.
 
 ## 5. `RithmicAdvancedBracketOrder` is gone
@@ -194,8 +192,7 @@ price when only the quantity is changing.
 trailing stops, break-even, timed release and cancel, if-touched entry. Call
 `place_bracket_order` instead of the removed `place_advanced_bracket_order`.
 
-Which fields you rename depends on which type you were using. 2.0.0 had both, and
-they did not agree.
+What to rename depends on which type you used.
 
 **Coming from the plain `RithmicBracketOrder`:** the tick fields change name *and*
 type. `profit_ticks: i32` becomes `target_ticks: Vec<i32>`, and `stop_ticks: i32`
@@ -217,17 +214,14 @@ Either way:
 - `bracket_type` is now `Option<BracketType>`. Left unset, `build()` derives it
   from the exit legs present and omits it when there are none.
 
-That last point changes the wire for a target-only bracket: it now sends
-`TARGET_ONLY_STATIC`. At 2.0.0 the plain `RithmicBracketOrder` always sent
-`TargetAndStopStatic`, whatever legs you gave it, because its conversion into the
-advanced type hardcoded that value. Set `.bracket_type(..)` to override;
-`validate()` rejects a value that does not match the legs supplied.
+A target-only bracket now sends `TARGET_ONLY_STATIC`, not `TargetAndStopStatic`.
+Set `.bracket_type(..)` to override; `validate()` rejects a value that does not
+match the legs supplied.
 
 ## 6. Order calls take command structs
 
 `cancel_all_orders()` now takes a `RithmicCancelAllOrders`, and
-`exit_position(symbol, exchange)` now takes a `RithmicExitPosition`, matching every
-other order call.
+`exit_position(symbol, exchange)` now takes a `RithmicExitPosition`.
 
 Origination is a field on the command rather than a handle argument, set with
 `.manual_or_auto(..)`. It defaults to `ManualOrAutoEntry::Auto` on every command
@@ -239,8 +233,7 @@ different originators.
 `level: None` keeps the old behavior.
 
 `load_volume_profile_minute_bars` takes a `VolumeProfileMinuteBarsRequest` instead
-of seven positional arguments, so fields Rithmic adds later land as setters rather
-than signature changes:
+of seven positional arguments:
 
 ```rust
 let request = VolumeProfileMinuteBarsRequest::new()
@@ -259,27 +252,21 @@ a window whose end does not precede its start. The handle runs the same checks, 
 a request that skipped `build()` fails with `RithmicError::InvalidArgument` rather
 than reaching the server incomplete.
 
+`RithmicSenderApi::request_tick_bar_replay` and `request_time_bar_replay` take a
+`TickBarReplayRequest` and a `TimeBarReplayRequest`, built the same way.
+
 `TimeBarType` is a new alias for `rti::request_time_bar_replay::BarType`, exported
 at the crate root. The old path still works.
 
 `subscribe_account_rms_updates` gains a required `update_bits` parameter. Pass
 `vec![]` for the old behavior.
 
-## 7. Your replays were probably truncated
+## 7. Switch replays to the `_all` methods
 
-Nothing here breaks, but it is the change most likely to have been quietly
-costing you data.
-
-Rithmic caps a replay at 10,000 records and gives no sign that it did: the
-closing response of a truncated replay is byte-identical to a complete one's.
-2.x never asked for the cap to be lifted, so `load_ticks`, `load_tick_bars` and
-`load_time_bars` returned the first 10,000 records of the window and looked like
-they had returned all of it. An hour of a liquid contract runs well past that,
-and one-second bars pass it in under three hours.
-
-`load_ticks_all`, `load_tick_bars_all` and `load_time_bars_all` set Rithmic's
-`resume_bars` flag, which lifts that cap. Same signatures otherwise, so the
-switch is the method name.
+Rithmic caps a replay at 10,000 records, and a capped reply looks the same as a
+complete one. `load_tick_bars` and `load_time_bars` keep that cap.
+`load_tick_bars_all` and `load_time_bars_all` lift it and take the same
+arguments, so the switch is the method name. For ticks, use `load_ticks_all`.
 
 The server can also cut a large reply short. The plant usually continues it
 automatically, but for large time bar windows, check the last bar reaches the
@@ -304,9 +291,8 @@ remain for when that is what you want.
 The `load_*` methods also validate now. An empty symbol or exchange, a
 `bar_length` or `bar_type_period` below 1, a non-positive timestamp, or an
 `end_time_sec` before `start_time_sec` returns `RithmicError::InvalidArgument`
-without a round trip. Only a zero `bar_length` was caught before, so a call that
-appeared to work and came back empty may now surface as an error, which is the
-point.
+without a round trip. A call that used to come back empty may now return this
+error.
 
 ## 8. Build `RithmicConfig` through the builder
 
@@ -319,7 +305,7 @@ single field can be overridden.
 | change | what to do |
 |---|---|
 | `RithmicModifyOrder::qty` renamed to `quantity` | rename field and setter |
-| `RithmicOrder::duration` is `TimeInForce`, not `Option<TimeInForce>` | unwrap; `None` already sent `Day`, so the wire is unchanged |
+| `RithmicOrder::duration` is `TimeInForce`, not `Option<TimeInForce>` | unwrap; `None` sent `Day`, so the wire is unchanged |
 | `ws` module is private | spell `rithmic_rs::ws::ConnectStrategy` as `rithmic_rs::ConnectStrategy` |
 | new `Option` fields on the command types | leave `None` to keep old behavior |
 
@@ -333,14 +319,13 @@ every order command.
 
 These compile as-is but change what goes on the wire or what the server records.
 
-- **Orders route off the exchange's published trade route** instead of a hardcoded
+- **Orders route off the exchange's published trade route**, not
   `"globex"`/`"simulator"`. `login()` reads the routes once and orders route off
   that snapshot. With no route published and none set on the command, the order is
   not sent and you get `RithmicError::NoTradeRoute`.
 - **`get_account_list` and `get_account_rms_info` may return fewer accounts.**
-  Requests used to carry a hardcoded `Trader` user type and no `fcm_id`/`ib_id`.
-  `login()` now scopes requests with the real login info, which also fixes FCM and
-  IB logins seeing no accounts at all.
+  `login()` now scopes requests with the real login info, which also lets FCM and
+  IB logins see their accounts.
 - **`cancel_all_orders` is attributed as `Auto`, not `Manual`.** Set
   `.manual_or_auto(ManualOrAutoEntry::Manual)` on the command to keep the old
   attribution.
@@ -350,18 +335,14 @@ These compile as-is but change what goes on the wire or what the server records.
   `RithmicMessage::UnknownTemplate` with the body intact. Code matching
   `RithmicMessage::Unknown` still compiles but no longer sees these frames.
   `Unknown` now means only that a frame failed to decode.
-- **Reconnect delays are jittered** by a clock-derived factor in `[0.5, 1.5)`, applied
-  after the cap, so plants that lost the same connection no longer retry in
-  lockstep. The schedule is otherwise unchanged.
+- **Reconnect delays are jittered** by a factor in `[0.5, 1.5)`, applied after the
+  cap. The schedule is otherwise unchanged.
 
-## 11. Protos move to 0.89.0.0
+## 11. Proto changes
 
-The bundled protos track R | Protocol API 0.89.0.0 (template version 5.42).
-
-`RithmicMessage::AccountListUpdates` is removed. Rithmic dropped
-`account_list_updates.proto` (template 354) from the pool and its release notes
-point to the account RMS updates stream instead. Subscribe with
-`subscribe_account_rms_updates` and match `RithmicMessage::AccountRmsUpdates`.
+`RithmicMessage::AccountListUpdates` (template 354) is removed. Subscribe with
+`subscribe_account_rms_updates` and match `RithmicMessage::AccountRmsUpdates`
+instead.
 
 Two `UserAccountUpdate` fields became strings: `update_type` and `access_type` are
 now `Option<String>` (values like `add_account`, `modify_account`), and the

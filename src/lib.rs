@@ -14,7 +14,7 @@
 //!
 //! ```no_run
 //! use rithmic_rs::{
-//!     RithmicConfig, RithmicEnv, ConnectStrategy, RithmicTickerPlant,
+//!     RithmicConfig, RithmicEnv, ConnectStrategy, MarketData, RithmicTickerPlant,
 //!     rti::messages::RithmicMessage,
 //! };
 //!
@@ -31,7 +31,9 @@
 //!
 //!     // Login and subscribe to market data
 //!     handle.login().await?;
-//!     handle.subscribe("ESZ6", "CME").await?;
+//!     handle
+//!         .subscribe("ESZ6", "CME", MarketData::LAST_TRADE | MarketData::BBO)
+//!         .await?;
 //!
 //!     // Process real-time updates
 //!     loop {
@@ -166,9 +168,9 @@
 //! So is a `load_*` replay the server refuses to continue.
 //!
 //! ```ignore
-//! use rithmic_rs::RithmicError;
+//! use rithmic_rs::{MarketData, RithmicError};
 //!
-//! match handle.subscribe("ESZ6", "CME").await {
+//! match handle.subscribe("ESZ6", "CME", MarketData::LAST_TRADE).await {
 //!     Ok(resp) => match &resp.error {
 //!         Some(err) => eprintln!("Server rejected: {err}"),
 //!         None => { /* success */ }
@@ -381,10 +383,11 @@ pub use plants::{
 
 pub use types::{
     BracketOperationType, BracketType, EasyToBorrowRequest, EntitlementKind, FillHistoryRange,
-    ManualOrAutoEntry, MarketDataUsageCapacity, OrderCondition, OrderPriceField, OrderSide,
-    OrderType, ParseMarketDataUsageCapacityError, ParseOrderSideError, ParseOrderTypeError,
-    ParseTimeInForceError, PlaybackKind, RmsUpdateBits, SessionConfig, TickBarReplayRequest,
-    TimeBarReplayRequest, TimeBarType, TimeInForce, VolumeProfileMinuteBarsRequest,
+    ManualOrAutoEntry, MarketData, MarketDataUsageCapacity, OrderCondition, OrderPriceField,
+    OrderSide, OrderType, ParseMarketDataUsageCapacityError, ParseOrderSideError,
+    ParseOrderTypeError, ParseTimeInForceError, PlaybackKind, RmsUpdateBits, SessionConfig,
+    TickBarReplayRequest, TimeBarReplayRequest, TimeBarType, TimeInForce,
+    VolumeProfileMinuteBarsRequest,
 };
 
 pub use util::{

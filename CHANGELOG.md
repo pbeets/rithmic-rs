@@ -41,6 +41,14 @@ Guide gives them no template id.
 - `ResponseListExchangePermissions::entitlement_flag` is no longer generated.
   Rithmic deprecated it in template version 5.42. Use `level_1_market_data`
   and `level_2_market_data`.
+- The ticker handle's `subscribe` and `unsubscribe` take a `MarketData` set,
+  such as `MarketData::LAST_TRADE | MarketData::BBO`. The 18 per-feed methods
+  (`subscribe_instrument_status`, `subscribe_open_interest` and the rest) are
+  gone; pass their feeds to `subscribe` instead.
+- `subscribe_by_underlying` takes a `MarketData` set in place of the
+  `Vec<UpdateBits>` and request type. `unsubscribe_by_underlying` is new.
+  Template 105 does not list `ADJUSTED_CLOSE`, since Rithmic added it to
+  template 100 only. The bit is sent as-is and the server decides.
 
 ### Added
 

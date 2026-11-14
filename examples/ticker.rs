@@ -14,7 +14,7 @@ use tokio::{
 };
 
 use rithmic_rs::{
-    ConnectStrategy, RithmicConfig, RithmicEnv, RithmicError, RithmicTickerPlant,
+    ConnectStrategy, MarketData, RithmicConfig, RithmicEnv, RithmicError, RithmicTickerPlant,
     rti::messages::RithmicMessage,
 };
 
@@ -36,7 +36,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // A server rejection comes back as `Ok` with `error` set, so check it;
     // `?` alone only catches transport failures.
-    let resp = handle.subscribe(&symbol, &exchange).await?;
+    let resp = handle
+        .subscribe(&symbol, &exchange, MarketData::LAST_TRADE | MarketData::BBO)
+        .await?;
 
     if let Some(err) = &resp.error {
         return Err(format!("subscribe rejected: {err}").into());

@@ -39,15 +39,15 @@ use crate::{
         request_cancel_all_orders, request_cancel_order, request_depth_by_order_updates,
         request_easy_to_borrow_list, request_exit_position,
         request_login::SysInfraType,
-        request_market_data_update::{Request, UpdateBits},
+        request_market_data_update::Request,
         request_market_data_update_by_underlying, request_modify_order, request_new_order,
         request_oco_order, request_pn_l_position_updates, request_search_symbols,
         request_tick_bar_replay::{BarSubType, BarType, Direction, TimeOrder},
         request_tick_bar_update, request_time_bar_replay, request_time_bar_update,
     },
     types::{
-        EasyToBorrowRequest, EntitlementKind, FillHistoryRange, OrderType, PlaybackKind,
-        RmsUpdateBits, SessionConfig, TickBarReplayRequest, TimeBarReplayRequest,
+        EasyToBorrowRequest, EntitlementKind, FillHistoryRange, MarketData, OrderType,
+        PlaybackKind, RmsUpdateBits, SessionConfig, TickBarReplayRequest, TimeBarReplayRequest,
         VolumeProfileMinuteBarsRequest,
     },
 };
@@ -204,27 +204,19 @@ impl RithmicSenderApi {
         &mut self,
         symbol: &str,
         exchange: &str,
-        fields: Vec<UpdateBits>,
+        data: MarketData,
         request_type: Request,
     ) -> (Vec<u8>, String) {
         let id = self.get_next_message_id();
 
-        let mut req = RequestMarketDataUpdate {
+        let req = RequestMarketDataUpdate {
             template_id: 100,
             user_msg: vec![id.clone()],
-            ..RequestMarketDataUpdate::default()
+            symbol: Some(symbol.into()),
+            exchange: Some(exchange.into()),
+            request: Some(request_type.into()),
+            update_bits: Some(data.bits()),
         };
-
-        let mut bits = 0;
-
-        for field in fields {
-            bits |= field as u32;
-        }
-
-        req.symbol = Some(symbol.into());
-        req.exchange = Some(exchange.into());
-        req.request = Some(request_type.into());
-        req.update_bits = Some(bits);
 
         self.request_to_buf(req, id)
     }
@@ -251,22 +243,16 @@ impl RithmicSenderApi {
     }
 
     /// Like [`request_market_data_update`](Self::request_market_data_update),
-    /// but for every instrument on an underlying. `fields` are OR-ed into one
-    /// bitmask.
+    /// but for every instrument on an underlying.
     pub fn request_market_data_update_by_underlying(
         &mut self,
         underlying_symbol: &str,
         exchange: &str,
         expiration_date: Option<&str>,
-        fields: Vec<request_market_data_update_by_underlying::UpdateBits>,
+        data: MarketData,
         request_type: request_market_data_update_by_underlying::Request,
     ) -> (Vec<u8>, String) {
         let id = self.get_next_message_id();
-        let mut bits = 0;
-
-        for field in fields {
-            bits |= field as u32;
-        }
 
         let req = RequestMarketDataUpdateByUnderlying {
             template_id: 105,
@@ -275,7 +261,7 @@ impl RithmicSenderApi {
             exchange: Some(exchange.to_string()),
             expiration_date: expiration_date.map(|d| d.to_string()),
             request: Some(request_type.into()),
-            update_bits: Some(bits),
+            update_bits: Some(data.bits()),
         };
 
         self.request_to_buf(req, id)
@@ -3493,7 +3479,7 @@ mod tests {
                 api.request_market_data_update(
                     "ESZ6",
                     "CME",
-                    vec![UpdateBits::LastTrade],
+                    MarketData::LAST_TRADE,
                     Request::Subscribe,
                 ),
             ),
@@ -3507,7 +3493,7 @@ mod tests {
                     "ES",
                     "CME",
                     None,
-                    vec![request_market_data_update_by_underlying::UpdateBits::LastTrade],
+                    MarketData::LAST_TRADE,
                     request_market_data_update_by_underlying::Request::Subscribe,
                 ),
             ),

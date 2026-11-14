@@ -53,7 +53,7 @@ Stream live market data:
 
 ```rust
 use rithmic_rs::{
-    ConnectStrategy, RithmicConfig, RithmicEnv, RithmicTickerPlant,
+    ConnectStrategy, MarketData, RithmicConfig, RithmicEnv, RithmicTickerPlant,
     rti::messages::RithmicMessage,
 };
 
@@ -67,7 +67,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut handle = plant.get_handle();
 
     handle.login().await?;
-    handle.subscribe("ESZ6", "CME").await?; // use the current front month
+    // Use the current front month
+    handle
+        .subscribe("ESZ6", "CME", MarketData::LAST_TRADE | MarketData::BBO)
+        .await?;
 
     while let Ok(update) = handle.subscription_receiver.recv().await {
         match update.message {
@@ -127,17 +130,23 @@ This library uses the actor pattern where each Rithmic service runs independentl
 ### Ticker Plant
 
 ```rust
-// Subscribe to real-time quotes
-handle.subscribe("ESZ6", "CME").await?;
+use rithmic_rs::MarketData;
 
-// Unsubscribe when done
-handle.unsubscribe("ESZ6", "CME").await?;
+// Subscribe to trades and quotes; combine feeds with `|`
+let feeds = MarketData::LAST_TRADE | MarketData::BBO;
+handle.subscribe("ESZ6", "CME", feeds).await?;
 
-// Additional market data subscriptions
-handle.subscribe_instrument_status("ESZ6", "CME").await?;
-handle.subscribe_open_interest("ESZ6", "CME").await?;
-handle.subscribe_session_prices("ESZ6", "CME").await?;
-handle.subscribe_order_price_limits("ESZ6", "CME").await?;
+// Unsubscribe from the same feeds when done
+handle.unsubscribe("ESZ6", "CME", feeds).await?;
+
+// Market mode, open interest, session open/high/low and price limits
+let more = MarketData::MARKET_MODE
+    | MarketData::OPEN_INTEREST
+    | MarketData::OPEN
+    | MarketData::HIGH_LOW
+    | MarketData::HIGH_PRICE_LIMIT
+    | MarketData::LOW_PRICE_LIMIT;
+handle.subscribe("ESZ6", "CME", more).await?;
 
 // Symbol discovery
 let symbols = handle.search_symbols("ES", Some("CME"), None, None, None).await?;
@@ -280,13 +289,14 @@ so check each frame's `error`. Login never accepts anything; `accept_agreement` 
 `set_market_data_self_cert_status` are explicit. See
 [`repository_agreements.rs`](examples/repository_agreements.rs).
 
-## Migrating from 2.x
+## Migrating
 
-3.0 reworked the order API. [MIGRATING.md](MIGRATING.md) has before/after code for every change. The ones that matter most:
+[MIGRATING.md](MIGRATING.md) has the steps for every breaking change. The ones that matter most:
 
 - Order commands are built with `::new()`, setters and `build()`, and every order call takes one.
 - Orders use the exchange's published trade route. With no route, nothing is sent and you get `RithmicError::NoTradeRoute`.
 - Plain history loaders stop at 10,000 records without saying so. Use the `_all` loaders.
+- Ticker `subscribe` and `unsubscribe` take a `MarketData` set, such as `MarketData::LAST_TRADE | MarketData::BBO`.
 
 ## Error Handling
 
@@ -295,7 +305,7 @@ A request the server turns down still returns `Ok`, with the reason in
 or a dropped connection.
 
 ```rust
-match handle.subscribe("ESZ6", "CME").await {
+match handle.subscribe("ESZ6", "CME", MarketData::LAST_TRADE).await {
     Ok(resp) => match &resp.error {
         Some(err) => eprintln!("rejected: {err}"),
         None => println!("subscribed"),
@@ -340,8 +350,8 @@ cargo run --example connect
 
 ## Version History
 
-[CHANGELOG.md](CHANGELOG.md) has the full history. Coming from 2.x, start at
-[Migrating from 2.x](#migrating-from-2x).
+[CHANGELOG.md](CHANGELOG.md) has the full history. To upgrade, start at
+[Migrating](#migrating).
 
 ## Contribution
 

@@ -2,14 +2,19 @@
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
-use std::{fmt, str::FromStr};
+use std::{
+    fmt,
+    ops::{BitOr, BitOrAssign},
+    str::FromStr,
+};
 
 use crate::{
     error::RithmicError,
     rti::{
         request_account_rms_updates, request_bracket_order, request_cancel_all_orders,
         request_cancel_order, request_easy_to_borrow_list, request_exit_position,
-        request_modify_order, request_new_order, request_oco_order,
+        request_market_data_update::UpdateBits, request_modify_order, request_new_order,
+        request_oco_order,
     },
 };
 
@@ -828,6 +833,73 @@ impl From<RmsUpdateBits> for request_account_rms_updates::UpdateBits {
     }
 }
 
+/// The market data feeds a ticker subscription turns on or off, passed to
+/// [`subscribe`](crate::RithmicTickerPlantHandle::subscribe).
+///
+/// Combine feeds with `|`, as in `MarketData::LAST_TRADE | MarketData::BBO`.
+/// They go out as the `update_bits` mask of one request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct MarketData(u32);
+
+impl MarketData {
+    /// Trades, as [`RithmicMessage::LastTrade`](crate::rti::messages::RithmicMessage::LastTrade).
+    pub const LAST_TRADE: Self = Self(UpdateBits::LastTrade as u32);
+    /// Best bid and offer, as [`RithmicMessage::BestBidOffer`](crate::rti::messages::RithmicMessage::BestBidOffer).
+    pub const BBO: Self = Self(UpdateBits::Bbo as u32);
+    /// Aggregated bid and ask levels, as [`RithmicMessage::OrderBook`](crate::rti::messages::RithmicMessage::OrderBook).
+    /// For depth by order, use
+    /// [`subscribe_depth_by_order_update`](crate::RithmicTickerPlantHandle::subscribe_depth_by_order_update).
+    pub const ORDER_BOOK: Self = Self(UpdateBits::OrderBook as u32);
+    /// The session open, as [`RithmicMessage::TradeStatistics`](crate::rti::messages::RithmicMessage::TradeStatistics).
+    pub const OPEN: Self = Self(UpdateBits::Open as u32);
+    /// The opening indicator, as [`RithmicMessage::IndicatorPrices`](crate::rti::messages::RithmicMessage::IndicatorPrices).
+    pub const OPENING_INDICATOR: Self = Self(UpdateBits::OpeningIndicator as u32);
+    /// The session high and low, as [`RithmicMessage::TradeStatistics`](crate::rti::messages::RithmicMessage::TradeStatistics).
+    pub const HIGH_LOW: Self = Self(UpdateBits::HighLow as u32);
+    /// The highest bid and lowest ask, as [`RithmicMessage::QuoteStatistics`](crate::rti::messages::RithmicMessage::QuoteStatistics).
+    pub const HIGH_BID_LOW_ASK: Self = Self(UpdateBits::HighBidLowAsk as u32);
+    /// The close, as [`RithmicMessage::EndOfDayPrices`](crate::rti::messages::RithmicMessage::EndOfDayPrices).
+    pub const CLOSE: Self = Self(UpdateBits::Close as u32);
+    /// The closing indicator, as [`RithmicMessage::IndicatorPrices`](crate::rti::messages::RithmicMessage::IndicatorPrices).
+    pub const CLOSING_INDICATOR: Self = Self(UpdateBits::ClosingIndicator as u32);
+    /// The settlement price, as [`RithmicMessage::EndOfDayPrices`](crate::rti::messages::RithmicMessage::EndOfDayPrices).
+    pub const SETTLEMENT: Self = Self(UpdateBits::Settlement as u32);
+    /// The market mode, as [`RithmicMessage::MarketMode`](crate::rti::messages::RithmicMessage::MarketMode).
+    pub const MARKET_MODE: Self = Self(UpdateBits::MarketMode as u32);
+    /// Open interest, as [`RithmicMessage::OpenInterest`](crate::rti::messages::RithmicMessage::OpenInterest).
+    pub const OPEN_INTEREST: Self = Self(UpdateBits::OpenInterest as u32);
+    /// The margin rate, as [`RithmicMessage::SymbolMarginRate`](crate::rti::messages::RithmicMessage::SymbolMarginRate).
+    pub const MARGIN_RATE: Self = Self(UpdateBits::MarginRate as u32);
+    /// The high price limit, as [`RithmicMessage::OrderPriceLimits`](crate::rti::messages::RithmicMessage::OrderPriceLimits).
+    pub const HIGH_PRICE_LIMIT: Self = Self(UpdateBits::HighPriceLimit as u32);
+    /// The low price limit, as [`RithmicMessage::OrderPriceLimits`](crate::rti::messages::RithmicMessage::OrderPriceLimits).
+    pub const LOW_PRICE_LIMIT: Self = Self(UpdateBits::LowPriceLimit as u32);
+    /// The projected settlement, as [`RithmicMessage::EndOfDayPrices`](crate::rti::messages::RithmicMessage::EndOfDayPrices).
+    pub const PROJECTED_SETTLEMENT: Self = Self(UpdateBits::ProjectedSettlement as u32);
+    /// The adjusted close, as [`RithmicMessage::EndOfDayPrices`](crate::rti::messages::RithmicMessage::EndOfDayPrices).
+    /// Rithmic added it to template 100 only. See
+    /// [`subscribe_by_underlying`](crate::RithmicTickerPlantHandle::subscribe_by_underlying).
+    pub const ADJUSTED_CLOSE: Self = Self(UpdateBits::AdjustedClose as u32);
+
+    pub(crate) fn bits(self) -> u32 {
+        self.0
+    }
+}
+
+impl BitOr for MarketData {
+    type Output = Self;
+
+    fn bitor(self, rhs: Self) -> Self {
+        Self(self.0 | rhs.0)
+    }
+}
+
+impl BitOrAssign for MarketData {
+    fn bitor_assign(&mut self, rhs: Self) {
+        self.0 |= rhs.0;
+    }
+}
+
 /// A volume-profile minute-bars request, passed to
 /// [`load_volume_profile_minute_bars`].
 ///
@@ -1414,6 +1486,20 @@ impl From<OrderPriceField> for request_modify_order::PriceField {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `subscribe_by_underlying` sends `MarketData` bits on template 105, which
+    /// keeps its own copy of template 100's enum.
+    #[test]
+    fn every_by_underlying_bit_matches_template_100() {
+        use crate::rti::request_market_data_update_by_underlying::UpdateBits as UnderlyingBits;
+
+        for bit in (0..32).map(|n| 1i32 << n) {
+            if let Ok(underlying) = UnderlyingBits::try_from(bit) {
+                let bits = UpdateBits::try_from(bit).expect("template 100 lacks a 105 bit");
+                assert_eq!(underlying.as_str_name(), bits.as_str_name());
+            }
+        }
+    }
 
     /// `RequestOcoOrder` stops at four price types; the if-touched pair has to be
     /// rejected rather than remapped onto something the caller did not ask for.
