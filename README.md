@@ -289,13 +289,14 @@ so check each frame's `error`. Login never accepts anything; `accept_agreement` 
 `set_market_data_self_cert_status` are explicit. See
 [`repository_agreements.rs`](examples/repository_agreements.rs).
 
-## Migrating from 2.x
+## Migrating
 
-3.0 reworked the order API. [MIGRATING.md](MIGRATING.md) has before/after code for every change. The ones that matter most:
+[MIGRATING.md](MIGRATING.md) has the steps for every breaking change. The ones that matter most:
 
 - Order commands are built with `::new()`, setters and `build()`, and every order call takes one.
 - Orders use the exchange's published trade route. With no route, nothing is sent and you get `RithmicError::NoTradeRoute`.
 - Plain history loaders stop at 10,000 records without saying so. Use the `_all` loaders.
+- Ticker `subscribe` and `unsubscribe` take a `MarketData` set, such as `MarketData::LAST_TRADE | MarketData::BBO`.
 
 ## Error Handling
 
@@ -349,8 +350,8 @@ cargo run --example connect
 
 ## Version History
 
-[CHANGELOG.md](CHANGELOG.md) has the full history. Coming from 2.x, start at
-[Migrating from 2.x](#migrating-from-2x).
+[CHANGELOG.md](CHANGELOG.md) has the full history. To upgrade, start at
+[Migrating](#migrating).
 
 ## Contribution
 
