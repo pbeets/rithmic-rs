@@ -7,11 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-The bundled protos move to R | Protocol API 0.90.0.0 (template version 5.55).
-Order quantities become `u64` and go out in Rithmic's new 64-bit fields.
-[MIGRATING.md](MIGRATING.md) covers each change. The new
-`change_password_on_behalf_of` messages are not generated, since the Reference
-Guide gives them no template id.
+## [4.0.0]
+
+4.0.0 moves to R | Protocol API 0.90.0.0 (template version 5.55), changes how
+feeds start and stop, and removes everything 3.x deprecated.
+[MIGRATING.md](MIGRATING.md) covers each change.
+
+- Order quantities are `u64` and go out in Rithmic's new 64-bit fields.
+- The ticker picks feeds with a `MarketData` set, and every feed that can be
+  stopped has a `subscribe_*`/`unsubscribe_*` pair with the same arguments.
+
+The new `change_password_on_behalf_of` messages are not generated, since the
+Reference Guide gives them no template id.
 
 ### Behavior changes the compiler will not catch
 
@@ -1439,7 +1446,8 @@ Previous stable release. See git history for earlier changes.
 - **0.5.0** (2025-11-16): Major stability and API improvements - Connection strategies, unified config, panic fixes, connection health monitoring
 - **0.4.2** (2025-11-15): Previous stable release
 
-[Unreleased]: https://github.com/pbeets/rithmic-rs/compare/v3.3.0...HEAD
+[Unreleased]: https://github.com/pbeets/rithmic-rs/compare/v4.0.0...HEAD
+[4.0.0]: https://github.com/pbeets/rithmic-rs/compare/v3.3.0...v4.0.0
 [3.3.0]: https://github.com/pbeets/rithmic-rs/compare/v3.2.0...v3.3.0
 [3.2.0]: https://github.com/pbeets/rithmic-rs/compare/v3.1.0...v3.2.0
 [3.1.0]: https://github.com/pbeets/rithmic-rs/compare/v3.0.0...v3.1.0
