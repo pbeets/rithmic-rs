@@ -85,13 +85,10 @@ Guide gives them no template id.
   and `show_account_history` / `show_user_history` (3520), with the
   `EntitlementKind` and `PlaybackKind` enums.
 
-### Deprecated
-
-- `RithmicOrderPlantHandle::get_order_session_config()`: Rithmic deprecated
-  template 3502 in favor of session config. Use `set_session_config()`.
-
 ### Removed
 
+- `RithmicOrderPlantHandle::get_order_session_config()`. Rithmic deprecated
+  template 3502 in favor of session config. Use `set_session_config()`.
 - The request-timeout items deprecated in 3.1.0: `DEFAULT_REQUEST_TIMEOUT`,
   `RithmicError::RequestTimeout`, and `request_timeout` on `RithmicConfig` and
   `RithmicConfigBuilder`. `RITHMIC_REQUEST_TIMEOUT_SECS` is no longer read.

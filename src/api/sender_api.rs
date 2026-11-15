@@ -24,9 +24,9 @@ use crate::{
         RequestListExchangePermissions, RequestListUnacceptedAgreements, RequestLogin,
         RequestLoginInfo, RequestLogout, RequestMarketDataUpdate,
         RequestMarketDataUpdateByUnderlying, RequestModifyOrder, RequestModifyOrderReferenceData,
-        RequestNewOrder, RequestOcoOrder, RequestOrderSessionConfig, RequestPlaybackAccUsers,
-        RequestPnLPositionSnapshot, RequestPnLPositionUpdates, RequestProductCodes,
-        RequestProductRmsInfo, RequestReferenceData, RequestReplayExecutions, RequestResumeBars,
+        RequestNewOrder, RequestOcoOrder, RequestPlaybackAccUsers, RequestPnLPositionSnapshot,
+        RequestPnLPositionUpdates, RequestProductCodes, RequestProductRmsInfo,
+        RequestReferenceData, RequestReplayExecutions, RequestResumeBars,
         RequestRithmicSystemGatewayInfo, RequestRithmicSystemInfo, RequestSearchSymbols,
         RequestSessionConfig, RequestSetRithmicMrktDataSelfCertStatus, RequestShowAccUserHistory,
         RequestShowAgreement, RequestShowBracketStops, RequestShowBrackets, RequestShowFillHistory,
@@ -1416,24 +1416,6 @@ impl RithmicSenderApi {
             ib_id: Some(account.ib_id.clone()),
             account_id: Some(account.account_id.clone()),
             basket_id: Some(command.basket_id.clone()),
-        };
-
-        self.request_to_buf(req, id)
-    }
-
-    /// `should_defer_request` only matters when the server must fetch
-    /// reference data from the system; `true` defers requests until it has.
-    pub fn request_order_session_config(
-        &mut self,
-        should_defer_request: Option<bool>,
-    ) -> (Vec<u8>, String) {
-        let id = self.get_next_message_id();
-
-        let req = RequestOrderSessionConfig {
-            template_id: 3502,
-            user_msg: vec![id.clone()],
-            should_defer_request,
-            ..Default::default()
         };
 
         self.request_to_buf(req, id)
@@ -3625,7 +3607,6 @@ mod tests {
                     &account,
                 ),
             ),
-            (3502, api.request_order_session_config(None)),
             (
                 3504,
                 api.request_exit_position(&RithmicExitPosition::default(), &account),
