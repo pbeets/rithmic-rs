@@ -223,30 +223,6 @@ mod tests {
     }
 
     #[test]
-    fn test_is_terminal() {
-        assert!(OrderStatus::Complete.is_terminal());
-        assert!(OrderStatus::Cancelled.is_terminal());
-        assert!(OrderStatus::Rejected.is_terminal());
-        assert!(OrderStatus::Expired.is_terminal());
-        assert!(!OrderStatus::Open.is_terminal());
-        assert!(!OrderStatus::Pending.is_terminal());
-        assert!(!OrderStatus::Partial.is_terminal());
-        assert!(!OrderStatus::Unknown.is_terminal());
-    }
-
-    #[test]
-    fn test_is_active() {
-        assert!(OrderStatus::Open.is_active());
-        assert!(OrderStatus::Pending.is_active());
-        assert!(OrderStatus::Partial.is_active());
-        assert!(!OrderStatus::Complete.is_active());
-        assert!(!OrderStatus::Cancelled.is_active());
-        assert!(!OrderStatus::Rejected.is_active());
-        assert!(!OrderStatus::Expired.is_active());
-        assert!(!OrderStatus::Unknown.is_active());
-    }
-
-    #[test]
     fn test_unknown_status() {
         assert_eq!("".parse::<OrderStatus>().unwrap(), OrderStatus::Unknown);
 

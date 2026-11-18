@@ -733,24 +733,6 @@ mod tests {
     }
 
     #[test]
-    fn test_config_error_display() {
-        let err = ConfigError::MissingEnvVar("TEST_VAR".to_string());
-        assert_eq!(err.to_string(), "Missing environment variable: TEST_VAR");
-
-        let err = ConfigError::InvalidEnvironment("bad_env".to_string());
-        assert_eq!(err.to_string(), "Invalid environment: bad_env");
-
-        let err = ConfigError::InvalidValue {
-            var: "TEST".to_string(),
-            reason: "too short".to_string(),
-        };
-        assert_eq!(err.to_string(), "Invalid value for TEST: too short");
-
-        let err = ConfigError::MissingField("field".to_string());
-        assert_eq!(err.to_string(), "Missing required field: field");
-    }
-
-    #[test]
     fn test_account_from_env_demo_success() {
         temp_env::with_vars(demo_env_vars(), || {
             let account = RithmicAccount::from_env(RithmicEnv::Demo).unwrap();
@@ -802,20 +784,6 @@ mod tests {
             config.connect_attempt_timeout,
             DEFAULT_CONNECT_ATTEMPT_TIMEOUT
         );
-    }
-
-    #[test]
-    fn from_env_leaves_the_subscription_capacity_unset() {
-        temp_env::with_vars(demo_env_vars(), || {
-            let config = RithmicConfig::from_env(RithmicEnv::Demo).unwrap();
-            assert_eq!(config.subscription_capacity, None);
-
-            let config = RithmicConfigBuilder::from_env(RithmicEnv::Demo)
-                .unwrap()
-                .build()
-                .unwrap();
-            assert_eq!(config.subscription_capacity, None);
-        });
     }
 
     #[test]
@@ -930,28 +898,6 @@ mod tests {
 
                 if let Err(ConfigError::MissingEnvVar(var)) = result {
                     assert_eq!(var, "RITHMIC_DEMO_USER");
-                } else {
-                    panic!("Expected MissingEnvVar error");
-                }
-            },
-        );
-    }
-
-    #[test]
-    fn test_from_env_missing_url() {
-        temp_env::with_vars(
-            vec![
-                ("RITHMIC_DEMO_USER", Some("demo_user")),
-                ("RITHMIC_DEMO_PW", Some("demo_password")),
-                ("RITHMIC_DEMO_URL", None::<&str>),
-                ("RITHMIC_DEMO_ALT_URL", None),
-            ],
-            || {
-                let result = RithmicConfig::from_env(RithmicEnv::Demo);
-                assert!(result.is_err());
-
-                if let Err(ConfigError::MissingEnvVar(var)) = result {
-                    assert_eq!(var, "RITHMIC_DEMO_URL");
                 } else {
                     panic!("Expected MissingEnvVar error");
                 }

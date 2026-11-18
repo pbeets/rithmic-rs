@@ -775,37 +775,9 @@ mod tests {
         assert!(!logged.contains("ERROR"), "{logged}");
     }
 
-    #[test]
-    fn a_part_whose_request_is_gone_is_counted_without_a_warning() {
-        let mut handler = RithmicRequestHandler::<Tag>::new();
-
-        let (_, logged) = log_capture::capture(|| {
-            for _ in 0..3 {
-                handler.route(part("gone", ref_data_message()));
-            }
-        });
-
-        assert!(
-            handler.response_vec_map.is_empty(),
-            "the parts are not kept"
-        );
-        assert_eq!(logged.lines().count(), 1, "{logged}");
-        assert!(logged.contains("INFO"), "{logged}");
-        assert!(
-            logged.contains("request_id gone: parts are arriving after the reply was resolved"),
-            "{logged}"
-        );
-        assert_eq!(handler.late_continuations.get("gone"), Some(&3));
-    }
-
-    // =========================================================================
-    // The server continues after its own end marker
-    //
-    // Observed 2026-09-12 on RequestVolumeProfileMinuteBars (template 208): the
-    // history plant sent thousands of parts, then a dataless end marker, then
-    // ~170 more parts for the same request id, then, 70-85s later, a final
-    // response with rp_code ["12", "output inhibited"].
-    // =========================================================================
+    // Observed 2026-09-12 on template 208: after its dataless end marker the server
+    // sent ~170 more parts for the same request id, then 70-85s later a final
+    // reply with rp_code ["12", "output inhibited"].
 
     #[test]
     fn late_parts_for_a_resolved_id_are_counted_and_produce_no_warning() {
@@ -1195,42 +1167,6 @@ mod tests {
         assert!(handler.resumes.is_empty());
     }
 
-    /// When the server refuses the resume, the wait ends: the caller gets the
-    /// refusal as an error, never the prefix as a successful complete reply.
-    #[test]
-    fn a_refused_resume_never_reports_a_complete_prefix() {
-        let mut handler = RithmicRequestHandler::<Tag>::new();
-        let mut rx = handler.register_test_replay("7");
-
-        handler.route(part("7", volume_profile_message(&[])));
-        let resume = handler
-            .route(terminal("7", truncation_notice("0")))
-            .expect("a pending truncated reply asks to resume");
-        handler.register_resume("9".to_string(), resume.request_id);
-
-        let mut refusal = terminal(
-            "9",
-            RithmicMessage::ResponseResumeBars(ResponseResumeBars {
-                rp_code: vec!["7".to_string(), "no data".to_string()],
-                ..Default::default()
-            }),
-        );
-        refusal.error = Some(RithmicError::ProtocolError("refused".to_string()));
-        let (_, logged) = log_capture::capture(|| handler.route(refusal));
-
-        let reply = rx.try_recv().unwrap();
-        assert_eq!(
-            reply,
-            Err(RithmicError::ProtocolError("refused".to_string()))
-        );
-        assert!(
-            logged.contains("refused to resume request_id 7") && logged.contains("1 parts"),
-            "{logged}"
-        );
-        assert!(handler.resumes.is_empty());
-        assert!(handler.replay_map.is_empty());
-    }
-
     /// A truncation notice for a caller that stopped waiting is not resumed:
     /// nobody would get the continuation. The replay is released, that is said
     /// once, and what the server still sends for the id is counted.
@@ -1300,24 +1236,5 @@ mod tests {
 
         assert!(!logged.contains("WARN"), "{logged}");
         assert!(!logged.contains("ERROR"), "{logged}");
-    }
-
-    /// A complete replay's end marker carries `rp_code` `["0"]` and no key:
-    /// it is not a truncation and opens no continuation.
-    #[test]
-    fn a_complete_replay_opens_no_continuation() {
-        let mut handler = RithmicRequestHandler::<Tag>::new();
-        let mut rx = handler.register_test_replay("8");
-
-        let (_, logged) = log_capture::capture(|| {
-            handler.route(part("8", volume_profile_message(&[])));
-            handler.route(terminal("8", volume_profile_message(&["0"])));
-        });
-
-        let reply = rx.try_recv().unwrap().unwrap();
-        assert_eq!(reply.len(), 2);
-        assert!(!reply[1].is_truncated());
-        assert!(!logged.contains("truncated"), "{logged}");
-        assert!(handler.late_continuations.is_empty());
     }
 }

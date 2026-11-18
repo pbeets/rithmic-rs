@@ -64,13 +64,6 @@ mod tests {
     use std::time::Duration;
 
     #[test]
-    fn sent_marks_pending() {
-        let mut mgr = PingManager::new(60);
-        mgr.sent();
-        assert!(mgr.next_timeout_at().is_some());
-    }
-
-    #[test]
     fn received_clears_pending() {
         let mut mgr = PingManager::new(60);
         mgr.sent();

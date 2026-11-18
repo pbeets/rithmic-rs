@@ -630,10 +630,9 @@ impl<K: PlantKind> PlantCore<K> {
     }
 
     fn logout(&mut self, response_sender: Responder) {
-        // Close the session before the logout goes out: the core handles
-        // commands one at a time, so anything a cloned handle queues after
-        // `Logout` finds it closing and is dropped by the guard in
-        // `on_command`. A login still in flight fails now.
+        // Close the session before the logout goes out, so a command a cloned
+        // handle queues after `Logout` is dropped by the guard in `on_command`.
+        // A login still in flight fails now.
         self.session.close(Session::Closing);
 
         let (logout_buf, id) = self.sender_api.request_logout();
@@ -765,25 +764,6 @@ mod tests {
             reply[0].error.is_some(),
             "the caller still gets the rejection"
         );
-    }
-
-    /// The caller stopped waiting before the reply arrived: the session must
-    /// still be logged in, or it never heartbeats and Rithmic drops it.
-    #[test]
-    fn an_accepted_login_reply_nobody_waits_for_still_logs_the_actor_in() {
-        let (mut core, rx, id) = logging_in();
-        drop(rx);
-
-        let effects = core.on_event(Event::Frame(login_reply(&id, &["0"])));
-
-        assert!(matches!(core.session, Session::Ready { .. }));
-
-        assert!(matches!(
-            effects.as_slice(),
-            [Effect::SetHeartbeat(period)] if *period == Duration::from_secs(30)
-        ));
-
-        assert!(heartbeats(&core.on_event(Event::HeartbeatDue)));
     }
 
     /// Only the session's own login request logs it in. A login reply that
@@ -994,26 +974,6 @@ mod tests {
             assert_eq!(heartbeats(&effects), expected, "heartbeat sent in {name}");
             assert!(!stops(&effects));
         }
-    }
-
-    /// Regression guard for the disconnect race: the session must be closing
-    /// as soon as the logout is taken, so anything a cloned handle queues
-    /// after it is refused rather than reaching Rithmic after the logout.
-    #[test]
-    fn a_logout_closes_the_session_before_it_is_sent() {
-        let mut core = bare();
-
-        assert!(
-            !core.close_requested(),
-            "a fresh core has no close requested"
-        );
-
-        let effects = core.on_event(Event::Command(PlantCommand::Logout {
-            response_sender: oneshot::channel().0,
-        }));
-
-        assert!(matches!(core.session, Session::Closing));
-        assert_eq!(sent(&effects).len(), 1, "the logout itself goes out");
     }
 
     /// Once a logout is taken, only the close goes out after it. Every

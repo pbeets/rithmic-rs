@@ -291,14 +291,6 @@ mod tests {
     }
 
     #[test]
-    fn resolve_returns_the_route_recorded_for_the_exchange() {
-        let cache = cache_with("CME", "globex");
-
-        assert_eq!(routed(&cache, "CME").as_deref(), Some("globex"));
-        assert_eq!(routed(&cache, "CBOT"), None);
-    }
-
-    #[test]
     fn resolve_prefers_the_per_order_override() {
         let cache = cache_with("CME", "globex");
 

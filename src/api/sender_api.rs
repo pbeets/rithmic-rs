@@ -576,11 +576,8 @@ impl RithmicSenderApi {
             quantity_64: Some(order.quantity),
             price: order.price,
             user_msg: vec![id.clone()],
-            // The same four types `RithmicOrder::validate` demands a trigger for
-            // when the order is placed, so a modify to one of them carries a
-            // trigger too. The order's own price is the stand-in when the caller
-            // named no separate level; `RithmicModifyOrder::validate` guarantees
-            // a built command has one or the other.
+            // The four types that need a trigger on placement need one on modify.
+            // With no separate level, the order's price is used; validate ensures one.
             trigger_price: order.trigger_price.or(match order.price_type {
                 OrderType::StopMarket
                 | OrderType::StopLimit

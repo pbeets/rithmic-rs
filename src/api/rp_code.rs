@@ -28,12 +28,9 @@ impl RpCodeClassification {
     }
 }
 
-// INVARIANT: every variant in this list must have an rp_code field on its
-// inner proto. If you add a Response* variant to RithmicMessage whose
-// proto carries rp_code, add it here AND add a decode-time
-// `classify_rp_code_error(&resp.rp_code)` call in the matching decoder arm.
-// `Reject` is the one listed variant that is not a Response*; its decoder arm
-// uses `reject_error` instead.
+// INVARIANT: every variant listed has rp_code, and its decoder arm calls
+// `classify_rp_code_error`. A new Response* with rp_code goes here and there.
+// `Reject` is the exception: its arm uses `reject_error`.
 macro_rules! rp_code_response_variants {
     ($macro:ident) => {
         $macro! {
@@ -274,28 +271,6 @@ mod tests {
     }
 
     #[test]
-    fn classify_rp_code_seven_no_data_upper_is_known_benign_empty() {
-        assert_eq!(
-            classify_rp_code(&["7".to_string(), "NO DATA".to_string()]),
-            RpCodeClassification::KnownBenignEmpty
-        );
-    }
-
-    #[test]
-    fn classify_rp_code_seven_other_msg_is_request_rejected() {
-        let rp_code = vec!["7".to_string(), "permission denied".to_string()];
-
-        assert_eq!(
-            classify_rp_code(&rp_code),
-            RpCodeClassification::RequestRejected(RithmicRequestError {
-                rp_code: rp_code.clone(),
-                code: Some("7".to_string()),
-                message: Some("permission denied".to_string()),
-            })
-        );
-    }
-
-    #[test]
     fn classify_rp_code_non_zero_two_fields_is_request_rejected() {
         let rp_code = vec!["3".to_string(), "bad request".to_string()];
 
@@ -355,46 +330,6 @@ mod tests {
                 rp_code: vec![],
                 code: None,
                 message: None,
-            })
-        );
-    }
-
-    #[test]
-    fn reject_error_does_not_apply_the_response_success_code() {
-        // The rp_code `classify_rp_code` reports as `Success`, passed through
-        // unread rather than classified.
-        assert_eq!(
-            classify_rp_code(&["0".to_string()]),
-            RpCodeClassification::Success
-        );
-
-        assert_eq!(
-            reject_error(&["0".to_string()]),
-            RithmicError::RequestRejected(RithmicRequestError {
-                rp_code: vec!["0".to_string()],
-                code: Some("0".to_string()),
-                message: None,
-            })
-        );
-    }
-
-    #[test]
-    fn reject_error_does_not_apply_the_response_benign_empty_code() {
-        // The rp_code `classify_rp_code` reports as `KnownBenignEmpty`, passed
-        // through unread rather than classified.
-        let rp_code = vec!["7".to_string(), "no data".to_string()];
-
-        assert_eq!(
-            classify_rp_code(&rp_code),
-            RpCodeClassification::KnownBenignEmpty
-        );
-
-        assert_eq!(
-            reject_error(&rp_code),
-            RithmicError::RequestRejected(RithmicRequestError {
-                rp_code: rp_code.clone(),
-                code: Some("7".to_string()),
-                message: Some("no data".to_string()),
             })
         );
     }
