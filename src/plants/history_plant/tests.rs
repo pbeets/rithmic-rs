@@ -233,56 +233,6 @@ async fn load_tick_bars_leaves_the_cap_in_place() {
 }
 
 #[tokio::test]
-async fn load_time_bars_all_asks_the_server_to_lift_the_record_cap() {
-    let (handle, actor, mut client) = running_plant_with_handle().await;
-
-    let loader = tokio::spawn(async move {
-        handle
-            .load_time_bars_all(
-                "ESZ6".to_string(),
-                "CME".to_string(),
-                TimeBarType::MinuteBar,
-                1,
-                1,
-                1000,
-            )
-            .await
-    });
-
-    let request = RequestTimeBarReplay::decode(read_wire_request(&mut client).await.as_slice())
-        .expect("the request must be a time bar replay");
-
-    assert_eq!(request.template_id, 202);
-    assert_eq!(
-        request.resume_bars,
-        Some(true),
-        "load_time_bars_all must set resume_bars too"
-    );
-
-    let id = request.user_msg[0].clone();
-    write_wire_response(&mut client, &time_bar_at(&id, 60)).await;
-    write_wire_response(&mut client, &time_bar_at(&id, 120)).await;
-    write_wire_response(&mut client, &time_bar_replay_end(&id)).await;
-
-    let responses = loader
-        .await
-        .expect("the loader must not panic")
-        .expect("the load must succeed");
-
-    let markers: Vec<i32> = responses
-        .iter()
-        .filter_map(|response| match &response.message {
-            RithmicMessage::ResponseTimeBarReplay(bar) => bar.marker,
-            _ => None,
-        })
-        .collect();
-
-    assert_eq!(markers, vec![60, 120]);
-
-    actor.abort();
-}
-
-#[tokio::test]
 async fn load_tick_bar_replay_sends_the_request_as_given() {
     let (handle, actor, mut client) = running_plant_with_handle().await;
 

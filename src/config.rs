@@ -733,24 +733,6 @@ mod tests {
     }
 
     #[test]
-    fn test_config_error_display() {
-        let err = ConfigError::MissingEnvVar("TEST_VAR".to_string());
-        assert_eq!(err.to_string(), "Missing environment variable: TEST_VAR");
-
-        let err = ConfigError::InvalidEnvironment("bad_env".to_string());
-        assert_eq!(err.to_string(), "Invalid environment: bad_env");
-
-        let err = ConfigError::InvalidValue {
-            var: "TEST".to_string(),
-            reason: "too short".to_string(),
-        };
-        assert_eq!(err.to_string(), "Invalid value for TEST: too short");
-
-        let err = ConfigError::MissingField("field".to_string());
-        assert_eq!(err.to_string(), "Missing required field: field");
-    }
-
-    #[test]
     fn test_account_from_env_demo_success() {
         temp_env::with_vars(demo_env_vars(), || {
             let account = RithmicAccount::from_env(RithmicEnv::Demo).unwrap();

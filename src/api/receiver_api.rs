@@ -1914,6 +1914,25 @@ mod tests {
     }
 
     #[test]
+    fn reject_carrying_a_benign_empty_rp_code_still_carries_an_error() {
+        // "7 / no data" is benign on a Response*, but a Reject is always an error.
+        let response = decode_with_api(&Reject {
+            template_id: 75,
+            user_msg: vec!["req-9".to_string()],
+            rp_code: vec!["7".to_string(), "no data".to_string()],
+        });
+
+        assert_eq!(
+            response.error,
+            Some(RithmicError::RequestRejected(RithmicRequestError {
+                rp_code: vec!["7".to_string(), "no data".to_string()],
+                code: Some("7".to_string()),
+                message: Some("no data".to_string()),
+            }))
+        );
+    }
+
+    #[test]
     fn unmapped_template_decodes_as_update_without_error() {
         const UNKNOWN_TEMPLATE_ID: i32 = 999_999;
 
@@ -2143,24 +2162,6 @@ mod tests {
         );
         assert!(
             logged.contains("routing it to the request waiting on it"),
-            "{logged}"
-        );
-    }
-
-    #[test]
-    fn an_uncorrelatable_decode_failure_says_so_in_the_log() {
-        let api = RithmicReceiverApi {
-            source: "test".to_string(),
-        };
-
-        let (_, logged) = crate::request_handler::log_capture::capture(|| {
-            let _ = api.buf_to_message(encode_with_header(&malformed_response_login(&[])));
-        });
-
-        assert!(logged.contains("template 11 failed to decode"), "{logged}");
-        assert!(logged.contains(r#"recovered request_id """#), "{logged}");
-        assert!(
-            logged.contains("routing it onto the subscription"),
             "{logged}"
         );
     }

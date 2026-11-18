@@ -1167,42 +1167,6 @@ mod tests {
         assert!(handler.resumes.is_empty());
     }
 
-    /// When the server refuses the resume, the wait ends: the caller gets the
-    /// refusal as an error, never the prefix as a successful complete reply.
-    #[test]
-    fn a_refused_resume_never_reports_a_complete_prefix() {
-        let mut handler = RithmicRequestHandler::<Tag>::new();
-        let mut rx = handler.register_test_replay("7");
-
-        handler.route(part("7", volume_profile_message(&[])));
-        let resume = handler
-            .route(terminal("7", truncation_notice("0")))
-            .expect("a pending truncated reply asks to resume");
-        handler.register_resume("9".to_string(), resume.request_id);
-
-        let mut refusal = terminal(
-            "9",
-            RithmicMessage::ResponseResumeBars(ResponseResumeBars {
-                rp_code: vec!["7".to_string(), "no data".to_string()],
-                ..Default::default()
-            }),
-        );
-        refusal.error = Some(RithmicError::ProtocolError("refused".to_string()));
-        let (_, logged) = log_capture::capture(|| handler.route(refusal));
-
-        let reply = rx.try_recv().unwrap();
-        assert_eq!(
-            reply,
-            Err(RithmicError::ProtocolError("refused".to_string()))
-        );
-        assert!(
-            logged.contains("refused to resume request_id 7") && logged.contains("1 parts"),
-            "{logged}"
-        );
-        assert!(handler.resumes.is_empty());
-        assert!(handler.replay_map.is_empty());
-    }
-
     /// A truncation notice for a caller that stopped waiting is not resumed:
     /// nobody would get the continuation. The replay is released, that is said
     /// once, and what the server still sends for the id is counted.

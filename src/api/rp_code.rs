@@ -335,46 +335,6 @@ mod tests {
     }
 
     #[test]
-    fn reject_error_does_not_apply_the_response_success_code() {
-        // The rp_code `classify_rp_code` reports as `Success`, passed through
-        // unread rather than classified.
-        assert_eq!(
-            classify_rp_code(&["0".to_string()]),
-            RpCodeClassification::Success
-        );
-
-        assert_eq!(
-            reject_error(&["0".to_string()]),
-            RithmicError::RequestRejected(RithmicRequestError {
-                rp_code: vec!["0".to_string()],
-                code: Some("0".to_string()),
-                message: None,
-            })
-        );
-    }
-
-    #[test]
-    fn reject_error_does_not_apply_the_response_benign_empty_code() {
-        // The rp_code `classify_rp_code` reports as `KnownBenignEmpty`, passed
-        // through unread rather than classified.
-        let rp_code = vec!["7".to_string(), "no data".to_string()];
-
-        assert_eq!(
-            classify_rp_code(&rp_code),
-            RpCodeClassification::KnownBenignEmpty
-        );
-
-        assert_eq!(
-            reject_error(&rp_code),
-            RithmicError::RequestRejected(RithmicRequestError {
-                rp_code: rp_code.clone(),
-                code: Some("7".to_string()),
-                message: Some("no data".to_string()),
-            })
-        );
-    }
-
-    #[test]
     fn reject_error_keeps_every_element_of_the_rp_code() {
         // `code` and `message` take the first two elements; anything past them
         // is still readable on `rp_code`.

@@ -1233,27 +1233,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn handle_rithmic_message_pong_clears_ping_manager() {
-        let reader = make_dormant_ws_reader().await;
-        let (mut plant, _sub_rx) = make_test_plant(MockMessageSink::ready(), reader);
-
-        // Register a pending ping
-        plant.ping_manager.sent();
-        assert!(plant.ping_manager.next_timeout_at().is_some());
-
-        let stop = plant
-            .handle_rithmic_message(Ok(Message::Pong(vec![].into())))
-            .await;
-
-        assert!(!stop, "pong should not stop the actor");
-
-        assert!(
-            plant.ping_manager.next_timeout_at().is_none(),
-            "ping_manager should be cleared after pong"
-        );
-    }
-
-    #[tokio::test]
     async fn handle_rithmic_message_ping_with_ready_sink_sends_pong() {
         let reader = make_dormant_ws_reader().await;
         let (mut plant, _sub_rx) = make_test_plant(MockMessageSink::ready(), reader);

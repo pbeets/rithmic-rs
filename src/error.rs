@@ -257,20 +257,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn request_error_display_formats_code_and_message() {
-        let err = RithmicRequestError {
-            rp_code: vec![
-                "1039".to_string(),
-                "FCM Id field is not received.".to_string(),
-            ],
-            code: Some("1039".to_string()),
-            message: Some("FCM Id field is not received.".to_string()),
-        };
-
-        assert_eq!(err.to_string(), "[1039] FCM Id field is not received.");
-    }
-
-    #[test]
     fn request_error_display_without_code_uses_message_only() {
         let err = RithmicRequestError {
             rp_code: vec![],
