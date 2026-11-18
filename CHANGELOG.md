@@ -89,6 +89,9 @@ Guide gives them no template id.
 
 - `RithmicOrderPlantHandle::get_order_session_config()`. Rithmic deprecated
   template 3502 in favor of session config. Use `set_session_config()`.
+- `RithmicMessage::ResponseOrderSessionConfig`, `rti::RequestOrderSessionConfig`
+  and `rti::ResponseOrderSessionConfig`. Templates 3502 and 3503 are no longer
+  generated, and a 3503 frame decodes as `RithmicMessage::UnknownTemplate`.
 - The request-timeout items deprecated in 3.1.0: `DEFAULT_REQUEST_TIMEOUT`,
   `RithmicError::RequestTimeout`, and `request_timeout` on `RithmicConfig` and
   `RithmicConfigBuilder`. `RITHMIC_REQUEST_TIMEOUT_SECS` is no longer read.

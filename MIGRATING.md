@@ -27,6 +27,8 @@ Coming from 2.x, work through the 3.0.0 guide below first, then this list.
   or leave `operation_type` unset for the server default.
 - `get_order_session_config(Some(defer))` is removed. Call
   `set_session_config(SessionConfig::new().should_defer_request(defer))`.
+  Match its reply as `ResponseSessionConfig` (template 25), not
+  `ResponseOrderSessionConfig`, which is gone along with template 3503.
 - The request-timeout items are gone: `DEFAULT_REQUEST_TIMEOUT`,
   `RithmicError::RequestTimeout`, the `request_timeout` field and the
   `request_timeout()` setter. They had no effect, so delete them. For

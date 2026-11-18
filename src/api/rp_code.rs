@@ -68,7 +68,6 @@ macro_rules! rp_code_response_variants {
             ResponseModifyOrderReferenceData,
             ResponseNewOrder,
             ResponseOcoOrder,
-            ResponseOrderSessionConfig,
             ResponsePlaybackAccUsers,
             ResponsePnLPositionSnapshot,
             ResponsePnLPositionUpdates,
@@ -186,17 +185,16 @@ mod tests {
         ResponseListUnacceptedAgreements, ResponseLogin, ResponseLoginInfo, ResponseLogout,
         ResponseMarketDataUpdate, ResponseMarketDataUpdateByUnderlying, ResponseModifyOrder,
         ResponseModifyOrderReferenceData, ResponseNewOrder, ResponseOcoOrder,
-        ResponseOrderSessionConfig, ResponsePlaybackAccUsers, ResponsePnLPositionSnapshot,
-        ResponsePnLPositionUpdates, ResponseProductCodes, ResponseProductRmsInfo,
-        ResponseReferenceData, ResponseReplayExecutions, ResponseResumeBars,
-        ResponseRithmicSystemGatewayInfo, ResponseRithmicSystemInfo, ResponseSearchSymbols,
-        ResponseSessionConfig, ResponseSetRithmicMrktDataSelfCertStatus,
-        ResponseShowAccUserHistory, ResponseShowAgreement, ResponseShowBracketStops,
-        ResponseShowBrackets, ResponseShowFillHistory, ResponseShowOrderHistory,
-        ResponseShowOrderHistoryDates, ResponseShowOrderHistoryDetail,
-        ResponseShowOrderHistorySummary, ResponseShowOrders, ResponseSubscribeForOrderUpdates,
-        ResponseSubscribeToBracketUpdates, ResponseTickBarReplay, ResponseTickBarUpdate,
-        ResponseTimeBarReplay, ResponseTimeBarUpdate, ResponseTradeRoutes,
+        ResponsePlaybackAccUsers, ResponsePnLPositionSnapshot, ResponsePnLPositionUpdates,
+        ResponseProductCodes, ResponseProductRmsInfo, ResponseReferenceData,
+        ResponseReplayExecutions, ResponseResumeBars, ResponseRithmicSystemGatewayInfo,
+        ResponseRithmicSystemInfo, ResponseSearchSymbols, ResponseSessionConfig,
+        ResponseSetRithmicMrktDataSelfCertStatus, ResponseShowAccUserHistory,
+        ResponseShowAgreement, ResponseShowBracketStops, ResponseShowBrackets,
+        ResponseShowFillHistory, ResponseShowOrderHistory, ResponseShowOrderHistoryDates,
+        ResponseShowOrderHistoryDetail, ResponseShowOrderHistorySummary, ResponseShowOrders,
+        ResponseSubscribeForOrderUpdates, ResponseSubscribeToBracketUpdates, ResponseTickBarReplay,
+        ResponseTickBarUpdate, ResponseTimeBarReplay, ResponseTimeBarUpdate, ResponseTradeRoutes,
         ResponseUpdateStopBracketLevel, ResponseUpdateTargetBracketLevel, ResponseUserEntitlements,
         ResponseVolumeProfileMinuteBars, messages::RithmicMessage,
     };
@@ -302,7 +300,7 @@ mod tests {
 
     #[test]
     fn classify_rp_code_seven_parse_error_is_request_rejected_not_benign_empty() {
-        // Captured from ResponseOrderSessionConfig: code "7" with a parse error
+        // Captured from a 3503 reply: code "7" with a parse error
         // message. It shares the benign-empty code but is not a no-data marker.
         let rp_code = vec![
             "7".to_string(),

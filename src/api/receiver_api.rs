@@ -22,17 +22,16 @@ use crate::{
         ResponseLoginInfo, ResponseLogout, ResponseMarketDataUpdate,
         ResponseMarketDataUpdateByUnderlying, ResponseModifyOrder,
         ResponseModifyOrderReferenceData, ResponseNewOrder, ResponseOcoOrder,
-        ResponseOrderSessionConfig, ResponsePlaybackAccUsers, ResponsePnLPositionSnapshot,
-        ResponsePnLPositionUpdates, ResponseProductCodes, ResponseProductRmsInfo,
-        ResponseReferenceData, ResponseReplayExecutions, ResponseResumeBars,
-        ResponseRithmicSystemGatewayInfo, ResponseRithmicSystemInfo, ResponseSearchSymbols,
-        ResponseSessionConfig, ResponseSetRithmicMrktDataSelfCertStatus,
-        ResponseShowAccUserHistory, ResponseShowAgreement, ResponseShowBracketStops,
-        ResponseShowBrackets, ResponseShowFillHistory, ResponseShowOrderHistory,
-        ResponseShowOrderHistoryDates, ResponseShowOrderHistoryDetail,
-        ResponseShowOrderHistorySummary, ResponseShowOrders, ResponseSubscribeForOrderUpdates,
-        ResponseSubscribeToBracketUpdates, ResponseTickBarReplay, ResponseTickBarUpdate,
-        ResponseTimeBarReplay, ResponseTimeBarUpdate, ResponseTradeRoutes,
+        ResponsePlaybackAccUsers, ResponsePnLPositionSnapshot, ResponsePnLPositionUpdates,
+        ResponseProductCodes, ResponseProductRmsInfo, ResponseReferenceData,
+        ResponseReplayExecutions, ResponseResumeBars, ResponseRithmicSystemGatewayInfo,
+        ResponseRithmicSystemInfo, ResponseSearchSymbols, ResponseSessionConfig,
+        ResponseSetRithmicMrktDataSelfCertStatus, ResponseShowAccUserHistory,
+        ResponseShowAgreement, ResponseShowBracketStops, ResponseShowBrackets,
+        ResponseShowFillHistory, ResponseShowOrderHistory, ResponseShowOrderHistoryDates,
+        ResponseShowOrderHistoryDetail, ResponseShowOrderHistorySummary, ResponseShowOrders,
+        ResponseSubscribeForOrderUpdates, ResponseSubscribeToBracketUpdates, ResponseTickBarReplay,
+        ResponseTickBarUpdate, ResponseTimeBarReplay, ResponseTimeBarUpdate, ResponseTradeRoutes,
         ResponseUpdateStopBracketLevel, ResponseUpdateTargetBracketLevel, ResponseUserEntitlements,
         ResponseVolumeProfileMinuteBars, RithmicOrderNotification, SymbolMarginRate, TickBar,
         TimeBar, TradeRoute, TradeStatistics, UpdateEasyToBorrowList, UserAccountUpdate,
@@ -1485,21 +1484,6 @@ impl RithmicReceiverApi {
                     source: self.source.clone(),
                 }
             }
-            3503 => {
-                let resp = ResponseOrderSessionConfig::decode(payload)
-                    .map_err(|e| decode_error(&self.source, e, false))?;
-                let error = classify_rp_code_error(&resp.rp_code);
-
-                RithmicResponse {
-                    request_id: resp.user_msg.first().cloned().unwrap_or_default(),
-                    message: RithmicMessage::ResponseOrderSessionConfig(resp),
-                    is_update: false,
-                    has_more: false,
-                    multi_response: false,
-                    error,
-                    source: self.source.clone(),
-                }
-            }
             3505 => {
                 let resp = ResponseExitPosition::decode(payload)
                     .map_err(|e| decode_error(&self.source, e, false))?;
@@ -1719,9 +1703,8 @@ mod tests {
         error::{RithmicError, RithmicRequestError},
         rti::{
             Reject, ResponseAccountList, ResponseGetUserInfo, ResponseListAcceptedAgreements,
-            ResponseLogin, ResponseOrderSessionConfig, ResponseReplayExecutions,
-            ResponseSearchSymbols, ResponseShowFillHistory, RithmicOrderNotification,
-            messages::RithmicMessage,
+            ResponseLogin, ResponseReplayExecutions, ResponseSearchSymbols,
+            ResponseShowFillHistory, RithmicOrderNotification, messages::RithmicMessage,
         },
     };
 
@@ -1821,7 +1804,6 @@ mod tests {
                 507 => ResponseShowAgreement { update: false, multi: true },
                 509 => ResponseSetRithmicMrktDataSelfCertStatus { update: false, multi: false },
                 3501 => ResponseModifyOrderReferenceData { update: false, multi: false },
-                3503 => ResponseOrderSessionConfig { update: false, multi: false },
                 3505 => ResponseExitPosition { update: false, multi: true },
                 3507 => ResponseReplayExecutions { update: false, multi: false },
                 3509 => ResponseAccountRmsUpdates { update: false, multi: false },
@@ -2262,14 +2244,14 @@ mod tests {
     }
 
     #[test]
-    fn response_order_session_config_parse_error_decodes_with_structured_error() {
-        // Captured fixture: this rp_code must decode as a RequestRejected with the
-        // full payload kept, not be swallowed as KnownBenignEmpty.
+    fn response_session_config_parse_error_decodes_with_structured_error() {
+        // rp_code captured from a 3503 reply: it must decode as RequestRejected
+        // with the full payload kept, not be swallowed as KnownBenignEmpty.
         let api = RithmicReceiverApi {
             source: "test".to_string(),
         };
-        let result = api.buf_to_message(encode_with_header(&ResponseOrderSessionConfig {
-            template_id: 3503,
+        let result = api.buf_to_message(encode_with_header(&ResponseSessionConfig {
+            template_id: 25,
             user_msg: vec!["req-1".to_string()],
             rp_code: vec![
                 "7".to_string(),
