@@ -1172,10 +1172,9 @@ impl RithmicOrderPlantHandle {
         };
 
         let _ = self.sender.send(command).await;
-        // Held rather than propagated here so that `Close` is queued either way:
-        // the logout has already closed the session, so an actor that
-        // never receives `Close` stops sending heartbeats, drops every later
-        // command, and never drains its pending requests.
+        // Held, not propagated, so `Close` is queued either way. The session is
+        // already closed, and an actor that never gets `Close` stops heartbeats
+        // and never drains its pending requests.
         let outcome = rx.await.map_err(|_| RithmicError::ConnectionClosed);
         let _ = self.sender.send(OrderPlantCommand::Close).await;
 

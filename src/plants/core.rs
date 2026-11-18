@@ -630,10 +630,9 @@ impl<K: PlantKind> PlantCore<K> {
     }
 
     fn logout(&mut self, response_sender: Responder) {
-        // Close the session before the logout goes out: the core handles
-        // commands one at a time, so anything a cloned handle queues after
-        // `Logout` finds it closing and is dropped by the guard in
-        // `on_command`. A login still in flight fails now.
+        // Close the session before the logout goes out, so a command a cloned
+        // handle queues after `Logout` is dropped by the guard in `on_command`.
+        // A login still in flight fails now.
         self.session.close(Session::Closing);
 
         let (logout_buf, id) = self.sender_api.request_logout();

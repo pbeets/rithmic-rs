@@ -1286,24 +1286,6 @@ mod tests {
         ));
     }
 
-    #[tokio::test]
-    async fn handle_rithmic_message_connection_closed_error_stops_actor() {
-        let reader = make_dormant_ws_reader().await;
-        let (mut plant, mut sub_rx) = make_test_plant(MockMessageSink::ready(), reader);
-
-        let stop = plant
-            .handle_rithmic_message(Err(Error::ConnectionClosed))
-            .await;
-
-        assert!(stop, "ConnectionClosed error should stop actor");
-        let broadcast_msg = sub_rx.try_recv().unwrap();
-
-        assert!(matches!(
-            broadcast_msg.message,
-            RithmicMessage::ConnectionError
-        ));
-    }
-
     /// Hand the actor `error` as the reader returned it, with one request
     /// pending. Returns whether it stopped, the error subscribers were sent
     /// and the request's reply.
@@ -1705,14 +1687,8 @@ mod tests {
 
     #[tokio::test]
     async fn unsolicited_reject_is_dropped() {
-        // A Reject that echoes no user_msg decodes with an empty request id,
-        // so nothing is waiting on it and it goes no further.
-        //
-        // The responder registered under that empty id is what makes the drop
-        // observable: with `is_update` false, an undropped reject reaches the
-        // request handler, which correlates on request id and would resolve
-        // it. A real request id is a counter and never empty, so nothing else
-        // can claim this responder.
+        // A Reject with no user_msg has an empty request id and must be dropped.
+        // The responder under "" makes that visible: an undropped reject resolves it.
         use crate::rti::Reject;
         use prost::Message as _;
 

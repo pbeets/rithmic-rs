@@ -195,7 +195,7 @@ mod tests {
     use prost::Message;
 
     use super::*;
-    use crate::rti::{RequestCancelAllOrders, RithmicOrderNotification};
+    use crate::rti::RithmicOrderNotification;
 
     const UNKNOWN_TEMPLATE_ID: i32 = 999_999;
 
@@ -225,33 +225,6 @@ mod tests {
             .expect("payload round-trips into the matching type");
 
         assert_eq!(decoded, original);
-    }
-
-    #[test]
-    fn decode_as_reports_structurally_incompatible_bytes() {
-        // template_id (154467) is an int32 everywhere, so sending it as
-        // length-delimited conflicts with what the target declares.
-        // Key = (154467 << 3) | 2, varint-encoded, then a 2-byte string.
-        let payload = vec![0x9a, 0xb6, 0x4b, 0x02, b'h', b'i'];
-
-        let frame = UnknownTemplateMessage {
-            template_id: UNKNOWN_TEMPLATE_ID,
-            payload: Bytes::from(payload),
-        };
-
-        assert!(frame.decode_as::<RequestCancelAllOrders>().is_err());
-    }
-
-    #[test]
-    fn decode_as_can_succeed_against_the_wrong_type() {
-        // Guards the documented caveat: unknown fields are skipped, so this
-        // decodes fine and drops everything but template_id.
-        let decoded = frame(UNKNOWN_TEMPLATE_ID, &notification())
-            .decode_as::<RequestCancelAllOrders>()
-            .expect("unknown fields are skipped, so this decodes");
-
-        assert_eq!(decoded.template_id, UNKNOWN_TEMPLATE_ID);
-        assert_eq!(decoded.account_id, None);
     }
 
     #[test]

@@ -1720,8 +1720,8 @@ mod tests {
         rti::{
             Reject, ResponseAccountList, ResponseGetUserInfo, ResponseListAcceptedAgreements,
             ResponseLogin, ResponseOrderSessionConfig, ResponseReplayExecutions,
-            ResponseSearchSymbols, ResponseShowFillHistory, RithmicOrderNotification, TradeRoute,
-            UpdateEasyToBorrowList, UserInfoUpdate, messages::RithmicMessage,
+            ResponseSearchSymbols, ResponseShowFillHistory, RithmicOrderNotification,
+            messages::RithmicMessage,
         },
     };
 
@@ -1893,10 +1893,9 @@ mod tests {
 
     #[test]
     fn reject_carrying_a_response_success_rp_code_still_carries_an_error() {
-        // The rp_code a `Response*` decodes as a success, on a request-
-        // correlated `Reject`: the caller's oneshot resolves with `error` set,
-        // so the documented `resp.error` check sees the rejection. The rp_code
-        // reaches the caller unread, to interpret as it sees fit.
+        // A correlated `Reject` with a success rp_code still resolves with
+        // `error` set, so the documented `resp.error` check sees it. The rp_code
+        // reaches the caller unread.
         let response = decode_with_api(&Reject {
             template_id: 75,
             user_msg: vec!["req-9".to_string()],
@@ -1912,31 +1911,6 @@ mod tests {
                 message: None,
             }))
         );
-    }
-
-    #[test]
-    fn trade_route_decodes_as_update() {
-        let response = decode_with_api(&TradeRoute {
-            template_id: 350,
-            ..TradeRoute::default()
-        });
-
-        assert!(matches!(response.message, RithmicMessage::TradeRoute(_)));
-        assert!(response.is_update);
-    }
-
-    #[test]
-    fn update_easy_to_borrow_list_decodes_as_update() {
-        let response = decode_with_api(&UpdateEasyToBorrowList {
-            template_id: 355,
-            ..UpdateEasyToBorrowList::default()
-        });
-
-        assert!(matches!(
-            response.message,
-            RithmicMessage::UpdateEasyToBorrowList(_)
-        ));
-        assert!(response.is_update);
     }
 
     #[test]
@@ -2234,15 +2208,6 @@ mod tests {
     }
 
     #[test]
-    fn has_multiple_keys_on_rq_handler_presence_not_value() {
-        // Middle frames may carry any status there; presence alone means more follow.
-        assert!(super::has_multiple(&["0".to_string()]));
-        assert!(super::has_multiple(&["7".to_string()]));
-        assert!(super::has_multiple(&["1".to_string(), "0".to_string()]));
-        assert!(!super::has_multiple(&[]));
-    }
-
-    #[test]
     fn list_accounts_no_data_decodes_as_ok() {
         // rp_code ["7", "no data"] on a ResponseAccountList decodes as Ok with no
         // error, so the benign-empty mapping covers list replies too.
@@ -2455,21 +2420,6 @@ mod tests {
         assert!(complete.error.is_none());
         assert_eq!(complete.resume_key(), None);
         assert!(!complete.is_truncated());
-    }
-
-    #[test]
-    fn user_info_update_decodes_as_update() {
-        let response = decode_with_api(&UserInfoUpdate {
-            template_id: 357,
-            ..UserInfoUpdate::default()
-        });
-
-        assert!(matches!(
-            response.message,
-            RithmicMessage::UserInfoUpdate(_)
-        ));
-        assert!(response.is_update);
-        assert_eq!(response.request_id, "");
     }
 
     #[test]

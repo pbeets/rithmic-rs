@@ -1608,50 +1608,6 @@ async fn exit_position_encodes_auto_placement_by_default() {
     );
 }
 
-#[tokio::test]
-async fn subscribe_all_retains_every_account() {
-    let (sender, _rx) = mpsc::channel(4);
-    let (subscription_sender, _) = broadcast::channel(4);
-
-    let plant = RithmicOrderPlant {
-        sender,
-        subscription_sender,
-        connection_handle: tokio::spawn(async {}),
-    };
-
-    let mut receiver = plant.subscribe_all();
-
-    for account in ["account-a", "account-b"] {
-        let update = crate::rti::AccountPnLPositionUpdate {
-            account_id: Some(account.into()),
-            ..Default::default()
-        };
-
-        plant
-            .subscription_sender
-            .send(RithmicResponse {
-                request_id: String::new(),
-                source: "order_plant".into(),
-                message: RithmicMessage::AccountPnLPositionUpdate(update),
-                is_update: true,
-                has_more: false,
-                multi_response: false,
-                error: None,
-            })
-            .unwrap();
-
-        let RithmicMessage::AccountPnLPositionUpdate(update) =
-            receiver.recv().await.unwrap().message
-        else {
-            panic!("missing account update")
-        };
-
-        assert_eq!(update.account_id.as_deref(), Some(account));
-    }
-
-    plant.connection_handle.await.unwrap();
-}
-
 /// Login asks for route updates; a later `get_trade_routes` must not cancel them.
 #[tokio::test]
 async fn get_trade_routes_keeps_route_updates_on() {

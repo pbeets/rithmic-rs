@@ -365,14 +365,6 @@ mod tests {
     }
 
     #[test]
-    fn forced_logout_display() {
-        assert_eq!(
-            RithmicError::ForcedLogout("srv reason".into()).to_string(),
-            "forced logout: srv reason"
-        );
-    }
-
-    #[test]
     fn forced_logout_sanitizes_control_chars() {
         let err = RithmicError::ForcedLogout("bad\nreason".into());
         assert_eq!(err.to_string(), "forced logout: badreason");

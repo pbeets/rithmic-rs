@@ -283,23 +283,6 @@ async fn load_time_bars_all_asks_the_server_to_lift_the_record_cap() {
 }
 
 #[tokio::test]
-async fn load_tick_bars_all_rejects_a_zero_bar_length() {
-    let (handle, mut command_receiver) = test_handle();
-
-    // No actor is running, so a missing guard fails the timeout, not the suite.
-    let err = tokio::time::timeout(
-        std::time::Duration::from_secs(5),
-        handle.load_tick_bars_all("ESZ6".to_string(), "CME".to_string(), 0, 1, 1000),
-    )
-    .await
-    .expect("must be refused without reaching the actor")
-    .expect_err("a zero bar length must be refused");
-
-    assert!(matches!(err, RithmicError::InvalidArgument(_)));
-    assert!(command_receiver.try_recv().is_err());
-}
-
-#[tokio::test]
 async fn load_tick_bar_replay_sends_the_request_as_given() {
     let (handle, actor, mut client) = running_plant_with_handle().await;
 

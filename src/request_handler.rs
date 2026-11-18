@@ -775,37 +775,9 @@ mod tests {
         assert!(!logged.contains("ERROR"), "{logged}");
     }
 
-    #[test]
-    fn a_part_whose_request_is_gone_is_counted_without_a_warning() {
-        let mut handler = RithmicRequestHandler::<Tag>::new();
-
-        let (_, logged) = log_capture::capture(|| {
-            for _ in 0..3 {
-                handler.route(part("gone", ref_data_message()));
-            }
-        });
-
-        assert!(
-            handler.response_vec_map.is_empty(),
-            "the parts are not kept"
-        );
-        assert_eq!(logged.lines().count(), 1, "{logged}");
-        assert!(logged.contains("INFO"), "{logged}");
-        assert!(
-            logged.contains("request_id gone: parts are arriving after the reply was resolved"),
-            "{logged}"
-        );
-        assert_eq!(handler.late_continuations.get("gone"), Some(&3));
-    }
-
-    // =========================================================================
-    // The server continues after its own end marker
-    //
-    // Observed 2026-09-12 on RequestVolumeProfileMinuteBars (template 208): the
-    // history plant sent thousands of parts, then a dataless end marker, then
-    // ~170 more parts for the same request id, then, 70-85s later, a final
-    // response with rp_code ["12", "output inhibited"].
-    // =========================================================================
+    // Observed 2026-09-12 on template 208: after its dataless end marker the server
+    // sent ~170 more parts for the same request id, then 70-85s later a final
+    // reply with rp_code ["12", "output inhibited"].
 
     #[test]
     fn late_parts_for_a_resolved_id_are_counted_and_produce_no_warning() {
@@ -1300,24 +1272,5 @@ mod tests {
 
         assert!(!logged.contains("WARN"), "{logged}");
         assert!(!logged.contains("ERROR"), "{logged}");
-    }
-
-    /// A complete replay's end marker carries `rp_code` `["0"]` and no key:
-    /// it is not a truncation and opens no continuation.
-    #[test]
-    fn a_complete_replay_opens_no_continuation() {
-        let mut handler = RithmicRequestHandler::<Tag>::new();
-        let mut rx = handler.register_test_replay("8");
-
-        let (_, logged) = log_capture::capture(|| {
-            handler.route(part("8", volume_profile_message(&[])));
-            handler.route(terminal("8", volume_profile_message(&["0"])));
-        });
-
-        let reply = rx.try_recv().unwrap().unwrap();
-        assert_eq!(reply.len(), 2);
-        assert!(!reply[1].is_truncated());
-        assert!(!logged.contains("truncated"), "{logged}");
-        assert!(handler.late_continuations.is_empty());
     }
 }

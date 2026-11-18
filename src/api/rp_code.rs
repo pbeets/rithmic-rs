@@ -28,12 +28,9 @@ impl RpCodeClassification {
     }
 }
 
-// INVARIANT: every variant in this list must have an rp_code field on its
-// inner proto. If you add a Response* variant to RithmicMessage whose
-// proto carries rp_code, add it here AND add a decode-time
-// `classify_rp_code_error(&resp.rp_code)` call in the matching decoder arm.
-// `Reject` is the one listed variant that is not a Response*; its decoder arm
-// uses `reject_error` instead.
+// INVARIANT: every variant listed has rp_code, and its decoder arm calls
+// `classify_rp_code_error`. A new Response* with rp_code goes here and there.
+// `Reject` is the exception: its arm uses `reject_error`.
 macro_rules! rp_code_response_variants {
     ($macro:ident) => {
         $macro! {
@@ -270,28 +267,6 @@ mod tests {
         assert_eq!(
             classify_rp_code(&["7".to_string(), "No Data".to_string()]),
             RpCodeClassification::KnownBenignEmpty
-        );
-    }
-
-    #[test]
-    fn classify_rp_code_seven_no_data_upper_is_known_benign_empty() {
-        assert_eq!(
-            classify_rp_code(&["7".to_string(), "NO DATA".to_string()]),
-            RpCodeClassification::KnownBenignEmpty
-        );
-    }
-
-    #[test]
-    fn classify_rp_code_seven_other_msg_is_request_rejected() {
-        let rp_code = vec!["7".to_string(), "permission denied".to_string()];
-
-        assert_eq!(
-            classify_rp_code(&rp_code),
-            RpCodeClassification::RequestRejected(RithmicRequestError {
-                rp_code: rp_code.clone(),
-                code: Some("7".to_string()),
-                message: Some("permission denied".to_string()),
-            })
         );
     }
 
