@@ -52,11 +52,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map(|entry| entry.map(|entry| entry.path()))
         .collect::<Result<Vec<_>, _>>()?;
     protos.retain(|path| path.extension().is_some_and(|ext| ext == "proto"));
-    // No template ids in the Reference Guide, so the receiver could not decode them.
-    protos.retain(|path| {
-        !path.ends_with("request_change_password_on_behalf_of.proto")
-            && !path.ends_with("response_change_password_on_behalf_of.proto")
-    });
+    // Change password has no template ids in the Reference Guide; order session
+    // config (3502/3503) is deprecated in favor of session config (24/25).
+    const SKIPPED: &[&str] = &[
+        "request_change_password_on_behalf_of.proto",
+        "response_change_password_on_behalf_of.proto",
+        "request_order_session_config.proto",
+        "response_order_session_config.proto",
+    ];
+    protos.retain(|path| !SKIPPED.iter().any(|name| path.ends_with(name)));
     protos.sort();
 
     let mut config = prost_build::Config::new();

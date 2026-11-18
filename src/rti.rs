@@ -3745,23 +3745,6 @@ pub mod request_oco_order {
 }
 #[non_exhaustive]
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct RequestOrderSessionConfig {
-    #[prost(int32, required, tag = "154467")]
-    pub template_id: i32,
-    #[prost(string, repeated, tag = "132760")]
-    pub user_msg: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
-    /// used only when the server has to fetch refdata from the system instead from it's own database.
-    #[prost(bool, optional, tag = "157750")]
-    pub should_defer_request: ::core::option::Option<bool>,
-    /// enabled or disabled;   only for fcm/ib login session
-    #[prost(string, optional, tag = "157806")]
-    pub push_user_updates: ::core::option::Option<::prost::alloc::string::String>,
-    /// enabled or disabled;   only for fcm/ib login session
-    #[prost(string, optional, tag = "157807")]
-    pub push_account_updates: ::core::option::Option<::prost::alloc::string::String>,
-}
-#[non_exhaustive]
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct RequestPlaybackAccUsers {
     #[prost(int32, required, tag = "154467")]
     pub template_id: i32,
@@ -6253,16 +6236,6 @@ pub struct ResponseOcoOrder {
     /// PB_OFFSET + MNM_USECS
     #[prost(int32, repeated, packed = "false", tag = "150101")]
     pub usecs: ::prost::alloc::vec::Vec<i32>,
-}
-#[non_exhaustive]
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct ResponseOrderSessionConfig {
-    #[prost(int32, required, tag = "154467")]
-    pub template_id: i32,
-    #[prost(string, repeated, tag = "132760")]
-    pub user_msg: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
-    #[prost(string, repeated, tag = "132766")]
-    pub rp_code: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
 }
 #[non_exhaustive]
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]

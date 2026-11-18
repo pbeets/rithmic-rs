@@ -172,10 +172,6 @@ pub(crate) enum OrderPlantCommand {
         account: Arc<RithmicAccount>,
         response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
     },
-    GetOrderSessionConfig {
-        should_defer_request: Option<bool>,
-        response_sender: oneshot::Sender<Result<Vec<RithmicResponse>, RithmicError>>,
-    },
     ReplayExecutions {
         start_index_sec: i32,
         finish_index_sec: i32,
@@ -824,14 +820,6 @@ impl PlantKind for OrderPlant {
                 response_sender,
             } => cx.send_for(
                 |api| api.request_modify_order_reference_data(&command, &account),
-                response_sender,
-            ),
-
-            OrderPlantCommand::GetOrderSessionConfig {
-                should_defer_request,
-                response_sender,
-            } => cx.send_for(
-                |api| api.request_order_session_config(should_defer_request),
                 response_sender,
             ),
 
@@ -1985,35 +1973,6 @@ impl RithmicOrderPlantHandle {
         await_first_response(rx).await
     }
 
-    /// Deprecated: Rithmic deprecated template 3502. Use
-    /// [`set_session_config`](Self::set_session_config).
-    ///
-    /// Despite the name, nothing is read back: the response carries only a
-    /// response code.
-    ///
-    /// # Arguments
-    /// * `should_defer_request` - If true, the server defers requests while it
-    ///   loads reference data it does not have. `None` leaves the field off.
-    #[deprecated(
-        since = "4.0.0",
-        note = "Rithmic deprecated template 3502; use `set_session_config`"
-    )]
-    pub async fn get_order_session_config(
-        &self,
-        should_defer_request: Option<bool>,
-    ) -> Result<RithmicResponse, RithmicError> {
-        let (tx, rx) = oneshot::channel::<Result<Vec<RithmicResponse>, RithmicError>>();
-
-        let command = OrderPlantCommand::GetOrderSessionConfig {
-            should_defer_request,
-            response_sender: tx,
-        };
-
-        let _ = self.sender.send(command).await;
-
-        await_first_response(rx).await
-    }
-
     /// Ask the server to replay this account's executions in a time window.
     ///
     /// The response only acknowledges the request and has no execution
@@ -2124,9 +2083,6 @@ impl RithmicOrderPlantHandle {
     }
 
     /// Configure this order plant session (template 24).
-    ///
-    /// Replaces the deprecated
-    /// [`get_order_session_config`](Self::get_order_session_config).
     ///
     /// # Arguments
     /// * `config` - The settings to send
