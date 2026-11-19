@@ -1019,6 +1019,22 @@ fn validate_replay_window(
     Ok(())
 }
 
+/// Requires a `complete_past` marker, when set, to lie inside the window, which
+/// catches a marker in the wrong unit.
+fn validate_complete_past(
+    complete_past: Option<i32>,
+    start_time_sec: i32,
+    end_time_sec: i32,
+) -> Result<(), RithmicError> {
+    if complete_past.is_some_and(|marker| !(start_time_sec..end_time_sec).contains(&marker)) {
+        return Err(RithmicError::InvalidArgument(
+            "complete_past must be at or after start_time_sec and before end_time_sec".to_string(),
+        ));
+    }
+
+    Ok(())
+}
+
 /// A tick bar replay request, passed to [`load_tick_bar_replay`].
 ///
 /// A tick bar groups a fixed number of trades. [`bar_length`](Self::bar_length)
@@ -1065,6 +1081,10 @@ pub struct TickBarReplayRequest {
     /// `Some(true)` lifts the server's 10,000 record cap, so the whole window
     /// replays on this one request.
     pub resume_bars: Option<bool>,
+    /// Ends the reply at its first bar starting after this second instead of
+    /// at the end marker, which a server can fail to send. Bars replay oldest
+    /// first. With no bar past it, the reply still waits. Not sent.
+    pub complete_past: Option<i32>,
 }
 
 impl TickBarReplayRequest {
@@ -1122,8 +1142,16 @@ impl TickBarReplayRequest {
         self
     }
 
-    /// Requires a symbol, an exchange, a bar length of at least 1, and an
-    /// ordered time window.
+    /// End the reply at its first bar starting after `second`; see
+    /// [`complete_past`](Self::complete_past). The `_all` loaders do not
+    /// take it: build the request and call `load_tick_bar_replay`.
+    pub fn complete_past(mut self, second: i32) -> Self {
+        self.complete_past = Some(second);
+        self
+    }
+
+    /// Requires a symbol, an exchange, a bar length of at least 1, an ordered
+    /// time window, and any `complete_past` second inside that window.
     pub fn validate(&self) -> Result<(), RithmicError> {
         validate_replay_window(
             "tick bar replay",
@@ -1133,16 +1161,17 @@ impl TickBarReplayRequest {
             self.end_time_sec,
         )?;
 
-        match self.bar_type_specifier.parse::<u32>() {
-            Ok(length) if length >= 1 => Ok(()),
-            _ => Err(RithmicError::InvalidArgument(
+        if !matches!(self.bar_type_specifier.parse::<u32>(), Ok(length) if length >= 1) {
+            return Err(RithmicError::InvalidArgument(
                 "bar_length must be at least 1".to_string(),
-            )),
+            ));
         }
+
+        validate_complete_past(self.complete_past, self.start_time_sec, self.end_time_sec)
     }
 
-    /// Requires a symbol, an exchange, a bar length of at least 1, and an
-    /// ordered time window.
+    /// Requires a symbol, an exchange, a bar length of at least 1, an ordered
+    /// time window, and any `complete_past` second inside that window.
     pub fn build(self) -> Result<Self, RithmicError> {
         self.validate()?;
         Ok(self)
@@ -1205,6 +1234,10 @@ pub struct TimeBarReplayRequest {
     /// `Some(true)` lifts the server's 10,000 record cap, so the whole window
     /// replays on this one request.
     pub resume_bars: Option<bool>,
+    /// Ends the reply at its first bar closing after this marker instead of at
+    /// the end marker, which a server can fail to send. Bars replay oldest
+    /// first. With no bar past it, the reply still waits. Not sent.
+    pub complete_past: Option<i32>,
 }
 
 impl TimeBarReplayRequest {
@@ -1261,8 +1294,16 @@ impl TimeBarReplayRequest {
         self
     }
 
-    /// Requires a symbol, an exchange, a bar type, a bar period, and a positive,
-    /// ordered window.
+    /// End the reply at its first bar past `marker`; see
+    /// [`complete_past`](Self::complete_past). The `_all` loaders do not
+    /// take it: build the request and call `load_time_bar_replay`.
+    pub fn complete_past(mut self, marker: i32) -> Self {
+        self.complete_past = Some(marker);
+        self
+    }
+
+    /// Requires a symbol, an exchange, a bar type, a bar period, a positive,
+    /// ordered window, and any `complete_past` marker inside that window.
     pub fn validate(&self) -> Result<(), RithmicError> {
         validate_replay_window(
             "time bar replay",
@@ -1284,11 +1325,11 @@ impl TimeBarReplayRequest {
             ));
         }
 
-        Ok(())
+        validate_complete_past(self.complete_past, self.start_time_sec, self.end_time_sec)
     }
 
-    /// Requires a symbol, an exchange, a bar type, a bar period, and a positive,
-    /// ordered window.
+    /// Requires a symbol, an exchange, a bar type, a bar period, a positive,
+    /// ordered window, and any `complete_past` marker inside that window.
     pub fn build(self) -> Result<Self, RithmicError> {
         self.validate()?;
         Ok(self)
@@ -1667,5 +1708,61 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains("bar_type_period must be at least 1"), "{err}");
+    }
+
+    #[test]
+    fn a_tick_replay_completes_past_a_marker_only_inside_its_window() {
+        assert!(
+            tick_replay()
+                .complete_past(1_750_000_000)
+                .validate()
+                .is_ok()
+        );
+        assert!(
+            tick_replay()
+                .complete_past(1_750_003_599)
+                .validate()
+                .is_ok()
+        );
+
+        for marker in [1_749_999_999, 1_750_003_600, 1_750_007_200] {
+            let err = tick_replay()
+                .complete_past(marker)
+                .build()
+                .unwrap_err()
+                .to_string();
+            assert!(
+                err.contains("complete_past must be at or after start_time_sec"),
+                "{marker}: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_time_replay_completes_past_a_marker_only_inside_its_window() {
+        assert!(
+            time_replay()
+                .complete_past(1_750_000_000)
+                .validate()
+                .is_ok()
+        );
+        assert!(
+            time_replay()
+                .complete_past(1_750_003_599)
+                .validate()
+                .is_ok()
+        );
+
+        for marker in [1_749_999_999, 1_750_003_600, 1_750_007_200] {
+            let err = time_replay()
+                .complete_past(marker)
+                .build()
+                .unwrap_err()
+                .to_string();
+            assert!(
+                err.contains("complete_past must be at or after start_time_sec"),
+                "{marker}: {err}"
+            );
+        }
     }
 }

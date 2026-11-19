@@ -484,6 +484,101 @@ async fn a_load_dropped_before_the_plant_sends_it_is_never_sent() {
     assert_wire_silent(&mut client).await;
 }
 
+/// A server has been seen sending every bar of a replay and never its end
+/// marker, leaving the load waiting for good.
+#[tokio::test]
+async fn a_replay_asked_past_a_marker_is_answered_without_the_end_marker() {
+    let (handle, actor, mut client) = running_plant_with_handle().await;
+
+    let load = {
+        let handle = handle.clone();
+        tokio::spawn(async move {
+            handle
+                .load_time_bar_replay(
+                    TimeBarReplayRequest::new()
+                        .symbol("ESZ6")
+                        .exchange("CME")
+                        .bar_type(TimeBarType::MinuteBar)
+                        .bar_type_period(1)
+                        .start_time_sec(60)
+                        .end_time_sec(240)
+                        .resume_bars(true)
+                        .complete_past(120),
+                )
+                .await
+        })
+    };
+
+    let request =
+        RequestTimeBarReplay::decode(read_wire_request(&mut client).await.as_slice()).unwrap();
+    assert_eq!(request.finish_index, Some(240), "the window is sent whole");
+    assert_eq!(
+        request.time_order,
+        Some(crate::rti::request_time_bar_replay::TimeOrder::Forwards.into()),
+        "completing on a later bar relies on oldest-first order"
+    );
+    let id = &request.user_msg[0];
+
+    write_wire_response(&mut client, &time_bar_at(id, 60)).await;
+    write_wire_response(&mut client, &time_bar_at(id, 120)).await;
+    write_wire_response(&mut client, &time_bar_at(id, 180)).await;
+
+    let reply = reply_of(load).await.unwrap();
+    let markers: Vec<i32> = reply
+        .iter()
+        .filter_map(|response| match &response.message {
+            RithmicMessage::ResponseTimeBarReplay(bar) => bar.marker,
+            _ => None,
+        })
+        .collect();
+    assert_eq!(markers, vec![60, 120, 180]);
+
+    handle.abort();
+    actor.await.unwrap();
+}
+
+#[tokio::test]
+async fn a_tick_replay_asked_past_a_marker_is_answered_without_the_end_marker() {
+    let (handle, actor, mut client) = running_plant_with_handle().await;
+
+    let load = {
+        let handle = handle.clone();
+        tokio::spawn(async move {
+            handle
+                .load_tick_bar_replay(
+                    TickBarReplayRequest::new()
+                        .symbol("ESZ6")
+                        .exchange("CME")
+                        .bar_length(1)
+                        .start_time_sec(60)
+                        .end_time_sec(240)
+                        .resume_bars(true)
+                        .complete_past(120),
+                )
+                .await
+        })
+    };
+
+    let request =
+        RequestTickBarReplay::decode(read_wire_request(&mut client).await.as_slice()).unwrap();
+    assert_eq!(
+        request.time_order,
+        Some(crate::rti::request_tick_bar_replay::TimeOrder::Forwards.into()),
+        "completing on a later bar relies on oldest-first order"
+    );
+    let id = request.user_msg[0].clone();
+
+    write_wire_response(&mut client, &tick_at(&id, 60, 0)).await;
+    write_wire_response(&mut client, &tick_at(&id, 120, 500)).await;
+    write_wire_response(&mut client, &tick_at(&id, 180, 0)).await;
+
+    let reply = reply_of(load).await.unwrap();
+    assert_eq!(reply.len(), 3, "three bars and no end marker");
+
+    handle.abort();
+    actor.await.unwrap();
+}
+
 #[tokio::test]
 async fn load_time_bars_all_continues_a_cut_reply_on_the_original_request() {
     use crate::rti::{RequestResumeBars, ResponseResumeBars};

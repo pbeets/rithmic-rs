@@ -105,7 +105,9 @@ pub(crate) enum ReplayQuery {
 ///   with a response of the same message type that carries no bar, so
 ///   matching on the type does not skip it. Split it off with `split_last`, as
 ///   above. If the server ended the replay early, the call still returns `Ok`
-///   and this entry has [`error`](RithmicResponse::error) set.
+///   and this entry has [`error`](RithmicResponse::error) set. A request with
+///   `complete_past` set can instead end on its first bar past that marker,
+///   with no end marker.
 /// - **Times are Unix seconds as `i32`,** both going in and coming back. This
 ///   is Rithmic's own type and it overflows in 2038. Daily and weekly time bars
 ///   are the exception: they use `YYYYMMDD` dates; see
@@ -317,14 +319,24 @@ impl PlantKind for HistoryPlant {
             HistoryPlantCommand::Replay {
                 query,
                 response_sender,
-            } => cx.send_replay(
-                |api| match query {
-                    ReplayQuery::Time(query) => api.request_time_bar_replay(&query),
-                    ReplayQuery::Tick(query) => api.request_tick_bar_replay(&query),
-                    ReplayQuery::Volume(query) => api.request_volume_profile_minute_bars(&query),
-                },
-                PendingReplay::new(response_sender),
-            ),
+            } => {
+                let complete_past = match &query {
+                    ReplayQuery::Time(query) => query.complete_past,
+                    ReplayQuery::Tick(query) => query.complete_past,
+                    ReplayQuery::Volume(_) => None,
+                };
+
+                cx.send_replay(
+                    |api| match query {
+                        ReplayQuery::Time(query) => api.request_time_bar_replay(&query),
+                        ReplayQuery::Tick(query) => api.request_tick_bar_replay(&query),
+                        ReplayQuery::Volume(query) => {
+                            api.request_volume_profile_minute_bars(&query)
+                        }
+                    },
+                    PendingReplay::new(response_sender).complete_past(complete_past),
+                )
+            }
 
             HistoryPlantCommand::SubscribeTimeBarUpdates {
                 symbol,
@@ -607,8 +619,9 @@ impl RithmicHistoryPlantHandle {
     /// The positional tick loaders all end up here. Use this form to reach
     /// fields they do not expose, such as
     /// [`user_max_count`](TickBarReplayRequest::user_max_count) or a raw
-    /// [`bar_type_specifier`](TickBarReplayRequest::bar_type_specifier). The
-    /// request is sent exactly as given.
+    /// [`bar_type_specifier`](TickBarReplayRequest::bar_type_specifier), or
+    /// [`complete_past`](TickBarReplayRequest::complete_past). The request is
+    /// sent exactly as given; `complete_past` stays on the client.
     ///
     /// Without [`.resume_bars(true)`](TickBarReplayRequest::resume_bars), the
     /// server caps the reply at 10,000 records and gives no sign it did. The
@@ -641,7 +654,9 @@ impl RithmicHistoryPlantHandle {
     /// ```
     ///
     /// # Returns
-    /// One response per bar, followed by an end marker carrying no data.
+    /// One response per bar, followed by an end marker carrying no data. With
+    /// `complete_past` set, the last entry may instead be the first bar
+    /// starting after that second.
     ///
     /// # Errors
     /// * [`RithmicError::InvalidArgument`] if the request fails
@@ -897,8 +912,9 @@ impl RithmicHistoryPlantHandle {
     ///
     /// The positional time bar loaders all end up here. Use this form to reach
     /// fields they do not expose, such as
-    /// [`user_max_count`](TimeBarReplayRequest::user_max_count). The request is
-    /// sent exactly as given.
+    /// [`user_max_count`](TimeBarReplayRequest::user_max_count) or
+    /// [`complete_past`](TimeBarReplayRequest::complete_past). The request is
+    /// sent exactly as given; `complete_past` stays on the client.
     ///
     /// Without [`.resume_bars(true)`](TimeBarReplayRequest::resume_bars), the
     /// server caps the reply at 10,000 records and gives no sign it did. The
@@ -937,7 +953,9 @@ impl RithmicHistoryPlantHandle {
     /// See also [`load_historical_bars.rs`](https://github.com/pbeets/rithmic-rs/blob/main/examples/load_historical_bars.rs).
     ///
     /// # Returns
-    /// One response per bar, followed by an end marker carrying no data.
+    /// One response per bar, followed by an end marker carrying no data. With
+    /// `complete_past` set, the last entry may instead be the first bar
+    /// closing after that marker.
     ///
     /// # Errors
     /// * [`RithmicError::InvalidArgument`] if the request fails
