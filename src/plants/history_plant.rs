@@ -88,11 +88,14 @@ pub(crate) enum ReplayQuery {
 /// ```no_run
 /// # use rithmic_rs::{RithmicResponse, rti::messages::RithmicMessage};
 /// # fn demo(ticks: Vec<RithmicResponse>) {
-/// // The last entry is the end marker; see below.
-/// let Some((_end, records)) = ticks.split_last() else { return };
+/// for response in &ticks {
+///     if let Some(error) = &response.error {
+///         eprintln!("{error}");
+///         continue;
+///     }
 ///
-/// for response in records {
-///     if let RithmicMessage::ResponseTickBarReplay(tick) = &response.message {
+///     let RithmicMessage::ResponseTickBarReplay(tick) = &response.message else { continue };
+///     if !tick.data_bar_ssboe.is_empty() {
 ///         println!("{:?} @ {:?}", tick.close_price, tick.data_bar_ssboe);
 ///     }
 /// }
@@ -101,13 +104,11 @@ pub(crate) enum ReplayQuery {
 ///
 /// The `Vec` has three quirks:
 ///
-/// - **The last entry is an end marker.** Rithmic closes every replay
-///   with a response of the same message type that carries no bar, so
-///   matching on the type does not skip it. Split it off with `split_last`, as
-///   above. If the server ended the replay early, the call still returns `Ok`
-///   and this entry has [`error`](RithmicResponse::error) set. A request with
-///   `complete_past` set can instead end on its first bar past that marker,
-///   with no end marker.
+/// - **An end marker carries no bar.** It has the same message type as the
+///   data frames, with empty `data_bar_ssboe` for ticks or no `marker` for
+///   time bars. Check its [`error`](RithmicResponse::error) for a replay
+///   the server ended early. With `complete_past`, the last entry can be a
+///   data bar whose [`has_more`](RithmicResponse::has_more) is still true.
 /// - **Times are Unix seconds as `i32`,** both going in and coming back. This
 ///   is Rithmic's own type and it overflows in 2038. Daily and weekly time bars
 ///   are the exception: they use `YYYYMMDD` dates; see

@@ -57,6 +57,9 @@ use crate::{
 /// those protos are regenerated.
 pub(crate) const TEMPLATE_VERSION: &str = "5.55";
 
+/// The server echoes this suffix on replies to a bar replay that may finish locally.
+pub(crate) const COMPLETE_PAST_ID_SUFFIX: &str = "-complete-past";
+
 /// An empty caller-supplied identifier carries no more information than an
 /// absent field, so it is left off the wire rather than sent as `""`.
 fn omit_if_empty(value: String) -> Option<String> {
@@ -107,6 +110,14 @@ impl RithmicSenderApi {
     fn get_next_message_id(&mut self) -> String {
         self.message_id_counter += 1;
         self.message_id_counter.to_string()
+    }
+
+    fn bar_replay_id(&mut self, complete_past: Option<i32>) -> String {
+        let mut id = self.get_next_message_id();
+        if complete_past.is_some() {
+            id.push_str(COMPLETE_PAST_ID_SUFFIX);
+        }
+        id
     }
 
     fn request_to_buf(&self, req: impl Message, id: String) -> (Vec<u8>, String) {
@@ -790,7 +801,7 @@ impl RithmicSenderApi {
     /// Always asks for regular tick bars, oldest first (`Direction::First`,
     /// `TimeOrder::Forwards`).
     pub fn request_tick_bar_replay(&mut self, request: &TickBarReplayRequest) -> (Vec<u8>, String) {
-        let id = self.get_next_message_id();
+        let id = self.bar_replay_id(request.complete_past);
 
         let req = RequestTickBarReplay {
             template_id: 206,
@@ -816,7 +827,7 @@ impl RithmicSenderApi {
     /// `finish_index` as is: Unix seconds for second/minute bars, `YYYYMMDD`
     /// for daily/weekly bars. Bars come oldest first.
     pub fn request_time_bar_replay(&mut self, request: &TimeBarReplayRequest) -> (Vec<u8>, String) {
-        let id = self.get_next_message_id();
+        let id = self.bar_replay_id(request.complete_past);
 
         let req = RequestTimeBarReplay {
             template_id: 202,

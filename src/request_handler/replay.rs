@@ -213,27 +213,6 @@ impl<T: RequestTag> RithmicRequestHandler<T> {
         Some(parts)
     }
 
-    /// Answer replay `id` with the frames so far, its last a bar past its
-    /// `complete_past` marker. The rest of the reply is counted, and its end
-    /// marker logged at debug.
-    fn complete_early(&mut self, id: String) {
-        let Some(mut replay) = self.replay_map.remove(&id) else {
-            return;
-        };
-
-        debug!(
-            "request_id {}: answered after {} parts on a bar past its complete_past marker",
-            id,
-            replay.responses.len()
-        );
-
-        self.forget_resumes_of(&id);
-        let responses = std::mem::take(&mut replay.responses);
-        replay.finish(Ok(responses));
-        self.completed_early.insert(id.clone());
-        self.expect_late_frames(id);
-    }
-
     /// Fail every replay because the connection is gone.
     pub(super) fn drain_replays(&mut self) {
         for (_, replay) in self.replay_map.drain() {
@@ -280,28 +259,31 @@ impl<T: RequestTag> RithmicRequestHandler<T> {
             replay.used_keys.clear();
         }
 
-        if response.has_more {
-            let complete = replay.is_past_marker(&response);
+        let complete_early = response.has_more && replay.is_past_marker(&response);
+
+        if response.has_more && !complete_early {
             replay.responses.push(response);
-
-            if complete {
-                self.complete_early(id);
-            }
-
             return None;
         }
 
-        // The server ended the reply, whatever its code says, so the caller
-        // gets every frame. Without a code, more may still follow.
         let final_from_server = response.rp_code().is_some_and(|code| !code.is_empty());
         let mut replay = self.replay_map.remove(&id)?;
         self.forget_resumes_of(&id);
 
         replay.responses.push(response);
+
+        if complete_early {
+            debug!(
+                "request_id {}: answered after {} parts on a bar past its complete_past marker",
+                id,
+                replay.responses.len()
+            );
+        }
+
         let responses = std::mem::take(&mut replay.responses);
         replay.finish(Ok(responses));
 
-        if !final_from_server {
+        if !complete_early && !final_from_server {
             self.expect_late_frames(id);
         }
 
@@ -313,7 +295,11 @@ impl<T: RequestTag> RithmicRequestHandler<T> {
 mod tests {
     use super::*;
 
-    use crate::plants::tag::Tag;
+    use crate::{
+        TickBarReplayRequest, TimeBarReplayRequest,
+        api::sender_api::RithmicSenderApi,
+        plants::{tag::Tag, test_support::test_config},
+    };
 
     use crate::rti::{ResponseResumeBars, ResponseTickBarReplay, ResponseTimeBarReplay};
 
@@ -643,20 +629,56 @@ mod tests {
     }
 
     #[test]
-    fn the_rest_of_a_replay_completed_past_its_marker_is_counted_quietly() {
+    fn completed_marker_replays_need_no_end_marker_to_release_their_ids() {
         let mut handler = RithmicRequestHandler::<Tag>::new();
-        let _rx = handler.register_test_replay_past("original", 120);
-        handler.mark_sent("original");
-        handler.route(frame("original", Some(180), &[], None));
+        let mut api = RithmicSenderApi::new(&test_config());
+        let time_request = TimeBarReplayRequest::new().complete_past(120);
+        let tick_request = TickBarReplayRequest::new().complete_past(120);
 
         let (_, logged) = crate::request_handler::log_capture::capture(|| {
-            handler.route(frame("original", Some(240), &[], None));
-            handler.route(frame("original", None, &["0"], None));
+            for _ in 0..500 {
+                let (_, time_id) = api.request_time_bar_replay(&time_request);
+                let (_, tick_id) = api.request_tick_bar_replay(&tick_request);
+                let mut times = handler.register_test_replay_past(&time_id, 120);
+                let mut ticks = handler.register_test_replay_past(&tick_id, 120);
+
+                handler.route(frame(&time_id, Some(180), &[], None));
+                handler.route(tick(&tick_id, 180, 180));
+                assert_eq!(markers(&times.try_recv().unwrap().unwrap()), [Some(180)]);
+                assert_eq!(ticks.try_recv().unwrap().unwrap().len(), 1);
+
+                handler.route(frame(&time_id, Some(240), &[], None));
+                handler.route(tick(&tick_id, 240, 240));
+                assert!(
+                    handler
+                        .route(frame(&time_id, None, &[], Some("cut")))
+                        .is_none()
+                );
+                assert!(handler.late_continuations.is_empty());
+
+                // Only the time replay gets an end marker.
+                handler.route(frame(&time_id, None, &["0"], None));
+            }
         });
 
         assert!(logged.is_empty(), "{logged}");
+        assert!(handler.replay_map.is_empty());
         assert!(handler.late_continuations.is_empty());
-        assert!(handler.completed_early.is_empty());
+    }
+
+    #[test]
+    fn dropping_a_marker_replay_before_the_cutoff_still_counts_late_parts() {
+        let mut handler = RithmicRequestHandler::<Tag>::new();
+        let mut api = RithmicSenderApi::new(&test_config());
+        let (_, id) = api.request_time_bar_replay(&TimeBarReplayRequest::new().complete_past(120));
+        let rx = handler.register_test_replay_past(&id, 120);
+        handler.mark_sent(&id);
+        drop(rx);
+
+        handler.route(frame(&id, Some(180), &[], None));
+        assert_eq!(handler.late_continuations.get(&id), Some(&1));
+        handler.route(frame(&id, None, &["0"], None));
+        assert!(handler.late_continuations.is_empty());
     }
 
     #[test]
@@ -671,7 +693,6 @@ mod tests {
         let reply = rx.try_recv().unwrap().unwrap();
         assert_eq!(markers(&reply), [Some(60), None]);
         assert!(handler.late_continuations.is_empty());
-        assert!(handler.completed_early.is_empty());
     }
 
     #[test]

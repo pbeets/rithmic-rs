@@ -1,9 +1,12 @@
-use std::collections::{HashMap, HashSet, hash_map::Entry};
+use std::collections::{HashMap, hash_map::Entry};
 use tokio::sync::oneshot;
 use tracing::{debug, error, info, warn};
 
 use crate::{
-    api::{receiver_api::RithmicResponse, rp_code::response_rp_code_info},
+    api::{
+        receiver_api::RithmicResponse, rp_code::response_rp_code_info,
+        sender_api::COMPLETE_PAST_ID_SUFFIX,
+    },
     error::RithmicError,
     rti::messages::RithmicMessage,
 };
@@ -83,10 +86,6 @@ pub(crate) struct RithmicRequestHandler<T> {
     /// minute later. That final response removes the entry.
     late_continuations: HashMap<String, u64>,
 
-    /// Replays answered early on a bar past their `complete_past` marker,
-    /// whose end marker is still to come and expected.
-    completed_early: HashSet<String>,
-
     /// In-flight resume request ids, mapped to the replay each continues.
     resumes: HashMap<String, String>,
 }
@@ -98,7 +97,6 @@ impl<T: RequestTag> RithmicRequestHandler<T> {
             response_vec_map: HashMap::new(),
             replay_map: HashMap::new(),
             late_continuations: HashMap::new(),
-            completed_early: HashSet::new(),
             resumes: HashMap::new(),
         }
     }
@@ -148,6 +146,23 @@ impl<T: RequestTag> RithmicRequestHandler<T> {
         }
 
         match response.message {
+            // The echoed id identifies surplus replay frames after we release
+            // the caller. An existing late-frame count still takes precedence.
+            RithmicMessage::ResponseTimeBarReplay(_) | RithmicMessage::ResponseTickBarReplay(_)
+                if response.request_id.ends_with(COMPLETE_PAST_ID_SUFFIX)
+                    && !self.late_continuations.contains_key(&response.request_id) =>
+            {
+                if !response.has_more {
+                    debug!(
+                        "request_id {}: late frame for a finished complete_past replay, rp_code {:?}",
+                        response.request_id,
+                        response.rp_code().unwrap_or(&[])
+                    );
+                }
+
+                None
+            }
+
             RithmicMessage::ResponseResumeBars(_) | RithmicMessage::ResponseFlowControl(_)
                 if self.resumes.contains_key(&response.request_id) =>
             {
@@ -339,14 +354,7 @@ impl<T: RequestTag> RithmicRequestHandler<T> {
             return;
         }
 
-        let expected = self.completed_early.remove(&response.request_id);
-
         match self.late_continuations.remove(&response.request_id) {
-            Some(parts) if expected => debug!(
-                "request_id {}: answered early; its end marker arrived after {} more parts, \
-                 rp_code {:?}",
-                response.request_id, parts, rp_code
-            ),
             Some(parts) => info!(
                 "request_id {}: the server kept streaming after nothing was waiting: {} more \
                  parts, then a final response with rp_code {:?}",
@@ -372,7 +380,6 @@ impl<T: RequestTag> RithmicRequestHandler<T> {
 
         self.response_vec_map.clear();
         self.late_continuations.clear();
-        self.completed_early.clear();
         self.resumes.clear();
 
         self.handle_map.drain().map(|(_, tag)| tag).collect()

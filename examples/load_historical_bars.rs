@@ -18,16 +18,18 @@ use rithmic_rs::{
 const ENV: RithmicEnv = RithmicEnv::Demo;
 
 fn log_bars(responses: &[RithmicResponse]) {
-    let Some((end, bars)) = responses.split_last() else {
+    let Some((last, preceding)) = responses.split_last() else {
         warn!("empty reply");
         return;
     };
 
     // A replay the server ends early still returns `Ok`; the reason is on the end marker.
-    if let Some(e) = &end.error {
+    if let Some(e) = &last.error {
         warn!("server ended the replay early: {e}");
     }
 
+    // A request using complete_past can return on a data bar.
+    let bars = if last.has_more { responses } else { preceding };
     info!("Received {} bars", bars.len());
 
     for bar in bars.iter().take(5) {
