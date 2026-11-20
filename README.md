@@ -17,7 +17,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-rithmic-rs = "3.3.0"
+rithmic-rs = "4.0.0-rc.1"
 tokio = { version = "1", features = ["full"] }
 ```
 
