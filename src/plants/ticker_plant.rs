@@ -848,8 +848,14 @@ impl RithmicTickerPlantHandle {
 
     /// Get the current depth-by-order book for a symbol.
     ///
-    /// Rithmic sends the book as several frames, one price level each, and
-    /// this waits for all of them.
+    /// Rithmic sends the book as several frames, one price level each. This
+    /// returns once the frame carrying `rp_code` arrives, which ends the
+    /// snapshot.
+    ///
+    /// To keep the book current, call
+    /// [`subscribe_depth_by_order_update`](Self::subscribe_depth_by_order_update)
+    /// first. Apply the updates that arrive while this call waits to the
+    /// snapshot afterwards, in the order received.
     ///
     /// # Arguments
     /// * `symbol` - The trading symbol (e.g., "ESZ6")
