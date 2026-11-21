@@ -84,6 +84,10 @@ Guide gives them no template id.
 - Order plant `get_user_entitlements` (3516), `playback_account_users` (3518),
   and `show_account_history` / `show_user_history` (3520), with the
   `EntitlementKind` and `PlaybackKind` enums.
+- `TimeBarReplayRequest::complete_past` and `TickBarReplayRequest::complete_past`
+  end a replay at its first bar past the marker, for a server that sends every
+  bar but no end marker
+  ([#140](https://github.com/pbeets/rithmic-rs/issues/140)).
 
 ### Removed
 
