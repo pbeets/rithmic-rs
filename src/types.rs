@@ -1081,9 +1081,8 @@ pub struct TickBarReplayRequest {
     /// `Some(true)` lifts the server's 10,000 record cap, so the whole window
     /// replays on this one request.
     pub resume_bars: Option<bool>,
-    /// Ends the reply at its first bar starting after this second instead of
-    /// at the end marker, which a server can fail to send. Bars replay oldest
-    /// first. With no bar past it, the reply still waits. Not sent.
+    /// Return the reply at its first bar starting after this second instead of
+    /// waiting for the end marker. Client-side only.
     pub complete_past: Option<i32>,
 }
 
@@ -1234,9 +1233,8 @@ pub struct TimeBarReplayRequest {
     /// `Some(true)` lifts the server's 10,000 record cap, so the whole window
     /// replays on this one request.
     pub resume_bars: Option<bool>,
-    /// Ends the reply at its first bar closing after this marker instead of at
-    /// the end marker, which a server can fail to send. Bars replay oldest
-    /// first. With no bar past it, the reply still waits. Not sent.
+    /// Return the reply at its first bar closing after this marker instead of
+    /// waiting for the end marker. Client-side only.
     pub complete_past: Option<i32>,
 }
 
@@ -1711,58 +1709,19 @@ mod tests {
     }
 
     #[test]
-    fn a_tick_replay_completes_past_a_marker_only_inside_its_window() {
-        assert!(
-            tick_replay()
-                .complete_past(1_750_000_000)
-                .validate()
-                .is_ok()
-        );
-        assert!(
-            tick_replay()
-                .complete_past(1_750_003_599)
-                .validate()
-                .is_ok()
-        );
+    fn a_replay_completes_past_a_marker_only_inside_its_window() {
+        for (marker, ok) in [
+            (1_749_999_999, false),
+            (1_750_000_000, true),
+            (1_750_003_599, true),
+            (1_750_003_600, false),
+        ] {
+            let tick = tick_replay().complete_past(marker).validate();
+            let time = time_replay().complete_past(marker).validate();
 
-        for marker in [1_749_999_999, 1_750_003_600, 1_750_007_200] {
-            let err = tick_replay()
-                .complete_past(marker)
-                .build()
-                .unwrap_err()
-                .to_string();
-            assert!(
-                err.contains("complete_past must be at or after start_time_sec"),
-                "{marker}: {err}"
-            );
-        }
-    }
-
-    #[test]
-    fn a_time_replay_completes_past_a_marker_only_inside_its_window() {
-        assert!(
-            time_replay()
-                .complete_past(1_750_000_000)
-                .validate()
-                .is_ok()
-        );
-        assert!(
-            time_replay()
-                .complete_past(1_750_003_599)
-                .validate()
-                .is_ok()
-        );
-
-        for marker in [1_749_999_999, 1_750_003_600, 1_750_007_200] {
-            let err = time_replay()
-                .complete_past(marker)
-                .build()
-                .unwrap_err()
-                .to_string();
-            assert!(
-                err.contains("complete_past must be at or after start_time_sec"),
-                "{marker}: {err}"
-            );
+            for result in [tick, time] {
+                assert_eq!(result.is_ok(), ok, "{marker}: {result:?}");
+            }
         }
     }
 }

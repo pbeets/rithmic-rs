@@ -73,6 +73,16 @@ pub(crate) enum ReplayQuery {
     Volume(VolumeProfileMinuteBarsRequest),
 }
 
+impl ReplayQuery {
+    fn complete_past(&self) -> Option<i32> {
+        match self {
+            ReplayQuery::Time(query) => query.complete_past,
+            ReplayQuery::Tick(query) => query.complete_past,
+            ReplayQuery::Volume(_) => None,
+        }
+    }
+}
+
 /// Historical market data from Rithmic: past ticks and past bars.
 ///
 /// Connect once, log in, then ask for whatever window of history you need. The
@@ -321,11 +331,8 @@ impl PlantKind for HistoryPlant {
                 query,
                 response_sender,
             } => {
-                let complete_past = match &query {
-                    ReplayQuery::Time(query) => query.complete_past,
-                    ReplayQuery::Tick(query) => query.complete_past,
-                    ReplayQuery::Volume(_) => None,
-                };
+                let replay =
+                    PendingReplay::new(response_sender).complete_past(query.complete_past());
 
                 cx.send_replay(
                     |api| match query {
@@ -335,7 +342,7 @@ impl PlantKind for HistoryPlant {
                             api.request_volume_profile_minute_bars(&query)
                         }
                     },
-                    PendingReplay::new(response_sender).complete_past(complete_past),
+                    replay,
                 )
             }
 

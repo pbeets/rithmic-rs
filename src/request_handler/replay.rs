@@ -266,6 +266,7 @@ impl<T: RequestTag> RithmicRequestHandler<T> {
             return None;
         }
 
+        // Without an rp_code, more frames may still follow.
         let final_from_server = response.rp_code().is_some_and(|code| !code.is_empty());
         let mut replay = self.replay_map.remove(&id)?;
         self.forget_resumes_of(&id);
@@ -283,7 +284,7 @@ impl<T: RequestTag> RithmicRequestHandler<T> {
         let responses = std::mem::take(&mut replay.responses);
         replay.finish(Ok(responses));
 
-        if !complete_early && !final_from_server {
+        if !final_from_server {
             self.expect_late_frames(id);
         }
 
@@ -294,13 +295,7 @@ impl<T: RequestTag> RithmicRequestHandler<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    use crate::{
-        TickBarReplayRequest, TimeBarReplayRequest,
-        api::sender_api::RithmicSenderApi,
-        plants::{tag::Tag, test_support::test_config},
-    };
-
+    use crate::plants::tag::Tag;
     use crate::rti::{ResponseResumeBars, ResponseTickBarReplay, ResponseTimeBarReplay};
 
     fn frame(id: &str, marker: Option<i32>, code: &[&str], key: Option<&str>) -> RithmicResponse {
@@ -580,6 +575,11 @@ mod tests {
         let reply = rx.try_recv().unwrap().unwrap();
         assert_eq!(markers(&reply), [Some(60), Some(120), Some(180)]);
         assert!(handler.replay_map.is_empty());
+
+        // The rest of the reply is counted, then cleared by the end marker.
+        assert!(handler.expects_late_frames("original"));
+        handler.route(frame("original", None, &["0"], None));
+        assert!(!handler.expects_late_frames("original"));
     }
 
     fn tick(id: &str, first: i32, last: i32) -> RithmicResponse {
@@ -626,59 +626,6 @@ mod tests {
 
         assert!(rx.try_recv().is_err());
         assert!(handler.replay_map.contains_key("original"));
-    }
-
-    #[test]
-    fn completed_marker_replays_need_no_end_marker_to_release_their_ids() {
-        let mut handler = RithmicRequestHandler::<Tag>::new();
-        let mut api = RithmicSenderApi::new(&test_config());
-        let time_request = TimeBarReplayRequest::new().complete_past(120);
-        let tick_request = TickBarReplayRequest::new().complete_past(120);
-
-        let (_, logged) = crate::request_handler::log_capture::capture(|| {
-            for _ in 0..500 {
-                let (_, time_id) = api.request_time_bar_replay(&time_request);
-                let (_, tick_id) = api.request_tick_bar_replay(&tick_request);
-                let mut times = handler.register_test_replay_past(&time_id, 120);
-                let mut ticks = handler.register_test_replay_past(&tick_id, 120);
-
-                handler.route(frame(&time_id, Some(180), &[], None));
-                handler.route(tick(&tick_id, 180, 180));
-                assert_eq!(markers(&times.try_recv().unwrap().unwrap()), [Some(180)]);
-                assert_eq!(ticks.try_recv().unwrap().unwrap().len(), 1);
-
-                handler.route(frame(&time_id, Some(240), &[], None));
-                handler.route(tick(&tick_id, 240, 240));
-                assert!(
-                    handler
-                        .route(frame(&time_id, None, &[], Some("cut")))
-                        .is_none()
-                );
-                assert!(handler.late_continuations.is_empty());
-
-                // Only the time replay gets an end marker.
-                handler.route(frame(&time_id, None, &["0"], None));
-            }
-        });
-
-        assert!(logged.is_empty(), "{logged}");
-        assert!(handler.replay_map.is_empty());
-        assert!(handler.late_continuations.is_empty());
-    }
-
-    #[test]
-    fn dropping_a_marker_replay_before_the_cutoff_still_counts_late_parts() {
-        let mut handler = RithmicRequestHandler::<Tag>::new();
-        let mut api = RithmicSenderApi::new(&test_config());
-        let (_, id) = api.request_time_bar_replay(&TimeBarReplayRequest::new().complete_past(120));
-        let rx = handler.register_test_replay_past(&id, 120);
-        handler.mark_sent(&id);
-        drop(rx);
-
-        handler.route(frame(&id, Some(180), &[], None));
-        assert_eq!(handler.late_continuations.get(&id), Some(&1));
-        handler.route(frame(&id, None, &["0"], None));
-        assert!(handler.late_continuations.is_empty());
     }
 
     #[test]

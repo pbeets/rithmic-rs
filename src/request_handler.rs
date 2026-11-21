@@ -1,12 +1,9 @@
 use std::collections::{HashMap, hash_map::Entry};
 use tokio::sync::oneshot;
-use tracing::{debug, error, info, warn};
+use tracing::{error, info, warn};
 
 use crate::{
-    api::{
-        receiver_api::RithmicResponse, rp_code::response_rp_code_info,
-        sender_api::COMPLETE_PAST_ID_SUFFIX,
-    },
+    api::{receiver_api::RithmicResponse, rp_code::response_rp_code_info},
     error::RithmicError,
     rti::messages::RithmicMessage,
 };
@@ -146,23 +143,6 @@ impl<T: RequestTag> RithmicRequestHandler<T> {
         }
 
         match response.message {
-            // The echoed id identifies surplus replay frames after we release
-            // the caller. An existing late-frame count still takes precedence.
-            RithmicMessage::ResponseTimeBarReplay(_) | RithmicMessage::ResponseTickBarReplay(_)
-                if response.request_id.ends_with(COMPLETE_PAST_ID_SUFFIX)
-                    && !self.late_continuations.contains_key(&response.request_id) =>
-            {
-                if !response.has_more {
-                    debug!(
-                        "request_id {}: late frame for a finished complete_past replay, rp_code {:?}",
-                        response.request_id,
-                        response.rp_code().unwrap_or(&[])
-                    );
-                }
-
-                None
-            }
-
             RithmicMessage::ResponseResumeBars(_) | RithmicMessage::ResponseFlowControl(_)
                 if self.resumes.contains_key(&response.request_id) =>
             {

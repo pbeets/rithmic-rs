@@ -48,9 +48,9 @@ use crate::{error::RithmicError, rti::messages::RithmicMessage};
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub struct RithmicResponse {
-    /// Opaque id of the request this frame answers, echoed back by the server.
-    /// Empty on updates the server pushes. A connection event may carry the
-    /// id of the request whose failure raised it.
+    /// Id of the request this frame answers, echoed back by the server. Empty
+    /// on updates the server pushes. A connection event may carry the id of
+    /// the request whose failure raised it.
     pub request_id: String,
     /// The decoded message. Match on it to get the payload.
     pub message: RithmicMessage,
