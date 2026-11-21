@@ -1,4 +1,4 @@
-# Migrating to Protocol API 0.90 (unreleased)
+# Migrating to 4.0.0
 
 Coming from 2.x, work through the 3.0.0 guide below first, then this list.
 
