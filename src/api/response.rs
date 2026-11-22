@@ -12,8 +12,8 @@ use crate::{error::RithmicError, rti::messages::RithmicMessage};
 ///   is an update, including the connection events `ConnectionError`,
 ///   `HeartbeatTimeout` and `ForcedLogout`.
 /// - **Reply**: `is_update` is false and `request_id` names the request. A
-///   list or replay request can answer in several frames (`multi_response`);
-///   every frame but the last has `has_more` set.
+///   list or replay request can answer in several frames (`multi_response`).
+///   The server sets `has_more` when it expects another frame to follow.
 ///
 /// Most handle methods return `Ok` even when the server rejects the request,
 /// so check `error` on the reply too. See [`RithmicError`] for which calls
@@ -57,7 +57,8 @@ pub struct RithmicResponse {
     /// `true` for frames sent to the subscription channel: streaming data,
     /// server notices and connection events. `false` for replies to a request.
     pub is_update: bool,
-    /// `true` on every frame of a multi-frame reply except the last.
+    /// Whether the server marked this frame as having more to follow. A bar
+    /// replay using `complete_past` can return with this set on its last bar.
     pub has_more: bool,
     /// `true` if this frame belongs to a reply that can span several frames,
     /// such as a symbol search or a bar replay.
