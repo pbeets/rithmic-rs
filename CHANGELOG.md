@@ -1428,6 +1428,7 @@ Previous stable release. See git history for earlier changes.
 
 ## Version History Summary
 
+- **4.0.0**: Breaking changes - protos at 0.90.0.0 (template version 5.55), `u64` order quantities sent in the 64-bit fields, the ticker picks feeds with a `MarketData` set, every stoppable feed has a `subscribe_*`/`unsubscribe_*` pair, 3.x deprecations and order session config (3502/3503) removed; `complete_past` for time and tick bar replays
 - **3.3.0**: Agreement methods move from the order plant to the new optional `RithmicRepositoryPlant`, `connect_attempt_timeout` with a 5 second default, `retry_timeout` renamed `connect_total_timeout`, pending and modified `OrderStatus` values count as active, Admin logins no longer send `Trader`
 - **3.2.0**: Truncated history replays resume automatically, one login per connection with `LoginConflict`, `subscribe_all()` on the order and PnL plants, configurable subscription capacity and connect retry timeout, request-struct replay loaders, `resume_bars()` deprecated
 - **3.1.0**: The library no longer times out requests; `request_timeout` and `RequestTimeout` deprecated
