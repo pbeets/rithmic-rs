@@ -993,15 +993,13 @@ impl RithmicHistoryPlantHandle {
         await_all_responses(rx).await
     }
 
-    /// Load minute bars that break volume down by price.
+    /// Load volume-profile minute bars, oldest first.
     ///
-    /// Each bar reports how much traded at each price during that minute, rather
-    /// than a single volume figure. Build the `request` with [`VolumeProfileMinuteBarsRequest`].
+    /// Each bar reports volume traded at each price. Build the request with
+    /// [`VolumeProfileMinuteBarsRequest`].
     ///
-    /// With [`complete_past`](VolumeProfileMinuteBarsRequest::complete_past),
-    /// request a window that extends beyond the last bar you need. The early
-    /// reply relies on the oldest-first order observed from Rithmic. The
-    /// volume-profile request has no option to select the order.
+    /// For [`complete_past`](VolumeProfileMinuteBarsRequest::complete_past),
+    /// extend the window beyond the last bar you need.
     ///
     /// # Returns
     /// One response per bar, followed by an end marker carrying no data. With
