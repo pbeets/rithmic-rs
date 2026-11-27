@@ -4,6 +4,12 @@ use std::collections::HashSet;
 use tokio::sync::oneshot;
 use tracing::{debug, info};
 
+#[derive(Debug)]
+enum EarlyCompletion {
+    PastMarker(i32),
+    MissingVolumeMarkers(HashSet<i32>),
+}
+
 /// A history replay, or a flow-controlled fill history, the plant is
 /// collecting for a caller.
 ///
@@ -21,9 +27,7 @@ pub(crate) struct PendingReplay {
     /// sending frames for it after it is released. An abandoned replay is only
     /// released once this is set.
     sent: bool,
-    /// The marker whose first later bar completes the reply, if the caller
-    /// asked past the part it needs.
-    complete_past: Option<i32>,
+    early_completion: Option<EarlyCompletion>,
 }
 
 impl PendingReplay {
@@ -33,13 +37,24 @@ impl PendingReplay {
             responses: Vec::new(),
             used_keys: HashSet::new(),
             sent: false,
-            complete_past: None,
+            early_completion: None,
         }
     }
 
     /// Complete the reply on its first bar past `marker`, when one is given.
     pub(crate) fn complete_past(mut self, marker: Option<i32>) -> Self {
-        self.complete_past = marker;
+        self.early_completion = marker.map(EarlyCompletion::PastMarker);
+        self
+    }
+
+    /// Volume-profile requests have no wire order selector. Account for
+    /// individual close timestamps across all chunks of the same replay.
+    pub(crate) fn complete_after_volume_markers(mut self, markers: &[i32]) -> Self {
+        if !markers.is_empty() {
+            self.early_completion = Some(EarlyCompletion::MissingVolumeMarkers(
+                markers.iter().copied().collect(),
+            ));
+        }
         self
     }
 
@@ -48,27 +63,30 @@ impl PendingReplay {
         self.responder.is_closed()
     }
 
-    /// Whether `response` is a bar past the marker the caller asked to
-    /// complete on: a time or volume-profile bar closing after it, or a tick
-    /// bar starting after it. This relies on oldest-first replay order.
-    fn is_past_marker(&self, response: &RithmicResponse) -> bool {
-        let Some(end) = self.complete_past else {
+    fn should_complete_early(&mut self, response: &RithmicResponse) -> bool {
+        if response.error.is_some() {
             return false;
-        };
-
-        response.error.is_none()
-            && match &response.message {
-                RithmicMessage::ResponseTimeBarReplay(bar) => {
-                    bar.marker.is_some_and(|marker| marker > end)
-                }
-                RithmicMessage::ResponseTickBarReplay(bar) => {
-                    bar.data_bar_ssboe.first().is_some_and(|start| *start > end)
-                }
-                RithmicMessage::ResponseVolumeProfileMinuteBars(bar) => {
-                    bar.marker.is_some_and(|marker| marker > end)
-                }
-                _ => false,
-            }
+        }
+        match (&mut self.early_completion, &response.message) {
+            (
+                Some(EarlyCompletion::PastMarker(end)),
+                RithmicMessage::ResponseTimeBarReplay(bar),
+            ) => bar.marker.is_some_and(|marker| marker > *end),
+            (
+                Some(EarlyCompletion::PastMarker(end)),
+                RithmicMessage::ResponseTickBarReplay(bar),
+            ) => bar
+                .data_bar_ssboe
+                .first()
+                .is_some_and(|start| *start > *end),
+            (
+                Some(EarlyCompletion::MissingVolumeMarkers(missing)),
+                RithmicMessage::ResponseVolumeProfileMinuteBars(bar),
+            ) => bar
+                .marker
+                .is_some_and(|marker| missing.remove(&marker) && missing.is_empty()),
+            _ => false,
+        }
     }
 
     fn finish(self, reply: RequestResult) {
@@ -262,7 +280,7 @@ impl<T: RequestTag> RithmicRequestHandler<T> {
             replay.used_keys.clear();
         }
 
-        let complete_early = response.has_more && replay.is_past_marker(&response);
+        let complete_early = response.has_more && replay.should_complete_early(&response);
 
         if response.has_more && !complete_early {
             replay.responses.push(response);
@@ -278,7 +296,7 @@ impl<T: RequestTag> RithmicRequestHandler<T> {
 
         if complete_early {
             debug!(
-                "request_id {}: answered after {} parts on a bar past its complete_past marker",
+                "request_id {}: answered after {} parts on meeting the requested replay condition",
                 id,
                 replay.responses.len()
             );

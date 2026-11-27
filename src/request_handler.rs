@@ -879,13 +879,47 @@ mod tests {
     }
 
     #[test]
+    fn only_successful_volume_bars_satisfy_required_markers_across_a_resume() {
+        let mut handler = RithmicRequestHandler::<Tag>::new();
+        let (tx, mut reply) = oneshot::channel();
+        let replay = PendingReplay::new(tx).complete_after_volume_markers(&[60, 180]);
+        assert!(handler.register_replay("v".into(), replay));
+        let newest = part(
+            "v",
+            RithmicMessage::ResponseVolumeProfileMinuteBars(ResponseVolumeProfileMinuteBars {
+                marker: Some(180),
+                ..Default::default()
+            }),
+        );
+        handler.route(newest);
+        let resume = handler
+            .route(terminal("v", truncation_notice("key")))
+            .unwrap();
+        assert_eq!(resume.request_id, "v");
+
+        let mut failed = marker_part("v");
+        failed.error = Some(RithmicError::ProtocolError("bad bar".into()));
+        handler.route(failed);
+        assert!(matches!(
+            reply.try_recv(),
+            Err(oneshot::error::TryRecvError::Empty)
+        ));
+        handler.route(marker_part("v"));
+        assert_eq!(reply.try_recv().unwrap().unwrap().len(), 3);
+    }
+
+    #[test]
     fn early_volume_replies_without_terminal_frames_keep_bounded_late_counts() {
         let mut handler = RithmicRequestHandler::<Tag>::new();
         let mut pending = handler.register_test_replay("pending");
 
         for i in 0..=MAX_LATE_REQUESTS {
             let id = i.to_string();
-            let mut reply = handler.register_test_replay_past(&id, 59);
+            let (tx, mut reply) = oneshot::channel();
+            assert!(handler.register_replay(
+                id.clone(),
+                PendingReplay::new(tx).complete_after_volume_markers(&[60])
+            ));
             handler.route(marker_part(&id));
             assert_eq!(reply.try_recv().unwrap().unwrap().len(), 1);
             assert!(

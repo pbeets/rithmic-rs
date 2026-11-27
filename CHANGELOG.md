@@ -7,9 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-- `VolumeProfileMinuteBarsRequest::complete_past_assuming_oldest_first` lets
-  callers finish at the first bar past a cutoff when their plant delivers
-  oldest first. The default collects the full reply in server delivery order.
+- `VolumeProfileMinuteBarsRequest::complete_after_markers` lets a replay
+  return early once every specified bar close has arrived, in any delivery
+  order. An empty list collects the full server reply.
 - Late-frame counts are kept for up to 256 request IDs per connection, including
   when a history plant omits the end of a replay.
 

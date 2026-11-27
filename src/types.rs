@@ -863,7 +863,7 @@ impl BitOrAssign for MarketData {
 /// [`load_volume_profile_minute_bars`].
 ///
 /// Call [`build`](Self::build) to validate the request before sending it. The
-/// handle also validates requests with an early cutoff.
+/// handle also validates requests with early completion enabled.
 ///
 /// # Example
 ///
@@ -904,9 +904,10 @@ pub struct VolumeProfileMinuteBarsRequest {
     /// Rithmic's `resume_bars` flag, sent as given and left off when unset. On
     /// tick and time bar replays `Some(true)` lifts the 10,000 record cap.
     pub resume_bars: Option<bool>,
-    /// Client-side cutoff in Unix seconds. Requires oldest-first delivery across
-    /// the entire replay. See [the builder method](Self::complete_past_assuming_oldest_first).
-    pub complete_past_assuming_oldest_first: Option<i32>,
+    /// Bar close timestamps required for an early reply. An empty list waits
+    /// for the full replay. See [the builder method](Self::complete_after_markers).
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub complete_after_markers: Vec<i32>,
 }
 
 impl VolumeProfileMinuteBarsRequest {
@@ -957,21 +958,35 @@ impl VolumeProfileMinuteBarsRequest {
         self
     }
 
-    /// Return as soon as a received bar closes strictly after `marker` (Unix seconds).
-    /// The marker must be at or after the start and before the end.
+    /// Return early once a volume-profile bar has arrived for every listed
+    /// close timestamp (Unix seconds), in any delivery order. The reply keeps
+    /// all frames received through that point, including unlisted bars.
     ///
-    /// Use this only when the history plant delivers the entire replay oldest
-    /// first, including resumed chunks. The volume-profile request cannot select
-    /// an order. With newest-first or mixed delivery, the call can return before
-    /// earlier bars arrive. Leave this unset to collect the full server reply.
-    pub fn complete_past_assuming_oldest_first(mut self, marker: i32) -> Self {
-        self.complete_past_assuming_oldest_first = Some(marker);
+    /// List every bar you need. For example, with markers `[60, 120, 180]`
+    /// and newest-first delivery, the reply completes when bar `60` arrives.
+    /// If you need the whole window and don't know which bars traded, leave
+    /// this empty. A server end marker still returns the full reply even if
+    /// some listed bars are absent. Duplicate markers are equivalent to one.
+    ///
+    /// For one-minute bars with known first and last closes, the list can be
+    /// generated from the interval:
+    /// ```
+    /// use rithmic_rs::VolumeProfileMinuteBarsRequest;
+    /// let first_close = 1_750_000_020;
+    /// let last_close = first_close + 600;
+    /// let request = VolumeProfileMinuteBarsRequest::new()
+    ///     .bar_type_period(1)
+    ///     .start_time_sec(first_close)
+    ///     .end_time_sec(last_close)
+    ///     .complete_after_markers((first_close..=last_close).step_by(60));
+    /// ```
+    pub fn complete_after_markers(mut self, markers: impl IntoIterator<Item = i32>) -> Self {
+        self.complete_after_markers = markers.into_iter().collect();
         self
     }
 
-    /// Requires a symbol, an exchange, a bar period of at least 1, and two
-    /// positive timestamps with the end at or after the start. Any
-    /// early cutoff must lie inside that window.
+    /// Requires a symbol, an exchange, a positive bar period and an ordered,
+    /// positive time window. Each requested close must be within the window.
     pub fn validate(&self) -> Result<(), RithmicError> {
         validate_replay_window(
             "volume-profile",
@@ -987,11 +1002,18 @@ impl VolumeProfileMinuteBarsRequest {
             ));
         }
 
-        validate_complete_past(
-            self.complete_past_assuming_oldest_first,
-            self.start_time_sec,
-            self.end_time_sec,
-        )
+        let window = self.start_time_sec..=self.end_time_sec;
+        if let Some(marker) = self
+            .complete_after_markers
+            .iter()
+            .find(|m| !window.contains(m))
+        {
+            return Err(RithmicError::InvalidArgument(format!(
+                "volume-profile completion marker {marker} lies outside the requested window"
+            )));
+        }
+
+        Ok(())
     }
 
     /// Validate the request and return it on success.
@@ -1729,13 +1751,6 @@ mod tests {
 
     #[test]
     fn a_replay_completes_past_a_marker_only_inside_its_window() {
-        let volume_request = VolumeProfileMinuteBarsRequest::new()
-            .symbol("ESZ6")
-            .exchange("CME")
-            .bar_type_period(5)
-            .start_time_sec(1_750_000_000)
-            .end_time_sec(1_750_003_600);
-
         for (marker, ok) in [
             (1_749_999_999, false),
             (1_750_000_000, true),
@@ -1744,14 +1759,35 @@ mod tests {
         ] {
             let tick = tick_replay().complete_past(marker).validate();
             let time = time_replay().complete_past(marker).validate();
-            let volume = volume_request
-                .clone()
-                .complete_past_assuming_oldest_first(marker)
-                .validate();
-
-            for result in [tick, time, volume] {
+            for result in [tick, time] {
                 assert_eq!(result.is_ok(), ok, "{marker}: {result:?}");
             }
+        }
+    }
+
+    #[test]
+    fn volume_completion_markers_must_be_within_the_inclusive_window() {
+        let volume_request = VolumeProfileMinuteBarsRequest::new()
+            .symbol("ESZ6")
+            .exchange("CME")
+            .bar_type_period(5)
+            .start_time_sec(1_750_000_000)
+            .end_time_sec(1_750_003_600);
+
+        for (markers, ok) in [
+            (vec![], true),
+            (vec![1_750_000_000, 1_750_003_600], true),
+            (vec![1_750_000_000, 1_749_999_999], false),
+            (vec![1_750_003_601], false),
+        ] {
+            assert_eq!(
+                volume_request
+                    .clone()
+                    .complete_after_markers(markers)
+                    .validate()
+                    .is_ok(),
+                ok
+            );
         }
     }
 }

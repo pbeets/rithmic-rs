@@ -638,12 +638,26 @@ fn volume_markers(reply: &[RithmicResponse]) -> Vec<Option<i32>> {
 }
 
 #[tokio::test]
-async fn a_volume_profile_replay_returns_the_first_bar_past_the_marker_without_an_end_marker() {
-    let markers = [Some(60), Some(120), Some(180)];
-    let request = volume_profile_request().complete_past_assuming_oldest_first(120);
+async fn a_volume_profile_replay_waits_for_every_needed_bar_in_any_order_without_an_end_marker() {
+    for markers in [
+        vec![Some(60), Some(120), Some(180)],
+        vec![Some(180), Some(120), Some(60)],
+        vec![Some(240), Some(180), Some(60), Some(60), Some(120)],
+    ] {
+        let request = volume_profile_request().complete_after_markers([60, 120, 180, 180]);
+        let reply = replay_volume_profile(request, &markers).await;
+        assert_eq!(volume_markers(&reply), markers);
+        assert!(reply.last().unwrap().has_more);
+    }
+}
+
+#[tokio::test]
+async fn a_sparse_volume_replay_returns_the_server_end_if_a_needed_bar_is_missing() {
+    let markers = [Some(180), Some(60), None];
+    let request = volume_profile_request().complete_after_markers([60, 120, 180]);
     let reply = replay_volume_profile(request, &markers).await;
     assert_eq!(volume_markers(&reply), markers);
-    assert!(reply.last().unwrap().has_more);
+    assert!(!reply.last().unwrap().has_more);
 }
 
 #[tokio::test]
@@ -655,9 +669,9 @@ async fn a_default_volume_profile_replay_keeps_newest_first_bars_and_the_end_mar
 }
 
 #[tokio::test]
-async fn a_volume_profile_replay_rejects_a_marker_at_its_window_end_before_sending() {
+async fn a_volume_profile_replay_rejects_a_marker_outside_its_window_before_sending() {
     let (handle, actor, mut client) = running_plant_with_handle().await;
-    let request = volume_profile_request().complete_past_assuming_oldest_first(240);
+    let request = volume_profile_request().complete_after_markers([60, 241]);
 
     let load = {
         let handle = handle.clone();
