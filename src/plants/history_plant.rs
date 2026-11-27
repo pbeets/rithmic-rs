@@ -78,7 +78,7 @@ impl ReplayQuery {
         match self {
             ReplayQuery::Time(query) => query.complete_past,
             ReplayQuery::Tick(query) => query.complete_past,
-            ReplayQuery::Volume(_) => None,
+            ReplayQuery::Volume(query) => query.complete_past,
         }
     }
 }
@@ -998,8 +998,16 @@ impl RithmicHistoryPlantHandle {
     /// Each bar reports how much traded at each price during that minute, rather
     /// than a single volume figure. Build the `request` with [`VolumeProfileMinuteBarsRequest`].
     ///
+    /// With [`complete_past`](VolumeProfileMinuteBarsRequest::complete_past),
+    /// request a window that extends beyond the last bar you need. The early
+    /// reply relies on the oldest-first order observed from Rithmic. The
+    /// volume-profile request has no option to select the order.
+    ///
     /// # Returns
-    /// One response per minute, followed by an end marker carrying no data.
+    /// One response per bar, followed by an end marker carrying no data. With
+    /// `complete_past`, the last response can be the first bar whose `marker`
+    /// is later than the requested marker. If no later bar arrives, the load
+    /// still waits for the server's end marker.
     ///
     /// # Truncation
     ///
@@ -1008,10 +1016,19 @@ impl RithmicHistoryPlantHandle {
     ///
     /// An empty reply does not always mean nothing traded; it has been seen for
     /// windows that had data moments before. Retry before relying on it.
+    ///
+    /// # Errors
+    /// * [`RithmicError::InvalidArgument`] if `complete_past` is set and the
+    ///   request fails [`validate`](VolumeProfileMinuteBarsRequest::validate).
+    /// * [`RithmicError::ConnectionClosed`] if the history plant has shut down.
     pub async fn load_volume_profile_minute_bars(
         &self,
         request: VolumeProfileMinuteBarsRequest,
     ) -> Result<Vec<RithmicResponse>, RithmicError> {
+        if request.complete_past.is_some() {
+            request.validate()?;
+        }
+
         self.replay(ReplayQuery::Volume(request)).await
     }
 

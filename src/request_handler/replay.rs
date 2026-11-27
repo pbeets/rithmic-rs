@@ -49,8 +49,8 @@ impl PendingReplay {
     }
 
     /// Whether `response` is a bar past the marker the caller asked to
-    /// complete on: a time bar closing after it, or a tick bar starting after
-    /// it. Bars replay oldest first, so every earlier bar is in.
+    /// complete on: a time or volume-profile bar closing after it, or a tick
+    /// bar starting after it. This relies on oldest-first replay order.
     fn is_past_marker(&self, response: &RithmicResponse) -> bool {
         let Some(end) = self.complete_past else {
             return false;
@@ -63,6 +63,9 @@ impl PendingReplay {
                 }
                 RithmicMessage::ResponseTickBarReplay(bar) => {
                     bar.data_bar_ssboe.first().is_some_and(|start| *start > end)
+                }
+                RithmicMessage::ResponseVolumeProfileMinuteBars(bar) => {
+                    bar.marker.is_some_and(|marker| marker > end)
                 }
                 _ => false,
             }

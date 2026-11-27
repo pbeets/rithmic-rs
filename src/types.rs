@@ -862,8 +862,8 @@ impl BitOrAssign for MarketData {
 /// A volume-profile minute-bars request, passed to
 /// [`load_volume_profile_minute_bars`].
 ///
-/// Call [`build`](Self::build) before sending it. Unlike the tick and time bar
-/// replays, the handle does not validate this request itself.
+/// Call [`build`](Self::build) to validate the request before sending it. The
+/// handle also validates requests that set [`complete_past`](Self::complete_past).
 ///
 /// # Example
 ///
@@ -904,6 +904,8 @@ pub struct VolumeProfileMinuteBarsRequest {
     /// Rithmic's `resume_bars` flag, sent as given and left off when unset. On
     /// tick and time bar replays `Some(true)` lifts the 10,000 record cap.
     pub resume_bars: Option<bool>,
+    /// Return the reply at its first bar past this Unix-second marker. Client-side only.
+    pub complete_past: Option<i32>,
 }
 
 impl VolumeProfileMinuteBarsRequest {
@@ -954,8 +956,16 @@ impl VolumeProfileMinuteBarsRequest {
         self
     }
 
+    /// End the reply at its first bar closing strictly after `marker`, in
+    /// Unix seconds. The marker must be at or after the start and before the end.
+    pub fn complete_past(mut self, marker: i32) -> Self {
+        self.complete_past = Some(marker);
+        self
+    }
+
     /// Requires a symbol, an exchange, a bar period of at least 1, and two
-    /// positive timestamps with the end not before the start.
+    /// positive timestamps with the end at or after the start. Any
+    /// `complete_past` marker must lie inside that window.
     pub fn validate(&self) -> Result<(), RithmicError> {
         validate_replay_window(
             "volume-profile",
@@ -971,11 +981,10 @@ impl VolumeProfileMinuteBarsRequest {
             ));
         }
 
-        Ok(())
+        validate_complete_past(self.complete_past, self.start_time_sec, self.end_time_sec)
     }
 
-    /// Requires a symbol, an exchange, a bar period, and an ordered time
-    /// window.
+    /// Validate the request and return it on success.
     pub fn build(self) -> Result<Self, RithmicError> {
         self.validate()?;
         Ok(self)
@@ -1710,6 +1719,13 @@ mod tests {
 
     #[test]
     fn a_replay_completes_past_a_marker_only_inside_its_window() {
+        let volume_request = VolumeProfileMinuteBarsRequest::new()
+            .symbol("ESZ6")
+            .exchange("CME")
+            .bar_type_period(5)
+            .start_time_sec(1_750_000_000)
+            .end_time_sec(1_750_003_600);
+
         for (marker, ok) in [
             (1_749_999_999, false),
             (1_750_000_000, true),
@@ -1718,8 +1734,9 @@ mod tests {
         ] {
             let tick = tick_replay().complete_past(marker).validate();
             let time = time_replay().complete_past(marker).validate();
+            let volume = volume_request.clone().complete_past(marker).validate();
 
-            for result in [tick, time] {
+            for result in [tick, time, volume] {
                 assert_eq!(result.is_ok(), ok, "{marker}: {result:?}");
             }
         }

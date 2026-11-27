@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- `VolumeProfileMinuteBarsRequest::complete_past` lets a history replay return
+  as soon as it includes a bar with a marker past the requested second.
+
 ## [4.0.0]
 
 4.0.0 moves to R | Protocol API 0.90.0.0 (template version 5.55), changes how
