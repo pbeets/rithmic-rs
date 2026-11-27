@@ -967,6 +967,8 @@ impl VolumeProfileMinuteBarsRequest {
     /// If you need the whole window and don't know which bars traded, leave
     /// this empty. A server end marker still returns the full reply even if
     /// some listed bars are absent. Duplicate markers are equivalent to one.
+    /// A bar starting at the window end can close one bar period later. Its
+    /// close timestamp is also a valid completion marker.
     ///
     /// For one-minute bars with known first and last closes, the list can be
     /// generated from the interval:
@@ -986,7 +988,8 @@ impl VolumeProfileMinuteBarsRequest {
     }
 
     /// Requires a symbol, an exchange, a positive bar period and an ordered,
-    /// positive time window. Each requested close must be within the window.
+    /// positive time window. Completion markers can range from the window
+    /// start through the latest possible close of its final bar.
     pub fn validate(&self) -> Result<(), RithmicError> {
         validate_replay_window(
             "volume-profile",
@@ -1002,14 +1005,20 @@ impl VolumeProfileMinuteBarsRequest {
             ));
         }
 
-        let window = self.start_time_sec..=self.end_time_sec;
+        // The plant can include a bar starting at end_time_sec. Its marker
+        // is the close timestamp, which can be one full period later.
+        let latest_close = self
+            .end_time_sec
+            .saturating_add(self.bar_type_period.saturating_mul(60));
+        let possible_closes = self.start_time_sec..=latest_close;
         if let Some(marker) = self
             .complete_after_markers
             .iter()
-            .find(|m| !window.contains(m))
+            .find(|m| !possible_closes.contains(m))
         {
             return Err(RithmicError::InvalidArgument(format!(
-                "volume-profile completion marker {marker} lies outside the requested window"
+                "volume-profile completion marker {marker} lies outside the possible bar closes {}..={latest_close}",
+                self.start_time_sec
             )));
         }
 
@@ -1766,7 +1775,7 @@ mod tests {
     }
 
     #[test]
-    fn volume_completion_markers_must_be_within_the_inclusive_window() {
+    fn volume_completion_markers_include_the_close_of_the_last_requested_bar() {
         let volume_request = VolumeProfileMinuteBarsRequest::new()
             .symbol("ESZ6")
             .exchange("CME")
@@ -1778,7 +1787,8 @@ mod tests {
             (vec![], true),
             (vec![1_750_000_000, 1_750_003_600], true),
             (vec![1_750_000_000, 1_749_999_999], false),
-            (vec![1_750_003_601], false),
+            (vec![1_750_003_601, 1_750_003_900], true),
+            (vec![1_750_003_901], false),
         ] {
             assert_eq!(
                 volume_request

@@ -669,9 +669,9 @@ async fn a_default_volume_profile_replay_keeps_newest_first_bars_and_the_end_mar
 }
 
 #[tokio::test]
-async fn a_volume_profile_replay_rejects_a_marker_outside_its_window_before_sending() {
+async fn a_volume_profile_replay_rejects_a_marker_beyond_its_last_possible_close_before_sending() {
     let (handle, actor, mut client) = running_plant_with_handle().await;
-    let request = volume_profile_request().complete_after_markers([60, 241]);
+    let request = volume_profile_request().complete_after_markers([60, 301]);
 
     let load = {
         let handle = handle.clone();
