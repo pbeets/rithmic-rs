@@ -9,7 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `VolumeProfileMinuteBarsRequest::complete_after_markers` lets a replay
   return early once every specified bar close has arrived, in any delivery
-  order. An empty list collects the full server reply.
+  order. An empty list collects the full server reply. **If both a requested bar
+  and the server’s end marker are missing, the call stays pending.**
 - Late-frame counts are kept for up to 256 request IDs per connection, including
   when a history plant omits the end of a replay.
 
