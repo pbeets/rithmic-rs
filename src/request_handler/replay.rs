@@ -171,7 +171,7 @@ impl<T: RequestTag> RithmicRequestHandler<T> {
             );
 
             self.forget_resumes_of(&id);
-            self.expect_late_frames(id);
+            self.record_late_frames(&id, 0);
         }
     }
 
@@ -190,7 +190,7 @@ impl<T: RequestTag> RithmicRequestHandler<T> {
 
         // Only a request the server saw can still be streaming.
         if replay.sent {
-            self.expect_late_frames(request_id);
+            self.record_late_frames(request_id, 0);
         }
 
         self.forget_resumes_of(request_id);
@@ -211,7 +211,7 @@ impl<T: RequestTag> RithmicRequestHandler<T> {
         let parts = replay.responses.len();
         self.forget_resumes_of(&request_id);
         replay.finish(Err(error));
-        self.expect_late_frames(request_id);
+        self.record_late_frames(&request_id, 0);
 
         Some(parts)
     }
@@ -288,7 +288,7 @@ impl<T: RequestTag> RithmicRequestHandler<T> {
         replay.finish(Ok(responses));
 
         if !final_from_server {
-            self.expect_late_frames(id);
+            self.record_late_frames(&id, 0);
         }
 
         None

@@ -580,28 +580,25 @@ async fn a_tick_replay_asked_past_a_marker_is_answered_without_the_end_marker() 
     actor.await.unwrap();
 }
 
-#[tokio::test]
-async fn a_volume_profile_replay_returns_the_first_bar_past_the_marker_without_an_end_marker() {
-    let (handle, actor, mut client) = running_plant_with_handle().await;
+fn volume_profile_request() -> VolumeProfileMinuteBarsRequest {
+    VolumeProfileMinuteBarsRequest::new()
+        .symbol("ESZ6")
+        .exchange("CME")
+        .bar_type_period(1)
+        .start_time_sec(60)
+        .end_time_sec(240)
+        .resume_bars(true)
+}
 
+async fn replay_volume_profile(
+    request: VolumeProfileMinuteBarsRequest,
+    markers: &[Option<i32>],
+) -> Vec<RithmicResponse> {
+    let (handle, actor, mut client) = running_plant_with_handle().await;
     let load = {
         let handle = handle.clone();
-        tokio::spawn(async move {
-            handle
-                .load_volume_profile_minute_bars(
-                    VolumeProfileMinuteBarsRequest::new()
-                        .symbol("ESZ6")
-                        .exchange("CME")
-                        .bar_type_period(1)
-                        .start_time_sec(60)
-                        .end_time_sec(240)
-                        .resume_bars(true)
-                        .complete_past(120),
-                )
-                .await
-        })
+        tokio::spawn(async move { handle.load_volume_profile_minute_bars(request).await })
     };
-
     let request =
         RequestVolumeProfileMinuteBars::decode(read_wire_request(&mut client).await.as_slice())
             .unwrap();
@@ -609,45 +606,58 @@ async fn a_volume_profile_replay_returns_the_first_bar_past_the_marker_without_a
     assert_eq!(request.finish_index, Some(240));
     assert_eq!(request.resume_bars, Some(true));
 
-    for marker in [60, 120, 180] {
-        write_wire_response(
-            &mut client,
-            &ResponseVolumeProfileMinuteBars {
-                template_id: 209,
-                user_msg: request.user_msg.clone(),
-                rq_handler_rp_code: vec!["0".into()],
-                marker: Some(marker),
-                ..Default::default()
-            },
-        )
-        .await;
+    for &marker in markers {
+        let mut frame = ResponseVolumeProfileMinuteBars {
+            template_id: 209,
+            user_msg: request.user_msg.clone(),
+            marker,
+            ..Default::default()
+        };
+        if marker.is_some() {
+            frame.rq_handler_rp_code.push("0".into());
+        } else {
+            frame.rp_code.push("0".into());
+        }
+        write_wire_response(&mut client, &frame).await;
     }
 
     let reply = reply_of(load).await.unwrap();
-    let markers: Vec<_> = reply
+    handle.abort();
+    actor.await.unwrap();
+    reply
+}
+
+fn volume_markers(reply: &[RithmicResponse]) -> Vec<Option<i32>> {
+    reply
         .iter()
         .map(|response| match &response.message {
             RithmicMessage::ResponseVolumeProfileMinuteBars(bar) => bar.marker,
             message => panic!("unexpected replay message: {message:?}"),
         })
-        .collect();
-    assert_eq!(markers, [Some(60), Some(120), Some(180)]);
-    assert!(reply.last().unwrap().has_more);
+        .collect()
+}
 
-    handle.abort();
-    actor.await.unwrap();
+#[tokio::test]
+async fn a_volume_profile_replay_returns_the_first_bar_past_the_marker_without_an_end_marker() {
+    let markers = [Some(60), Some(120), Some(180)];
+    let request = volume_profile_request().complete_past_assuming_oldest_first(120);
+    let reply = replay_volume_profile(request, &markers).await;
+    assert_eq!(volume_markers(&reply), markers);
+    assert!(reply.last().unwrap().has_more);
+}
+
+#[tokio::test]
+async fn a_default_volume_profile_replay_keeps_newest_first_bars_and_the_end_marker() {
+    let markers = [Some(180), Some(120), Some(60), None];
+    let reply = replay_volume_profile(volume_profile_request(), &markers).await;
+    assert_eq!(volume_markers(&reply), markers);
+    assert!(!reply.last().unwrap().has_more);
 }
 
 #[tokio::test]
 async fn a_volume_profile_replay_rejects_a_marker_at_its_window_end_before_sending() {
     let (handle, actor, mut client) = running_plant_with_handle().await;
-    let request = VolumeProfileMinuteBarsRequest::new()
-        .symbol("ESZ6")
-        .exchange("CME")
-        .bar_type_period(1)
-        .start_time_sec(60)
-        .end_time_sec(240)
-        .complete_past(240);
+    let request = volume_profile_request().complete_past_assuming_oldest_first(240);
 
     let load = {
         let handle = handle.clone();

@@ -863,7 +863,7 @@ impl BitOrAssign for MarketData {
 /// [`load_volume_profile_minute_bars`].
 ///
 /// Call [`build`](Self::build) to validate the request before sending it. The
-/// handle also validates requests that set [`complete_past`](Self::complete_past).
+/// handle also validates requests with an early cutoff.
 ///
 /// # Example
 ///
@@ -904,8 +904,9 @@ pub struct VolumeProfileMinuteBarsRequest {
     /// Rithmic's `resume_bars` flag, sent as given and left off when unset. On
     /// tick and time bar replays `Some(true)` lifts the 10,000 record cap.
     pub resume_bars: Option<bool>,
-    /// Return the reply at its first bar past this Unix-second marker. Client-side only.
-    pub complete_past: Option<i32>,
+    /// Client-side cutoff in Unix seconds. Requires oldest-first delivery across
+    /// the entire replay. See [the builder method](Self::complete_past_assuming_oldest_first).
+    pub complete_past_assuming_oldest_first: Option<i32>,
 }
 
 impl VolumeProfileMinuteBarsRequest {
@@ -956,16 +957,21 @@ impl VolumeProfileMinuteBarsRequest {
         self
     }
 
-    /// End the reply at its first bar closing strictly after `marker`, in
-    /// Unix seconds. The marker must be at or after the start and before the end.
-    pub fn complete_past(mut self, marker: i32) -> Self {
-        self.complete_past = Some(marker);
+    /// Return as soon as a received bar closes strictly after `marker` (Unix seconds).
+    /// The marker must be at or after the start and before the end.
+    ///
+    /// Use this only when the history plant delivers the entire replay oldest
+    /// first, including resumed chunks. The volume-profile request cannot select
+    /// an order. With newest-first or mixed delivery, the call can return before
+    /// earlier bars arrive. Leave this unset to collect the full server reply.
+    pub fn complete_past_assuming_oldest_first(mut self, marker: i32) -> Self {
+        self.complete_past_assuming_oldest_first = Some(marker);
         self
     }
 
     /// Requires a symbol, an exchange, a bar period of at least 1, and two
     /// positive timestamps with the end at or after the start. Any
-    /// `complete_past` marker must lie inside that window.
+    /// early cutoff must lie inside that window.
     pub fn validate(&self) -> Result<(), RithmicError> {
         validate_replay_window(
             "volume-profile",
@@ -981,7 +987,11 @@ impl VolumeProfileMinuteBarsRequest {
             ));
         }
 
-        validate_complete_past(self.complete_past, self.start_time_sec, self.end_time_sec)
+        validate_complete_past(
+            self.complete_past_assuming_oldest_first,
+            self.start_time_sec,
+            self.end_time_sec,
+        )
     }
 
     /// Validate the request and return it on success.
@@ -1734,7 +1744,10 @@ mod tests {
         ] {
             let tick = tick_replay().complete_past(marker).validate();
             let time = time_replay().complete_past(marker).validate();
-            let volume = volume_request.clone().complete_past(marker).validate();
+            let volume = volume_request
+                .clone()
+                .complete_past_assuming_oldest_first(marker)
+                .validate();
 
             for result in [tick, time, volume] {
                 assert_eq!(result.is_ok(), ok, "{marker}: {result:?}");

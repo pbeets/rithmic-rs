@@ -7,8 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-- `VolumeProfileMinuteBarsRequest::complete_past` lets a history replay return
-  as soon as it includes a bar with a marker past the requested second.
+- `VolumeProfileMinuteBarsRequest::complete_past_assuming_oldest_first` lets
+  callers finish at the first bar past a cutoff when their plant delivers
+  oldest first. The default collects the full reply in server delivery order.
+- Late-frame counts are kept for up to 256 request IDs per connection, including
+  when a history plant omits the end of a replay.
 
 ## [4.0.0]
 

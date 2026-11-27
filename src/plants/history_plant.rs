@@ -78,7 +78,7 @@ impl ReplayQuery {
         match self {
             ReplayQuery::Time(query) => query.complete_past,
             ReplayQuery::Tick(query) => query.complete_past,
-            ReplayQuery::Volume(query) => query.complete_past,
+            ReplayQuery::Volume(query) => query.complete_past_assuming_oldest_first,
         }
     }
 }
@@ -993,17 +993,18 @@ impl RithmicHistoryPlantHandle {
         await_all_responses(rx).await
     }
 
-    /// Load volume-profile minute bars, oldest first.
+    /// Load volume-profile minute bars in the history plant's delivery order.
     ///
     /// Each bar reports volume traded at each price. Build the request with
     /// [`VolumeProfileMinuteBarsRequest`].
     ///
-    /// For [`complete_past`](VolumeProfileMinuteBarsRequest::complete_past),
-    /// extend the window beyond the last bar you need.
+    /// To finish early on a plant known to deliver oldest first, extend the
+    /// window beyond the last bar you need and set
+    /// [`complete_past_assuming_oldest_first`](VolumeProfileMinuteBarsRequest::complete_past_assuming_oldest_first).
     ///
     /// # Returns
     /// One response per bar, followed by an end marker carrying no data. With
-    /// `complete_past`, the last response can be the first bar whose `marker`
+    /// early completion enabled, the last response can be the first bar whose `marker`
     /// is later than the requested marker. If no later bar arrives, the load
     /// still waits for the server's end marker.
     ///
@@ -1016,14 +1017,14 @@ impl RithmicHistoryPlantHandle {
     /// windows that had data moments before. Retry before relying on it.
     ///
     /// # Errors
-    /// * [`RithmicError::InvalidArgument`] if `complete_past` is set and the
+    /// * [`RithmicError::InvalidArgument`] if the early cutoff is set and the
     ///   request fails [`validate`](VolumeProfileMinuteBarsRequest::validate).
     /// * [`RithmicError::ConnectionClosed`] if the history plant has shut down.
     pub async fn load_volume_profile_minute_bars(
         &self,
         request: VolumeProfileMinuteBarsRequest,
     ) -> Result<Vec<RithmicResponse>, RithmicError> {
-        if request.complete_past.is_some() {
+        if request.complete_past_assuming_oldest_first.is_some() {
             request.validate()?;
         }
 

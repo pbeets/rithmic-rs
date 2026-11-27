@@ -23,6 +23,7 @@ serde = ["dep:serde"]
 [dependencies]
 serde = { version = "1", features = ["derive"], optional = true }
 futures-util = "0.3"
+indexmap = "2"
 prost = "0.14.3"
 tokio = { version = "1.50.0", features = ["rt-multi-thread", "macros", "net", "time", "sync"] }
 tokio-tungstenite = { version = "0.30.0", features = ["native-tls"] }
