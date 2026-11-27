@@ -12,7 +12,8 @@ use crate::{
         },
     },
     rti::{
-        RequestTickBarReplay, RequestTimeBarReplay, ResponseTickBarReplay, ResponseTimeBarReplay,
+        RequestTickBarReplay, RequestTimeBarReplay, RequestVolumeProfileMinuteBars,
+        ResponseTickBarReplay, ResponseTimeBarReplay, ResponseVolumeProfileMinuteBars,
     },
 };
 
@@ -579,6 +580,113 @@ async fn a_tick_replay_asked_past_a_marker_is_answered_without_the_end_marker() 
     actor.await.unwrap();
 }
 
+fn volume_profile_request() -> VolumeProfileMinuteBarsRequest {
+    VolumeProfileMinuteBarsRequest::new()
+        .symbol("ESZ6")
+        .exchange("CME")
+        .bar_type_period(1)
+        .start_time_sec(60)
+        .end_time_sec(240)
+        .resume_bars(true)
+}
+
+async fn replay_volume_profile(
+    request: VolumeProfileMinuteBarsRequest,
+    markers: &[Option<i32>],
+) -> Vec<RithmicResponse> {
+    let (handle, actor, mut client) = running_plant_with_handle().await;
+    let load = {
+        let handle = handle.clone();
+        tokio::spawn(async move { handle.load_volume_profile_minute_bars(request).await })
+    };
+    let request =
+        RequestVolumeProfileMinuteBars::decode(read_wire_request(&mut client).await.as_slice())
+            .unwrap();
+    assert_eq!(request.start_index, Some(60));
+    assert_eq!(request.finish_index, Some(240));
+    assert_eq!(request.resume_bars, Some(true));
+
+    for &marker in markers {
+        let mut frame = ResponseVolumeProfileMinuteBars {
+            template_id: 209,
+            user_msg: request.user_msg.clone(),
+            marker,
+            ..Default::default()
+        };
+        if marker.is_some() {
+            frame.rq_handler_rp_code.push("0".into());
+        } else {
+            frame.rp_code.push("0".into());
+        }
+        write_wire_response(&mut client, &frame).await;
+    }
+
+    let reply = reply_of(load).await.unwrap();
+    handle.abort();
+    actor.await.unwrap();
+    reply
+}
+
+fn volume_markers(reply: &[RithmicResponse]) -> Vec<Option<i32>> {
+    reply
+        .iter()
+        .map(|response| match &response.message {
+            RithmicMessage::ResponseVolumeProfileMinuteBars(bar) => bar.marker,
+            message => panic!("unexpected replay message: {message:?}"),
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn a_volume_profile_replay_waits_for_every_needed_bar_in_any_order_without_an_end_marker() {
+    for markers in [
+        vec![Some(60), Some(120), Some(180)],
+        vec![Some(180), Some(120), Some(60)],
+        vec![Some(240), Some(180), Some(60), Some(60), Some(120)],
+    ] {
+        let request = volume_profile_request().complete_after_markers([60, 120, 180, 180]);
+        let reply = replay_volume_profile(request, &markers).await;
+        assert_eq!(volume_markers(&reply), markers);
+        assert!(reply.last().unwrap().has_more);
+    }
+}
+
+#[tokio::test]
+async fn a_sparse_volume_replay_returns_the_server_end_if_a_needed_bar_is_missing() {
+    let markers = [Some(180), Some(60), None];
+    let request = volume_profile_request().complete_after_markers([60, 120, 180]);
+    let reply = replay_volume_profile(request, &markers).await;
+    assert_eq!(volume_markers(&reply), markers);
+    assert!(!reply.last().unwrap().has_more);
+}
+
+#[tokio::test]
+async fn a_default_volume_profile_replay_keeps_newest_first_bars_and_the_end_marker() {
+    let markers = [Some(180), Some(120), Some(60), None];
+    let reply = replay_volume_profile(volume_profile_request(), &markers).await;
+    assert_eq!(volume_markers(&reply), markers);
+    assert!(!reply.last().unwrap().has_more);
+}
+
+#[tokio::test]
+async fn a_volume_profile_replay_rejects_a_marker_beyond_its_last_possible_close_before_sending() {
+    let (handle, actor, mut client) = running_plant_with_handle().await;
+    let request = volume_profile_request().complete_after_markers([60, 301]);
+
+    let load = {
+        let handle = handle.clone();
+        tokio::spawn(async move { handle.load_volume_profile_minute_bars(request).await })
+    };
+    assert!(matches!(
+        reply_of(load).await,
+        Err(RithmicError::InvalidArgument(_))
+    ));
+    assert_wire_silent(&mut client).await;
+
+    handle.abort();
+    actor.await.unwrap();
+}
+
 #[tokio::test]
 async fn load_time_bars_all_continues_a_cut_reply_on_the_original_request() {
     use crate::rti::{RequestResumeBars, ResponseResumeBars};
@@ -656,10 +764,7 @@ async fn load_time_bars_all_continues_a_cut_reply_on_the_original_request() {
 
 #[tokio::test]
 async fn a_refused_continuation_fails_the_load() {
-    use crate::rti::{
-        RequestResumeBars, RequestVolumeProfileMinuteBars, ResponseResumeBars,
-        ResponseVolumeProfileMinuteBars,
-    };
+    use crate::rti::{RequestResumeBars, ResponseResumeBars};
 
     let (handle, actor, mut client) = running_plant_with_handle().await;
 

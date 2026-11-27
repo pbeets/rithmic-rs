@@ -1,4 +1,5 @@
-use std::collections::{HashMap, hash_map::Entry};
+use indexmap::IndexMap;
+use std::collections::HashMap;
 use tokio::sync::oneshot;
 use tracing::{error, info, warn};
 
@@ -9,6 +10,9 @@ use crate::{
 };
 
 mod replay;
+
+/// Cap diagnostic counters when a plant never sends its terminal frame.
+const MAX_LATE_REQUESTS: usize = 256;
 
 pub(crate) use replay::PendingReplay;
 
@@ -80,8 +84,9 @@ pub(crate) struct RithmicRequestHandler<T> {
     ///
     /// The server can keep sending after a truncation, a cancel or a caller
     /// timeout, and may send its final response (`rp_code` `"12"`) over a
-    /// minute later. That final response removes the entry.
-    late_continuations: HashMap<String, u64>,
+    /// minute later. A final response removes the entry. At capacity, tracking a
+    /// new ID evicts the oldest counter. Pending requests live in separate maps.
+    late_continuations: IndexMap<String, u64>,
 
     /// In-flight resume request ids, mapped to the replay each continues.
     resumes: HashMap<String, String>,
@@ -93,7 +98,7 @@ impl<T: RequestTag> RithmicRequestHandler<T> {
             handle_map: HashMap::new(),
             response_vec_map: HashMap::new(),
             replay_map: HashMap::new(),
-            late_continuations: HashMap::new(),
+            late_continuations: IndexMap::new(),
             resumes: HashMap::new(),
         }
     }
@@ -192,10 +197,10 @@ impl<T: RequestTag> RithmicRequestHandler<T> {
 
             Some(_) => {
                 self.release_abandoned(&response.request_id);
-                self.count_late_part(&response.request_id);
+                self.record_late_frames(&response.request_id, 1);
             }
 
-            None => self.count_late_part(&response.request_id),
+            None => self.record_late_frames(&response.request_id, 1),
         }
     }
 
@@ -240,9 +245,24 @@ impl<T: RequestTag> RithmicRequestHandler<T> {
         }
     }
 
-    /// Start counting frames the server may still send for `request_id`.
-    fn expect_late_frames(&mut self, request_id: impl Into<String>) {
-        self.late_continuations.insert(request_id.into(), 0);
+    /// Record additional parts for a resolved request. Zero starts tracking an
+    /// expected late reply without counting a data frame.
+    fn record_late_frames(&mut self, request_id: &str, parts: u64) {
+        if let Some(count) = self.late_continuations.get_mut(request_id) {
+            *count += parts;
+            return;
+        }
+
+        if self.late_continuations.len() == MAX_LATE_REQUESTS {
+            self.late_continuations.shift_remove_index(0);
+        }
+        self.late_continuations.insert(request_id.to_owned(), parts);
+        if parts > 0 {
+            info!(
+                "request_id {}: parts are arriving after the reply was resolved; counting them",
+                request_id
+            );
+        }
     }
 
     /// Whether any resume request is awaiting its acknowledgement.
@@ -267,7 +287,7 @@ impl<T: RequestTag> RithmicRequestHandler<T> {
             .remove(request_id)
             .map_or(0, |p| p.len());
 
-        self.expect_late_frames(request_id);
+        self.record_late_frames(request_id, 0);
 
         info!(
             "request_id {}: the caller stopped waiting after {} parts; the rest of this reply \
@@ -276,31 +296,13 @@ impl<T: RequestTag> RithmicRequestHandler<T> {
         );
     }
 
-    /// Count a part for an id nothing is waiting on. Only the first is logged.
-    fn count_late_part(&mut self, request_id: &str) {
-        match self.late_continuations.entry(request_id.to_string()) {
-            Entry::Vacant(slot) => {
-                slot.insert(1);
-
-                info!(
-                    "request_id {}: parts are arriving after the reply was resolved; counting them",
-                    request_id
-                );
-            }
-
-            Entry::Occupied(mut parts) => *parts.get_mut() += 1,
-        }
-    }
-
     /// Handle a final frame nothing is waiting for. Expected leftovers (late
     /// frames, duplicate acknowledgements) are logged at INFO; anything else
     /// at ERROR.
     fn report_unmatched_terminal(&mut self, response: &RithmicResponse) {
         if response.is_truncated() {
             // A cut is not the remote end, including after local cancellation.
-            self.late_continuations
-                .entry(response.request_id.clone())
-                .or_insert(0);
+            self.record_late_frames(&response.request_id, 0);
             return;
         }
 
@@ -334,7 +336,7 @@ impl<T: RequestTag> RithmicRequestHandler<T> {
             return;
         }
 
-        match self.late_continuations.remove(&response.request_id) {
+        match self.late_continuations.shift_remove(&response.request_id) {
             Some(parts) => info!(
                 "request_id {}: the server kept streaming after nothing was waiting: {} more \
                  parts, then a final response with rp_code {:?}",
@@ -874,6 +876,76 @@ mod tests {
             !logged.contains("RithmicResponse {"),
             "the line must not dump the response: {logged}"
         );
+    }
+
+    #[test]
+    fn only_successful_volume_bars_satisfy_required_markers_across_a_resume() {
+        let mut handler = RithmicRequestHandler::<Tag>::new();
+        let (tx, mut reply) = oneshot::channel();
+        let replay = PendingReplay::new(tx).complete_after_volume_markers(&[60, 180]);
+        assert!(handler.register_replay("v".into(), replay));
+        let newest = part(
+            "v",
+            RithmicMessage::ResponseVolumeProfileMinuteBars(ResponseVolumeProfileMinuteBars {
+                marker: Some(180),
+                ..Default::default()
+            }),
+        );
+        handler.route(newest);
+        let resume = handler
+            .route(terminal("v", truncation_notice("key")))
+            .unwrap();
+        assert_eq!(resume.request_id, "v");
+
+        let mut failed = marker_part("v");
+        failed.error = Some(RithmicError::ProtocolError("bad bar".into()));
+        handler.route(failed);
+        assert!(matches!(
+            reply.try_recv(),
+            Err(oneshot::error::TryRecvError::Empty)
+        ));
+        handler.route(marker_part("v"));
+        assert_eq!(reply.try_recv().unwrap().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn early_volume_replies_without_terminal_frames_keep_bounded_late_counts() {
+        let mut handler = RithmicRequestHandler::<Tag>::new();
+        let mut pending = handler.register_test_replay("pending");
+
+        for i in 0..=MAX_LATE_REQUESTS {
+            let id = i.to_string();
+            let (tx, mut reply) = oneshot::channel();
+            assert!(handler.register_replay(
+                id.clone(),
+                PendingReplay::new(tx).complete_after_volume_markers(&[60])
+            ));
+            handler.route(marker_part(&id));
+            assert_eq!(reply.try_recv().unwrap().unwrap().len(), 1);
+            assert!(
+                handler
+                    .route(terminal(&id, truncation_notice("key")))
+                    .is_none()
+            );
+        }
+        assert_eq!(handler.late_continuations.len(), MAX_LATE_REQUESTS);
+        assert!(!handler.expects_late_frames("0"));
+
+        // A late data frame or truncation for an evicted ID can start a new
+        // counter. Neither can grow the table or resume a completed replay.
+        handler.route(marker_part("0"));
+        assert_eq!(handler.late_continuations.get("0"), Some(&1));
+        assert!(
+            handler
+                .route(terminal("1", truncation_notice("key")))
+                .is_none()
+        );
+        assert_eq!(handler.late_continuations.len(), MAX_LATE_REQUESTS);
+        handler.route(terminal("0", volume_profile_message(&["0"])));
+        assert!(!handler.expects_late_frames("0"));
+
+        handler.route(terminal("pending", volume_profile_message(&["0"])));
+        assert!(pending.try_recv().unwrap().is_ok());
     }
 
     #[test]

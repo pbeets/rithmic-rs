@@ -16,7 +16,7 @@ use crate::{
         await_all_responses, await_first_response,
         kind::{Cx, PlantCommand, PlantKind},
     },
-    request_handler::{PendingReplay, RequestResult},
+    request_handler::{PendingReplay, RequestResult, Responder},
     rti::{
         messages::RithmicMessage, request_login::SysInfraType, request_tick_bar_update,
         request_time_bar_update,
@@ -74,11 +74,14 @@ pub(crate) enum ReplayQuery {
 }
 
 impl ReplayQuery {
-    fn complete_past(&self) -> Option<i32> {
+    fn pending_replay(&self, responder: Responder) -> PendingReplay {
+        let replay = PendingReplay::new(responder);
         match self {
-            ReplayQuery::Time(query) => query.complete_past,
-            ReplayQuery::Tick(query) => query.complete_past,
-            ReplayQuery::Volume(_) => None,
+            ReplayQuery::Time(query) => replay.complete_past(query.complete_past),
+            ReplayQuery::Tick(query) => replay.complete_past(query.complete_past),
+            ReplayQuery::Volume(query) => {
+                replay.complete_after_volume_markers(&query.complete_after_markers)
+            }
         }
     }
 }
@@ -331,8 +334,7 @@ impl PlantKind for HistoryPlant {
                 query,
                 response_sender,
             } => {
-                let replay =
-                    PendingReplay::new(response_sender).complete_past(query.complete_past());
+                let replay = query.pending_replay(response_sender);
 
                 cx.send_replay(
                     |api| match query {
@@ -993,13 +995,16 @@ impl RithmicHistoryPlantHandle {
         await_all_responses(rx).await
     }
 
-    /// Load minute bars that break volume down by price.
+    /// Load volume-profile minute bars in the history plant's delivery order.
     ///
-    /// Each bar reports how much traded at each price during that minute, rather
-    /// than a single volume figure. Build the `request` with [`VolumeProfileMinuteBarsRequest`].
+    /// Each bar reports volume traded at each price. Build the request with
+    /// [`VolumeProfileMinuteBarsRequest`].
     ///
     /// # Returns
-    /// One response per minute, followed by an end marker carrying no data.
+    /// One response per bar followed by the server's end marker. With
+    /// [`complete_after_markers`](VolumeProfileMinuteBarsRequest::complete_after_markers),
+    /// the reply can end early once every specified bar has arrived. If any
+    /// are missing, the loader continues the replay until the server ends it.
     ///
     /// # Truncation
     ///
@@ -1008,10 +1013,19 @@ impl RithmicHistoryPlantHandle {
     ///
     /// An empty reply does not always mean nothing traded; it has been seen for
     /// windows that had data moments before. Retry before relying on it.
+    ///
+    /// # Errors
+    /// * [`RithmicError::InvalidArgument`] if completion markers are set and the
+    ///   request fails [`validate`](VolumeProfileMinuteBarsRequest::validate).
+    /// * [`RithmicError::ConnectionClosed`] if the history plant has shut down.
     pub async fn load_volume_profile_minute_bars(
         &self,
         request: VolumeProfileMinuteBarsRequest,
     ) -> Result<Vec<RithmicResponse>, RithmicError> {
+        if !request.complete_after_markers.is_empty() {
+            request.validate()?;
+        }
+
         self.replay(ReplayQuery::Volume(request)).await
     }
 
